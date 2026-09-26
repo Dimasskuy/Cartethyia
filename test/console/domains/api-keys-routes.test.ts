@@ -414,6 +414,25 @@ describe("api-key routes", () => {
     expect(response.status).toBe(200);
   });
 
+  test("GET /:keyId/share serializes a missing link as the JSON literal null", async () => {
+    const { store } = fakeKeyStore();
+    const operations = createApiKeyOperations({
+      store,
+      accessResolver: () => writer,
+      admissionService: fakeAdmission(),
+    });
+    const key = await operations.createKey(writer, { label: "no-link-yet" });
+    const app = routes({ store, shareStore: fakeShareStore().shareStore });
+
+    const response = await call(app, `/${key.id}/share`);
+    expect(response.status).toBe(200);
+    // "No link yet" is a 200 answer, not an error, so the body must be the JSON
+    // literal. A bare `null` return reaches the client as an empty body with no
+    // content-type, which its JSON parse rejects as a failed 200 request.
+    expect(await response.text()).toBe("null");
+    expect(response.headers.get("content-type")).toContain("application/json");
+  });
+
   test("POST /:keyId/share mints a link and answers 201", async () => {
     const { store } = fakeKeyStore();
     const operations = createApiKeyOperations({

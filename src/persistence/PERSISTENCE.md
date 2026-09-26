@@ -46,8 +46,10 @@ src/persistence/
 - **Routing:** `model_aliases(tenant, alias, target_model)`;
   `model_combos(tenant, name, members[], strategy)`;
   `provider_routing_settings(provider_id, tenant_id NULL=global, strategy,
-  rotate_count, max_inflight, enabled, bypass_proxy)` with dual
-  unique indexes (tenant-scoped + partial global);
+  rotate_count, max_inflight, enabled, bypass_proxy, user_agent)` with dual
+  unique indexes (tenant-scoped + partial global). The route User-Agent
+  defaults to Codex for built-in API-key providers; OAuth adapters and
+  custom-provider identity selection remain independent;
   `pool_routing_settings(tenant_id PK, strategy, rotate_count)` — the
   pool-group counterpart (absent row reads as `least_loaded`); `telemetry_events`
   carries `error_origin` (cartethyia/upstream/network) beside `error_category`

@@ -13,6 +13,8 @@ export interface RouteCandidate {
   readonly wire_family: WireFamily;
   readonly endpoint: string;
   readonly capability_profile: CapabilityProfile;
+  /** Resolved outbound User-Agent; OAuth adapters retain their native identity. */
+  readonly user_agent?: string;
   readonly max_inflight?: number;
   readonly provider_account_id?: string;
   /** Operator-facing label of `provider_account_id` (never the secret), for
@@ -53,6 +55,7 @@ export interface RouteCandidate {
  * operations layer validates direct callers against the same list, so a new
  * strategy cannot land in one and be silently missing from the other.
  */
+export const DEFAULT_PROVIDER_USER_AGENT = "codex_cli_rs/0.156.1" as const;
 export const ROUTING_STRATEGIES = ["fallback", "round_robin"] as const;
 export type ProviderRoutingStrategy = (typeof ROUTING_STRATEGIES)[number];
 
@@ -64,6 +67,8 @@ export interface ProviderRoutingSetting {
    * concurrency per account. */
   readonly maxInflight: number | null;
   readonly enabled: boolean;
+  /** Built-in API-key User-Agent; OAuth and custom providers retain their identities. */
+  readonly userAgent?: string;
   /** When true, this (tenant, provider) dispatches direct — candidates
    * never carry `network_pool_ids` regardless of pool availability. */
   readonly bypassProxy: boolean;

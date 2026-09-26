@@ -73,6 +73,16 @@ produces:
    empty provider allowlist permits every provider). The public `/v1/models`
    catalog also applies `model_prefix` so discovery and dispatch expose the
    same policy.
+   The same snapshot carries an optional `client_router_denylist`: ids of
+   downstream routers this key refuses, matched against
+   `client-router-fingerprint.ts`. That module reads inbound headers only and
+   labels a caller from values the product itself emits (`x-msh-platform:
+   9router`, `x-omniroute-peer-trace`, a User-Agent naming the product). It is
+   a best-effort label, **not** an authentication boundary: a client that sends
+   no fingerprint is simply not matched. The denial runs in
+   `createApiKeyAuthenticationMiddleware`, so a refused router is rejected 403
+   `client_router_denied` before routing, and the check only fires for the key
+   that listed it.
 4. `admission.ts: ApiKeyAdmissionService.admit()` — atomic pre-dispatch
    admission returning an idempotent `AdmissionLease`. Limits: sliding-60 s
    RPM, daily/monthly/lifetime token pre-credit with reconcile-to-actual on

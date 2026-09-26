@@ -417,9 +417,9 @@ export function buildProbeCanonicalRequest(args: {
  * probe that fails against a real account carries the same health signal as
  * live traffic (quota exhaustion, dead credentials): record it so the account
  * cools down / disables instead of staying green while every probe fails.
- * Non-mutating categories (unknown, degraded) are no-ops inside
+ * Non-mutating categories (unknown, policy) are no-ops inside
  * `recordAccountFailure`; this never throws. A successful probe proves the
- * account works, so recover it symmetrically (a degraded account flips back to
+ * account works, so recover it symmetrically (a cooling account flips back to
  * active instead of staying stale).
  */
 export async function recordProbeHealth(args: {
@@ -439,8 +439,8 @@ export async function recordProbeHealth(args: {
     };
     // The health machine owns the outcome. A 202 that carries a rate limit is
     // already classified as `rate_limit_transient` with a real cooldown by
-    // `classifyAccountError`, so writing `degraded`/`cooldownUntil: null` here
-    // only clobbered that cooldown with a state nothing recovers from.
+    // `classifyAccountError`, so writing a status here only clobbered that
+    // cooldown with a state nothing recovers from.
     await recordAccountFailure(db, accountId, dispatchError, failureEvidence)
       .then((classification) => {
         if (classification?.mutatesAccount) void invalidator?.invalidate();
@@ -448,7 +448,7 @@ export async function recordProbeHealth(args: {
       .catch(() => {});
   }
   // Symmetric: a successful probe proves the account works, so recover it
-  // (a degraded account flips back to active instead of staying stale).
+  // (a cooling account flips back to active instead of staying stale).
   // recordAccountSuccess is a no-op write for already-healthy accounts and
   // never throws.
   if (dispatchError === undefined && accountId) {

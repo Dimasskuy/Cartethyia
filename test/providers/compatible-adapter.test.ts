@@ -431,6 +431,43 @@ describe("OpenAICompatibleAdapter credential_forwarding", () => {
     expect(seenHeaders).toHaveLength(1);
     expect(seenHeaders[0]?.authorization).toBe("Bearer secret");
   });
+
+  test("applies route User-Agent to API-key traffic and leaves OAuth identity untouched", async () => {
+    const seenHeaders: Record<string, string>[] = [];
+    const adapter = new OpenAICompatibleAdapter(
+      baseConfig(
+        (async (_url: string, init?: RequestInit) => {
+          seenHeaders.push({ ...(init?.headers as Record<string, string> | undefined) });
+          return new Response(
+            JSON.stringify({ id: "resp_1", object: "chat.completion", choices: [] }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }) as unknown as typeof fetch,
+        { buildExtraHeaders: () => ({ "user-agent": "adapter-native/1" }) },
+      ),
+    );
+    const routeUserAgent = "claude-cli/2.1.280 (external, cli)";
+    for await (const _event of adapter.dispatch(
+      fakeCanonicalRequest(),
+      fakeProviderDispatchTarget(),
+      { ...dispatchContext(), user_agent: routeUserAgent },
+    ));
+    const oauthCredential: ResolvedCredential = {
+      ...credential(),
+      credential_kind: "oauth",
+    };
+    for await (const _event of adapter.dispatch(
+      fakeCanonicalRequest(),
+      fakeProviderDispatchTarget(),
+      {
+        ...dispatchContext(),
+        credential: oauthCredential,
+        user_agent: routeUserAgent,
+      },
+    ));
+    expect(seenHeaders[0]?.["user-agent"]).toBe(routeUserAgent);
+    expect(seenHeaders[1]?.["user-agent"]).toBe("adapter-native/1");
+  });
 });
 
 // T0-4: Verify the fix for invalid structured_output json_schema envelope

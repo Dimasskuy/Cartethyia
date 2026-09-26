@@ -26,13 +26,22 @@ describe("landing page", () => {
   });
 
   test("keeps Github before All view and has no automatic scrolling", () => {
-    const github = markup.indexOf(">GitHub</a>");
+    const github = markup.indexOf("Cartethyia on GitHub");
     const allView = markup.indexOf("All view");
     expect(github).toBeGreaterThan(-1);
     expect(github).toBeLessThan(allView);
     expect(markup).not.toContain(">Source</a>");
     expect(markup).not.toContain(">Auto</button>");
     expect(markup).not.toContain("autoscroll");
+  });
+
+  test("links the repository with live star and fork badges", () => {
+    expect(markup).toContain('href="https://github.com/risunCode/Cartethyia"');
+    // The counts render from the badge host the dashboard CSP permits.
+    expect(markup).toContain("https://img.shields.io/github/stars/risunCode/Cartethyia");
+    expect(markup).toContain("https://img.shields.io/github/forks/risunCode/Cartethyia");
+    expect(markup).toContain("GitHub stars");
+    expect(markup).toContain("GitHub forks");
   });
 
   test("enters the session-aware console route instead of forcing login", () => {

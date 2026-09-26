@@ -60,23 +60,30 @@ canonical events, via `createApiKeyAdapter(spec)` / `OpenAICompatibleAdapter` or
 `loadModelDiscovery → ProviderModelDiscovery` (+ credential flag) is TTL-cached 10 min when credential-free,
 always live when credential-scoped.
 
-BYOK/custom providers bypass all of the above: `registerByokProviders()` / `syncByokProvider()` build an
-`OpenAICompatibleAdapter` from the DB row's `base_url` + `compatibility_profile` and register it via
-`registry.upsert()` — no restart, SSRF-validated hosts via `liveProviderUpstreamHosts()`.
+Custom/BYOK providers are derived from their persisted base URL, compatibility profile, and wire-family
+default, then registered through `registerByokProviders()` / `syncByokProvider()` as an
+`OpenAICompatibleAdapter`; model protocol selection is independent from route-level identity. A custom
+provider may serve Anthropic Messages or OpenAI Chat/Responses according to its wire profile.
 
-**Derived wire contract** (`operations/byok-wire-profile.ts`). A custom row persists only a base URL, an
-optional compatibility profile, and `wire_family_default`; the adapter's served families, per-family
-endpoint paths, and credential header shape are *derived* from those so registration
-(`provider-catalog-service.ts`) and the probe/model-sync fallback (`discovery/probing-service.ts`) cannot
-drift. An explicit `endpoint_paths_by_wire_family` names exactly the served families; otherwise a `chat`
-default serves the OpenAI pair (`chat` + `responses`) and a `messages` default serves `messages` only. The
-credential header follows protocol truth, not a per-provider special case: a Messages-only upstream reads
-`x-api-key`, anything that also serves an OpenAI wire reads `Authorization: Bearer`. `cli_identity`
-(boolean, default true) controls whether the official CLI identity headers are stamped; the mutually
-exclusive `gateway_user_agent` (boolean) instead stamps `user-agent: Cartethyia/<version>` from
-`operations/gateway-user-agent.ts`, which is how a provider opts out of CLI cloaking.
-`POST /providers/connection-test` (ad-hoc, unsaved provider) reuses the same derivation to probe
-`GET <base>/v1/models` with the matching auth header before anything is persisted.
+The per-(tenant, provider) `provider_routing_settings.user_agent` value configures User-Agent for
+built-in API-key provider dispatch only. It defaults to `codex_cli_rs/0.156.1`; the provider-detail
+Routing Strategy card can select Codex, Claude Code, or a custom header value. Providers with OAuth
+login flows do not show this setting and retain adapter-native identities. Custom providers continue
+using their compatibility profile's client identity selection; the route-level setting never overrides
+their selected identity or wire behavior.
+
+**Derived wire contract** (`operations/byok-wire-profile.ts`) keeps the custom adapter and probe/model-sync
+fallback aligned. A custom row persists a base URL, compatibility profile, and `wire_family_default`;
+served families, endpoint paths, and credential header shape derive from that data. An explicit
+`endpoint_paths_by_wire_family` names the served families; otherwise `chat` serves both OpenAI `chat` and
+`responses`, while `messages` serves Messages only. Messages-only providers use `x-api-key`; a profile
+serving an OpenAI wire uses `Authorization: Bearer`.
+
+`cli_identity` controls custom providers' additional CLI fingerprint headers; their
+`gateway_user_agent` compatibility setting remains their existing User-Agent choice. Built-in
+route-selected User-Agent settings are not applied to custom providers. Probes strip User-Agent by
+design. `POST /providers/connection-test` (ad-hoc, unsaved provider) uses the derived wire and matching
+auth header for `GET <base>/v1/models` before anything is persisted.
 
 ## Seeding / catalog / discovery flow
 

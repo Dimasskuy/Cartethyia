@@ -345,7 +345,6 @@ function CustomProviderCard({ customProvider }: { customProvider: ProviderRespon
   const accounts = accountsQuery.data ?? [];
   const activeConnections = accounts.filter((a) => a.status === "active").length;
   const cooldownCount = accounts.filter((a) => a.status === "cooldown").length;
-  const degradedCount = accounts.filter((a) => a.status === "degraded").length;
   const disabledCount = accounts.filter((a) => a.status === "disabled").length;
   const exhaustedCount = accounts.filter((a) => a.lastErrorCategory === "quota_exhausted").length;
   // Any non-active account is a connection of some state: the neutral badge
@@ -395,9 +394,9 @@ function CustomProviderCard({ customProvider }: { customProvider: ProviderRespon
                 <Badge tone="ok" dot>
                   {activeConnections} Connected
                 </Badge>
-              ) : cooldownCount + degradedCount + disabledCount + exhaustedCount > 0 ? (
+              ) : cooldownCount + disabledCount + exhaustedCount > 0 ? (
                 <Badge tone="warn" dot>
-                  {cooldownCount + degradedCount + disabledCount + exhaustedCount} Unhealthy
+                  {cooldownCount + disabledCount + exhaustedCount} Unhealthy
                 </Badge>
               ) : (
                 <Badge>No connections</Badge>
@@ -405,11 +404,6 @@ function CustomProviderCard({ customProvider }: { customProvider: ProviderRespon
               {cooldownCount > 0 ? (
                 <Badge tone="warn" dot>
                   {cooldownCount} Cooldown
-                </Badge>
-              ) : null}
-              {degradedCount > 0 ? (
-                <Badge tone="warn" dot>
-                  {degradedCount} Degraded
                 </Badge>
               ) : null}
               {disabledCount > 0 ? (
@@ -687,7 +681,6 @@ const ProviderCard = memo(function ProviderCard({
   const accounts = accountsQuery.data ?? [];
   const activeConnections = accounts.filter((a) => a.status === "active").length;
   const cooldownCount = accounts.filter((a) => a.status === "cooldown").length;
-  const degradedCount = accounts.filter((a) => a.status === "degraded").length;
   const exhaustedCount = accounts.filter((a) => a.lastErrorCategory === "quota_exhausted").length;
 
   return (
@@ -749,9 +742,9 @@ const ProviderCard = memo(function ProviderCard({
                 <Badge tone="ok" dot>
                   {activeConnections} Connected
                 </Badge>
-              ) : cooldownCount + degradedCount + exhaustedCount > 0 ? (
+              ) : cooldownCount + exhaustedCount > 0 ? (
                 <Badge tone="warn" dot>
-                  {cooldownCount + degradedCount + exhaustedCount} Unhealthy
+                  {cooldownCount + exhaustedCount} Unhealthy
                 </Badge>
               ) : (
                 <Badge>No connections</Badge>
@@ -759,11 +752,6 @@ const ProviderCard = memo(function ProviderCard({
               {cooldownCount > 0 ? (
                 <Badge tone="warn" dot>
                   {cooldownCount} Cooldown
-                </Badge>
-              ) : null}
-              {degradedCount > 0 ? (
-                <Badge tone="warn" dot>
-                  {degradedCount} Degraded
                 </Badge>
               ) : null}
               {exhaustedCount > 0 ? (

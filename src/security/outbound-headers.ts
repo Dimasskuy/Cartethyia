@@ -14,6 +14,14 @@ export const API_CONTENT_SECURITY_POLICY =
 export const X_FRAME_OPTIONS = "DENY";
 
 /**
+ * Image origin for the repository star/fork badges the public pages render.
+ * Single source of truth: the dashboard CSP names it and the badge component
+ * builds its URL from it, so the two cannot drift apart and silently break the
+ * badge behind a CSP violation.
+ */
+export const BADGE_IMAGE_ORIGIN = "https://img.shields.io";
+
+/**
  * Security headers on every `/v1` response, whichever path produced it.
  *
  * Three paths used to hand-copy this list — the request-context middleware,
@@ -59,6 +67,11 @@ export function inlineScriptBodies(html: string): readonly string[] {
  * Content-Security-Policy for the dashboard document. Scripts are restricted
  * to the bundled same-origin modules plus hashes of the static inline theme
  * bootstrap; styles allow inline (React `style` props) and Google Fonts.
+ *
+ * `img-src` admits the badge host because the landing and share pages render
+ * the repository's star/fork counts as SVG images. Only `img-src` is widened —
+ * `connect-src` stays `'self'`, so the page cannot call a third-party API, and
+ * the badge host can never supply a script or a style.
  */
 export function dashboardContentSecurityPolicy(html: string): string {
   const hashes = inlineScriptBodies(html).map(inlineScriptHash);
@@ -67,7 +80,7 @@ export function dashboardContentSecurityPolicy(html: string): string {
     `script-src 'self'${hashes.length > 0 ? ` ${hashes.join(" ")}` : ""}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
-    "img-src 'self' data: blob:",
+    `img-src 'self' data: blob: ${BADGE_IMAGE_ORIGIN}`,
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",

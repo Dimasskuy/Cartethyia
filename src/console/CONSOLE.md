@@ -222,7 +222,12 @@ prefix-length hints leave the store.
   /:keyId/share` returns the stored link without rotating, and the bearer token is retained
   encrypted (never selected by a public lookup) so the console can show the link again. The
   link's kind follows the key: a share template gets an `enroll` link that issues child keys, a
-  personal key gets a `handoff` link that reveals the key itself.
+  personal key gets a `handoff` link that reveals the key itself. A key with no link yet is a
+  `200` whose body is the JSON literal `null`, not an empty body — a bare `null` handler return
+  reaches the client as `200` with no content-type, which its JSON parse rejects as a failed
+  request, so the route serializes it explicitly. A key may also carry `clientRouterDenylist`, the ids of downstream
+  routers it refuses (see `security/SECURITY.md`); the write path rejects an id the gateway
+  cannot fingerprint, so a stored rule is always one that can match.
 - **Studio** (`studio/`): CRUD over per-tenant saved sessions (capped, messages and media
   normalized and bounded on write and read), a tenant-scoped `web-fetch` tool over
   the validated outbound network binding, plus a key endpoint that decrypts the tenant's default

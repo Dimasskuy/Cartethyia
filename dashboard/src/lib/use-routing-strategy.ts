@@ -31,6 +31,8 @@ export interface RoutingStrategyState {
   readonly setRotateCount: (next: number) => void;
   readonly maxInflight: number | null;
   readonly bypassProxy: boolean;
+  readonly userAgent: string;
+  readonly setUserAgent: (next: string) => void;
   readonly isLoading: boolean;
   readonly isError: boolean;
   readonly isSaving: boolean;
@@ -40,13 +42,14 @@ export interface RoutingStrategyState {
   readonly setBypassProxy: (next: boolean) => void;
 }
 
-export function useRoutingStrategy(providerId: string): RoutingStrategyState {
+export function useRoutingStrategy(providerId: string, allowUserAgent: boolean): RoutingStrategyState {
   const query = useProviderRouting(providerId);
   const mutation = useUpdateProviderRouting();
   const [strategy, setStrategyState] = useState<RoutingStrategy>("fallback");
   const [rotateCount, setRotateCountState] = useState(1);
   const [maxInflight, setMaxInflightState] = useState<number | null>(null);
   const [bypassProxy, setBypassProxyState] = useState(false);
+  const [userAgent, setUserAgentState] = useState("codex_cli_rs/0.156.1");
 
   useEffect(() => {
     if (!query.data) return;
@@ -54,6 +57,7 @@ export function useRoutingStrategy(providerId: string): RoutingStrategyState {
     setRotateCountState(query.data.rotateCount);
     setMaxInflightState(query.data.maxInflight);
     setBypassProxyState(query.data.bypassProxy);
+    setUserAgentState(query.data.userAgent);
   }, [query.data]);
 
   const save = (next: {
@@ -61,6 +65,7 @@ export function useRoutingStrategy(providerId: string): RoutingStrategyState {
     rotateCount: number;
     maxInflight: number | null;
     bypassProxy: boolean;
+    userAgent: string;
   }) => {
     mutation.mutate(
       {
@@ -71,6 +76,7 @@ export function useRoutingStrategy(providerId: string): RoutingStrategyState {
           rotateCount: next.rotateCount,
           maxInflight: next.maxInflight,
           bypassProxy: next.bypassProxy,
+          ...(allowUserAgent ? { userAgent: next.userAgent } : {}),
         },
       },
       {
@@ -79,21 +85,26 @@ export function useRoutingStrategy(providerId: string): RoutingStrategyState {
           setStrategyState(query.data.strategy);
           setRotateCountState(query.data.rotateCount);
           setBypassProxyState(query.data.bypassProxy);
+          setUserAgentState(query.data.userAgent);
         },
       },
     );
   };
   const scheduleMaxInflightSave = useDebouncedSave((next: number | null) =>
-    save({ strategy, rotateCount, maxInflight: next, bypassProxy }),
+    save({ strategy, rotateCount, maxInflight: next, bypassProxy, userAgent }),
   );
   const scheduleRotateCountSave = useDebouncedSave((next: number) =>
-    save({ strategy, rotateCount: next, maxInflight, bypassProxy }),
+    save({ strategy, rotateCount: next, maxInflight, bypassProxy, userAgent }),
+  );
+  const scheduleUserAgentSave = useDebouncedSave((next: string) =>
+    save({ strategy, rotateCount, maxInflight, bypassProxy, userAgent: next }),
   );
 
   return {
     strategy,
     maxInflight,
     bypassProxy,
+    userAgent,
     isLoading: query.isPending,
     isError: query.isError,
     isSaving: mutation.isPending,
@@ -103,15 +114,19 @@ export function useRoutingStrategy(providerId: string): RoutingStrategyState {
       setMaxInflightState(next);
       scheduleMaxInflightSave(next);
     },
+    setUserAgent: (next) => {
+      setUserAgentState(next);
+      scheduleUserAgentSave(next);
+    },
     setBypassProxy: (next) => {
       setBypassProxyState(next);
-      save({ strategy, rotateCount, maxInflight, bypassProxy: next });
+      save({ strategy, rotateCount, maxInflight, bypassProxy: next, userAgent });
     },
     roundRobinEnabled: strategy === "round_robin",
     setRoundRobinEnabled: (next) => {
       const resolved: RoutingStrategy = next ? "round_robin" : "fallback";
       setStrategyState(resolved);
-      save({ strategy: resolved, rotateCount, maxInflight, bypassProxy });
+      save({ strategy: resolved, rotateCount, maxInflight, bypassProxy, userAgent });
     },
     rotateCount,
     setRotateCount: (next) => {

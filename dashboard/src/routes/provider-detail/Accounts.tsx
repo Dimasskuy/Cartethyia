@@ -52,7 +52,6 @@ const ACCOUNTS_PAGE_SIZE = 5;
 
 function accountStatusRank(status: string): number {
   if (status === "active") return 0;
-  if (status === "degraded") return 1;
   if (status === "cooldown") return 2;
   return 3;
 }
@@ -127,19 +126,6 @@ function AccountStatusBadge({
         ) : null}
       </Inline>
     );
-  if (account.status === "degraded")
-    return (
-      <Inline gap="4px">
-        <Badge tone="warn" dot>
-          Degraded ({account.consecutiveFailures ?? 0})
-        </Badge>
-        {account.lastErrorCategory ? (
-          <Badge tone="warn" title={account.lastError}>
-            {account.lastErrorCategory}
-          </Badge>
-        ) : null}
-      </Inline>
-    );
   return <Badge tone="disabled">Disabled</Badge>;
 }
 
@@ -173,8 +159,7 @@ function AccountRow({
   const disabled = account.status === "disabled";
   const cooldownUntilMs = account.cooldownUntil ? new Date(account.cooldownUntil).getTime() : NaN;
   const hasActiveCooldown = Number.isFinite(cooldownUntilMs) && cooldownUntilMs > Date.now();
-  const isRecoverable =
-    account.status === "cooldown" || hasActiveCooldown || account.status === "degraded";
+  const isRecoverable = account.status === "cooldown" || hasActiveCooldown;
   const [showHistory, setShowHistory] = useState(false);
   const [, setTick] = useState(0);
   const [renaming, setRenaming] = useState(false);

@@ -246,10 +246,10 @@ function makeDb() {
     tenantId: string | null;
     strategy: string;
     rotateCount: number;
-    
     maxInflight: number | null;
     enabled: boolean;
     bypassProxy: boolean;
+    userAgent: string;
   }> = [];
 
   function chain(result: unknown[]) {
@@ -309,9 +309,9 @@ describe("DrizzleProviderDetailStore call-shape", () => {
       maxInflight: null,
       enabled: false,
       bypassProxy: false,
+      userAgent: "codex_cli_rs/0.156.1",
     });
   });
-
   test("getRouting defaults missing row with tenant null preserved", async () => {
     const { db } = makeDb();
     const store = new DrizzleProviderDetailStore(db as never);
@@ -340,6 +340,7 @@ describe("DrizzleProviderDetailStore call-shape", () => {
                     maxInflight: 8,
                     enabled: true,
                     bypassProxy: true,
+                    userAgent: "claude-cli/2.1.280 (external, cli)",
                   },
                 ],
               };
@@ -354,18 +355,19 @@ describe("DrizzleProviderDetailStore call-shape", () => {
       maxInflight: 8,
       enabled: true,
       bypassProxy: true,
+      userAgent: "claude-cli/2.1.280 (external, cli)",
     });
-    // The insert payload is what a fresh row gets; the conflict set is what
-    // an existing row is patched with. Both must carry every routing field —
-    // a missing key here silently reverts the field to its default.
+    // Both newly inserted and existing routing rows persist every setting.
     expect(inserted?.maxInflight).toBe(8);
     expect(inserted?.bypassProxy).toBe(true);
+    expect(inserted?.userAgent).toBe("claude-cli/2.1.280 (external, cli)");
     expect(conflictSet?.maxInflight).toBe(8);
     expect(conflictSet?.bypassProxy).toBe(true);
+    expect(conflictSet?.userAgent).toBe("claude-cli/2.1.280 (external, cli)");
     expect(result.maxInflight).toBe(8);
     expect(result.bypassProxy).toBe(true);
+    expect(result.userAgent).toBe("claude-cli/2.1.280 (external, cli)");
   });
-
   test("updateRouting clears an existing maxInflight when the patch sends null", async () => {
     let conflictSet: Record<string, unknown> | undefined;
     const db = {

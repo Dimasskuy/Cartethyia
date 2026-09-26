@@ -78,7 +78,7 @@ export function timeoutSignal(requestSignal: AbortSignal, ms: number): AbortSign
  * manual check only reports.
  *
  * The error fields are written only while the account is `active`, because for
- * a parked account (cooldown/degraded/disabled) those fields carry the reason
+ * a parked account (cooldown/disabled) those fields carry the reason
  * the health machine parked it. A periodic quota sweep runs against every OAuth
  * account, and a failing quota endpoint reported "Invalid or expired
  * credentials" for an entire provider — overwriting the `auth_invalidated`

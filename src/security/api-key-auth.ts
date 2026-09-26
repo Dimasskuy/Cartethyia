@@ -23,6 +23,8 @@ export interface ApiKeyAuthorizationSnapshot {
   readonly provider_allowlist?: readonly string[] | ReadonlySet<string> | null | undefined;
   readonly model_allowlist?: readonly string[] | ReadonlySet<string> | null | undefined;
   readonly model_denylist?: readonly string[] | ReadonlySet<string> | null | undefined;
+  /** Client-router ids this key refuses; see `client-router-fingerprint.ts`. */
+  readonly client_router_denylist?: readonly string[] | ReadonlySet<string> | null | undefined;
   readonly rpm?: number | null | undefined;
   readonly rpm_limit?: number | null | undefined;
   readonly daily_tokens?: number | null | undefined;
@@ -46,6 +48,7 @@ export function freezeSnapshot(s: ApiKeyAuthorizationSnapshot): ApiKeyAuthorizat
   const provider_allowlist = freezeList(s.provider_allowlist);
   const model_allowlist = freezeList(s.model_allowlist);
   const model_denylist = freezeList(s.model_denylist);
+  const client_router_denylist = freezeList(s.client_router_denylist);
 
   const api_key_id = s.api_key_id ?? "";
   const tenant_id = s.tenant_id ?? "";
@@ -58,6 +61,7 @@ export function freezeSnapshot(s: ApiKeyAuthorizationSnapshot): ApiKeyAuthorizat
     provider_allowlist,
     model_allowlist,
     model_denylist,
+    client_router_denylist,
     rpm: s.rpm ?? s.rpm_limit ?? null,
     daily_tokens: s.daily_tokens ?? null,
     monthly_tokens: s.monthly_tokens ?? null,
@@ -76,6 +80,7 @@ export function createAuthorizationSnapshot(input: {
   readonly provider_allowlist?: readonly string[] | ReadonlySet<string> | null;
   readonly model_allowlist?: readonly string[] | ReadonlySet<string> | null;
   readonly model_denylist?: readonly string[] | ReadonlySet<string> | null;
+  readonly client_router_denylist?: readonly string[] | ReadonlySet<string> | null;
   readonly rpm?: number | null;
   readonly daily_tokens?: number | null;
   readonly monthly_tokens?: number | null;
@@ -96,6 +101,9 @@ export function createAuthorizationSnapshot(input: {
       : {}),
     ...(input.model_denylist !== undefined && input.model_denylist !== null
       ? { model_denylist: input.model_denylist as readonly string[] }
+      : {}),
+    ...(input.client_router_denylist !== undefined && input.client_router_denylist !== null
+      ? { client_router_denylist: input.client_router_denylist as readonly string[] }
       : {}),
     ...(input.rpm !== undefined && input.rpm !== null ? { rpm: input.rpm } : {}),
     ...(input.daily_tokens !== undefined && input.daily_tokens !== null
@@ -241,6 +249,9 @@ export async function resolveApiKeyAuthorization(
     ...(row.providerAllowlist ? { provider_allowlist: row.providerAllowlist as string[] } : {}),
     ...(row.modelAllowlist ? { model_allowlist: row.modelAllowlist as string[] } : {}),
     ...(row.modelDenylist ? { model_denylist: row.modelDenylist as string[] } : {}),
+    ...(row.clientRouterDenylist
+      ? { client_router_denylist: row.clientRouterDenylist as string[] }
+      : {}),
     ...(row.requestsPerMinute != null ? { rpm: row.requestsPerMinute } : {}),
     ...(row.dailyTokenLimit != null ? { daily_tokens: row.dailyTokenLimit } : {}),
     ...(row.monthlyTokenLimit != null ? { monthly_tokens: row.monthlyTokenLimit } : {}),

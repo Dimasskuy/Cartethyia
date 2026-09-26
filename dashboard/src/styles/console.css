@@ -2302,19 +2302,42 @@
 }
 /* ===== share ===== */
 /* Owner-side share dialog: the stable link row, the recipient table, and the
-   expanded per-recipient detail. */
+   expanded per-recipient detail. Kept dense so the whole modal — link, section
+   header, and table — fits without the operator scrolling past empty space. */
 
-/* One link, one row: icon, URL, copy, regenerate. */
+.share-modal {
+  display: grid;
+  gap: 12px;
+  /* A grid/flex item defaults to `min-width: auto`, so the panel would grow to
+     fit the full link instead of letting `code` truncate. Resetting it on every
+     level of the chain is what keeps a long URL from scrolling the whole modal. */
+  min-width: 0;
+}
+
+.share-modal > section {
+  min-width: 0;
+}
+
+/* One link, one row: icon, URL, copy, regenerate. Mirrors the public share
+   page's endpoint field: the container may shrink, `code` is what truncates,
+   and the actions hold their width. */
 .share-link-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--inner-border);
   border-radius: 10px;
   background: var(--surface-2);
   color: var(--text-tertiary);
+}
+
+/* The glyph and the actions keep their size; only the URL gives way. */
+.share-link-row > svg,
+.share-link-row > button,
+.share-link-row > .btn {
+  flex: 0 0 auto;
 }
 
 .share-link-row code {
@@ -2332,6 +2355,75 @@
   flex: 1 1 auto;
   color: var(--text-tertiary);
   font-size: 12px;
+}
+
+.share-section {
+  display: grid;
+  gap: 6px;
+}
+
+.share-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.share-section-head strong {
+  font-size: 12px;
+}
+
+/* Personal-key usage: labelled figures, wrapping instead of a wide table. */
+.share-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.share-stat {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--inner-border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.share-stat dt {
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.share-stat dd {
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.share-table-container {
+  max-height: 46vh;
+}
+
+.share-table {
+  font-size: 12px;
+}
+
+.share-table th,
+.share-table td {
+  padding: 6px 8px;
+}
+
+.share-col-toggle {
+  width: 26px;
+}
+
+.share-col-actions {
+  text-align: right;
+  white-space: nowrap;
 }
 
 .share-expand-toggle {
@@ -2362,28 +2454,24 @@
 /* Expanded recipient: two dense tables, no nested cards. */
 .share-child-detail {
   display: grid;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 10px 12px;
   border-top: 1px solid var(--inner-border);
   background: var(--surface-1);
 }
 
 .share-detail-heading {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
 }
 
 .share-detail-empty {
-  padding: 8px 0;
+  padding: 6px 0;
   color: var(--text-tertiary);
   font-size: 12px;
-}
-
-.share-child-detail .data-table {
-  font-size: 11.5px;
 }
 
 @media (max-width: 640px) {
@@ -2391,6 +2479,6 @@
     flex-wrap: wrap;
   }
   .share-child-detail {
-    padding: 12px;
+    padding: 10px;
   }
 }

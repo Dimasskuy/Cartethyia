@@ -77,6 +77,9 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
         ...(request.providerAllowlist === undefined ? {} : { providerAllowlist: request.providerAllowlist }),
         ...(request.modelAllowlist === undefined ? {} : { modelAllowlist: request.modelAllowlist }),
         ...(request.modelDenylist === undefined ? {} : { modelDenylist: request.modelDenylist }),
+        ...(request.clientRouterDenylist === undefined
+          ? {}
+          : { clientRouterDenylist: request.clientRouterDenylist }),
         createdAt: new Date(),
         tokensConsumed: 0,
       };
@@ -178,6 +181,9 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
         ...(patchRequest.providerAllowlist === undefined ? {} : { providerAllowlist: patchRequest.providerAllowlist }),
         ...(patchRequest.modelAllowlist === undefined ? {} : { modelAllowlist: patchRequest.modelAllowlist }),
         ...(patchRequest.modelDenylist === undefined ? {} : { modelDenylist: patchRequest.modelDenylist }),
+        ...(patchRequest.clientRouterDenylist === undefined
+          ? {}
+          : { clientRouterDenylist: patchRequest.clientRouterDenylist }),
       });
       if (!updated) throw new ConsoleDomainError("key_not_found", 404, "Key not found");
 
@@ -486,6 +492,7 @@ const apiKeyBody = t.Object({
   providerAllowlist: t.Optional(t.Array(t.String())),
   modelAllowlist: t.Optional(t.Array(t.String())),
   modelDenylist: t.Optional(t.Array(t.String())),
+  clientRouterDenylist: t.Optional(t.Array(t.String())),
   notesTitle: t.Optional(t.String()),
   notesSubtitle: t.Optional(t.String()),
   notesBody: t.Optional(t.String()),
@@ -496,6 +503,21 @@ const apiKeyShareBody = t.Object({
   /** Replaces the existing link's token so the previous URL stops resolving. */
   regenerate: t.Optional(t.Boolean()),
 });
+
+/**
+ * Serializes an intentional `null` payload as the JSON literal.
+ *
+ * Elysia reads a bare `null` return as "no content" and emits `200` with an
+ * empty body and no `content-type`, which a JSON client cannot parse. `null`
+ * here is a real answer — "this key has no link yet" — and the response type
+ * declares it, so it has to arrive as the bytes `null` rather than as nothing.
+ */
+function jsonNull(): Response {
+  return new Response("null", {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
 /** Creates tenant-bound API-key routes with request-local authorization. */
 export function createApiKeyRoutes(config: ApiKeyConfig): Elysia {
   const factory = createApiKeyOperations(config);
@@ -578,9 +600,10 @@ export function createApiKeyRoutes(config: ApiKeyConfig): Elysia {
     })
     .get("/:keyId/share", async ({ request, params, set }) => {
       try {
-        return await factory.getShare(config.accessResolver(request), params.keyId, {
+        const share = await factory.getShare(config.accessResolver(request), params.keyId, {
           origin: new URL(request.url).origin,
         });
+        return share ?? jsonNull();
       } catch (error) {
         return errorResponse(error, set, "API-key operation failed");
       }

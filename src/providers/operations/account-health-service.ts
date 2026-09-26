@@ -300,8 +300,8 @@ export function classifyAccountError(
     // xAI Grok Build's free tier resets on a rolling 24-hour window. Its
     // exhaustion is a full-day cooldown even when the provider states no
     // duration (the live 429 carries only the provider code), so it must not
-    // fall back to the generic 1h default — and never `degraded`, which would
-    // let the account back into rotation inside the window.
+    // fall back to the generic 1h default — a shorter park would let the
+    // account back into rotation inside the window.
     const grokFreeTier =
       providerCode === "subscription:free-usage-exhausted" ||
       providerCode.startsWith("subscription:") ||

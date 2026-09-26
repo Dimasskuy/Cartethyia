@@ -1,13 +1,14 @@
 import { GatewayError } from "../transport/gateway-error";
 import type { CanonicalEvent, CanonicalRequest, WireFamily } from "../transport/canonical-model";
 import { throwIfHtmlResponse, mapUpstreamHttpError, extractUpstreamMessage, extractHtmlTitle, upstreamProviderCode } from "../transport/failure-policy";
-import type {
-  ProviderAdapter,
-  ProviderDispatchTarget,
-  ProviderId,
-  ProviderDispatchContext,
+import {
+  applyRouteUserAgent,
+  CARTETHYIA_PROBE_MARKER,
+  type ProviderAdapter,
+  type ProviderDispatchTarget,
+  type ProviderId,
+  type ProviderDispatchContext,
 } from "./provider-registry";
-import { CARTETHYIA_PROBE_MARKER } from "./provider-registry";
 import { createUpstreamDeadlineLifecycle } from "./operations/upstream-deadline";
 import { encodeWireRequest, decodeWireResponse, decodeWireStream } from "../protocol/registry";
 import { postUpstreamJson } from "../protocol/transport/openai";
@@ -211,6 +212,7 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
       Object.assign(headers, await this.config.buildExtraHeaders(context, request, candidate));
     }
     Object.assign(headers, filterProviderCustomHeaders(context.credential.custom_headers));
+    applyRouteUserAgent(headers, context.credential, context.user_agent);
     return headers;
   }
 

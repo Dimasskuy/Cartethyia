@@ -6,6 +6,7 @@ import { parseQueryLimit } from "../../shared/query";
 import { Elysia, t } from "elysia";
 import type { AccessDecision } from "../../../security/access-control";
 import { redactTelemetryValue } from "../../../observability/redaction";
+import { USAGE_DIMENSIONS, type UsageDimension } from "./usage-dimensions";
 
 /**
  * Whitelisted usage periods. Numeric tokens bound the aggregation window;
@@ -117,16 +118,13 @@ export interface UsageByRow {
   avgTokensPerSec: number;
 }
 /**
- * Breakdown dimensions the usage endpoint accepts. One runtime tuple, because
- * three layers read it: the route table registers one `by-<dimension>` path per
- * member, the operations validator rejects anything outside it, and the
- * dashboard's `Dimension` union mirrors it (pinned by
- * `dashboard/test/usage-dimensions-parity.test.ts`).
+ * Breakdown dimensions the usage endpoint accepts. Declared in `./usage-dimensions`
+ * and re-exported here, because three layers read the same binding: the route
+ * table registers one `by-<dimension>` path per member, the operations validator
+ * rejects anything outside it, and the dashboard's `Dimension` union mirrors it
+ * (pinned by `dashboard/test/usage-dimensions-parity.test.ts`).
  */
-export const USAGE_DIMENSIONS = ["model", "provider", "key", "client", "client_ip"] as const;
-
-/** One usage breakdown dimension. */
-export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
+export { USAGE_DIMENSIONS, type UsageDimension };
 
 export interface UsageByResponse {
   rows: UsageByRow[];

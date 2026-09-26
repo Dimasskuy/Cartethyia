@@ -171,6 +171,7 @@ dbDescribe("createDatabaseSnapshotBuilder — automatic network pool selection",
       strategy: "fallback",
       enabled: true,
       bypassProxy: false,
+      userAgent: "claude-cli/2.1.280 (external, cli)",
     });
     await db.insert(poolRoutingSettings).values({
       tenantId,
@@ -200,6 +201,13 @@ dbDescribe("createDatabaseSnapshotBuilder — automatic network pool selection",
     expect(candidate).toBeDefined();
     expect(candidate?.network_pool_ids).toEqual([activePoolId]);
     expect(candidate?.network_pool_limits).toEqual({ [activePoolId]: 12 });
+  });
+
+  test("does not apply the built-in User-Agent setting to custom-provider candidates", async () => {
+    const candidate = (await createDatabaseSnapshotBuilder(db)()).candidates.find(
+      (row) => row.model_id === modelId && row.provider_id === providerId,
+    );
+    expect(candidate?.user_agent).toBeUndefined();
   });
 
   test("carries the pool routing strategy onto the snapshot and candidate", async () => {

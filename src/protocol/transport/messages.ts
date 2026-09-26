@@ -6,7 +6,7 @@
  */
 import type { CanonicalEvent, CanonicalRequest } from '../../transport/canonical-model';
 import { GatewayError } from '../../transport/gateway-error';
-import type { ProviderDispatchContext } from '../../providers/provider-registry';
+import { applyRouteUserAgent, type ProviderDispatchContext } from '../../providers/provider-registry';
 import { withUpstreamDeadline } from '../../providers/operations/upstream-deadline';
 import { mapClaudeHttpError } from '../../protocol/messages-errors';
 import { isRecord } from '../primitives';
@@ -21,6 +21,7 @@ export async function* sendClaudeMessagesRequest(
   fetchFn: typeof fetch,
   isOAuth = false,
 ): AsyncIterable<CanonicalEvent> {
+  applyRouteUserAgent(headers, context.credential, context.user_agent);
   const outboundFetch = context.outbound_fetch ?? fetchFn;
   const response = await withUpstreamDeadline(context, (signal) =>
     outboundFetch(url, {

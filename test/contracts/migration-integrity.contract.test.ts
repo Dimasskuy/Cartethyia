@@ -51,6 +51,21 @@ describe("SQL migration integrity", () => {
     );
   });
 
+  test("baseline carries no retired `degraded` health status", async () => {
+    // `degraded` sat between "working" and "parked" and every consumer read it
+    // differently — routing as a hard exclusion, the cooldown sweep as
+    // recoverable, the console as a third badge. The two facts it mixed are now
+    // stated by `cooldown` and `disabled`. A fresh database never needs the
+    // label, and `0002` exists only to migrate a database that already has it,
+    // so the baseline must declare the enum without it — otherwise a new
+    // install starts from the shape `0002` was written to remove.
+    const baseline = await readFile(resolve(migrationsDir, "0000_baseline.sql"), "utf8");
+    expect(baseline).toContain(
+      `CREATE TYPE "public"."health_status" AS ENUM('active', 'cooldown', 'disabled')`,
+    );
+    expect(baseline).not.toContain("'degraded'");
+  });
+
   test("baseline carries no orphan backup_status table", async () => {
     // `backup_status` was a single-row bookkeeping table with no Drizzle
     // definition, no reader, and no writer — it survived only in the baseline,

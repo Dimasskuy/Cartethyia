@@ -34,9 +34,9 @@ export interface AccountHealthSummary {
   readonly emptyMessage: string;
 }
 
-/** Recovery is offered for the two transient states the backend can recover. */
+/** Recovery is offered for the one transient state the backend can recover. */
 function isRecoverable(status: string): boolean {
-  return status === "cooldown" || status === "degraded";
+  return status === "cooldown";
 }
 
 function statusTone(status: string): "ok" | "disabled" | "warn" {

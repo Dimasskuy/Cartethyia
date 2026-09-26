@@ -5,6 +5,84 @@
 > All changes below are pre-release. Cartethyia has not been tagged or
 > released; this document reflects the current production codebase architecture and capabilities.
 
+### A fresh install starts from the current health statuses
+
+`0000_baseline.sql` still declared the `health_status` enum with the retired
+`degraded` label, so a new database created the four-value type and then ran
+`0002` to fold it down to three on the same boot. The baseline is the schema a
+fresh install starts from and is supposed to describe the current shape, so it
+now declares `active | cooldown | disabled` directly; `0002` keeps its guard and
+becomes a no-op for a database that already has the right type, which is what
+that guard was written for. A contract test pins the label out of the baseline,
+the same way the retired `native` wire family is pinned out.
+
+### The dashboard mirror no longer pulls a Node builtin into the browser bundle
+
+`dashboard/src/lib/contracts.ts` re-exported the usage-dimension tuple from
+`console/domains/stats/contracts`, the module that also declares the usage
+routes. That module imports Elysia and reaches `node:crypto` through the console
+error path, so the browser bundle externalized the builtin and carried a slice of
+the backend graph for one list of strings. The tuple now lives in an import-free
+`console/domains/stats/usage-dimensions`, which both the route module and the
+mirror re-export, so the shared binding is unchanged and nothing backend-shaped
+enters the bundle.
+
+Vite only warns about an externalized builtin, which is easy to lose in a build
+log, so `test/architecture/dashboard-boundary.test.ts` now walks every
+`dashboard/src` value import into the backend graph and fails on the first module
+that reaches Elysia, a `node:*` API, or a database driver. A type-only import is
+not a violation — the bundler erases it.
+
+The committed usage-period file had the same shape of blind spot: every
+dashboard script runs `codegen` before doing anything, so a period added to the
+backend and not regenerated was overwritten before a test could read it and
+failed nothing. The file is committed, so it now has a parity assertion against
+the backend tuple — the only mirrored constant that did not have one.
+
+### A key can refuse a downstream router
+
+An API key may now name client routers it refuses. Several gateway products can
+themselves be pointed at this gateway, and the reason to refuse one is usually
+commercial rather than security — a key resold to a router, or spent by one whose
+retries multiply upstream load.
+
+The gateway labels the caller from inbound headers using values those products
+emit themselves, and a request whose label is in the key's list is rejected `403
+client_router_denied` before a route is planned. The editor offers only the
+routers the gateway can fingerprint, and a write naming anything else is refused,
+so a stored rule is always one that can match.
+
+This is a best-effort label, not an authentication boundary: a client that sends
+no fingerprint is simply not matched, and a provider-level User-Agent override
+removes the User-Agent tells while leaving the header tells intact. An earlier
+revision also matched signals shared with genuine first-party CLI clients and was
+discarded after it labelled a real client request as a router — a signal that
+cannot separate an imitator from what it imitates is worse than none. Header
+order is not inspected either, because the request headers are normalised before
+this layer sees them.
+
+### Public pages carry a repository badge, and the share page loses its policy panels
+
+The landing page and the public share page now link the project repository with
+live star and fork counts, rendered as badge images from an external host that the
+dashboard Content-Security-Policy admits under `img-src` only — `connect-src`
+stays same-origin, so the page still cannot call a third-party API.
+
+The share page drops its enrollment-terms panel, the key-prefix pill and the trust
+copy, and announces a status only when it changes what the recipient can do: an
+unavailable link or an already-claimed address, not the ordinary ready state. The
+owner-side share dialog is denser, fits without horizontal scrolling when the link
+is long, and no longer queries recipients for a personal key — that endpoint
+belongs to a share template and answered `404` for a personal key, which surfaced
+as an error over the key's own usage.
+
+### User-Agent controls for built-in API-key providers
+
+Provider Routing Strategy now saves a User-Agent per tenant/provider for built-in API-key providers
+without OAuth login flows. It defaults to Codex; operators can select Claude Code or enter a custom
+value. OAuth details do not expose the control, and custom providers keep their existing client identity
+selection and wire configuration. The schema upgrades automatically at backend startup.
+
 ### A replayed reasoning item is folded into the turn it belongs to
 
 A client replaying a conversation to the Responses surface hit `400 the reasoning

@@ -435,7 +435,7 @@ export function resolveAccountModelCapacityCooldownMs(): number {
   );
 }
 
-/** Backoff for a transient 5xx/network fault, recorded as `degraded` (default 30s). */
+/** Backoff for a transient 5xx/network fault, recorded as `cooldown` (default 30s). */
 export function resolveAccountTransientCooldownMs(): number {
   return readInt(
     "CARTETHYIA_ACCOUNT_TRANSIENT_COOLDOWN_MS",
@@ -443,7 +443,7 @@ export function resolveAccountTransientCooldownMs(): number {
   );
 }
 
-/** Backoff for a failure no rule matched, recorded as `degraded` (default 1m). */
+/** Backoff for a failure no rule matched, recorded as `cooldown` (default 1m). */
 export function resolveAccountUnclassifiedCooldownMs(): number {
   return readInt(
     "CARTETHYIA_ACCOUNT_UNCLASSIFIED_COOLDOWN_MS",
@@ -451,7 +451,7 @@ export function resolveAccountUnclassifiedCooldownMs(): number {
   );
 }
 
-/** How long a proxy pool stays `degraded`/`cooldown` after a transport fault (default 2m). */
+/** How long a proxy pool stays `cooldown` after a transport fault (default 2m). */
 export function resolvePoolCooldownMs(): number {
   return readInt("CARTETHYIA_POOL_COOLDOWN_MS", CONFIG_SPEC.CARTETHYIA_POOL_COOLDOWN_MS);
 }

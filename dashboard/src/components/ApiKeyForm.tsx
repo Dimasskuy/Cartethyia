@@ -2,7 +2,12 @@ import { useState, type ReactNode } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { ModelPickerModal } from "./ModelPicker";
-import { TENANT_KEY_SCOPES, type ApiKeyResponse, type TenantScope } from "../lib/contracts";
+import {
+  CLIENT_ROUTER_IDS,
+  TENANT_KEY_SCOPES,
+  type ApiKeyResponse,
+  type TenantScope,
+} from "../lib/contracts";
 
 /**
  * What each assignable scope actually permits, as a tooltip on the checkbox.
@@ -127,6 +132,7 @@ export interface KeyFormInput {
   key?: string;
   modelAllowlist: string[];
   providerAllowlist: string[];
+  clientRouterDenylist: string[];
   scopes: string[];
   requestsPerMinute?: number | null;
   maxConcurrentRequests?: number | null;
@@ -198,6 +204,11 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
     return p ? p.join(", ") : "";
   });
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [blockedRouters, setBlockedRouters] = useState<string[]>(() => {
+    const list = (record as unknown as { clientRouterDenylist?: string[] | null })
+      ?.clientRouterDenylist;
+    return list ? [...list] : [];
+  });
   const [notesTitle, setNotesTitle] = useState(() => {
     const t = (record as unknown as { notesTitle?: string | null })?.notesTitle;
     return t ?? "";
@@ -227,6 +238,7 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
       scopes,
       modelAllowlist: models,
       providerAllowlist: providers,
+      clientRouterDenylist: blockedRouters,
       requestsPerMinute: parseLimitOrNull(rpm),
       maxConcurrentRequests: parseLimitOrNull(concurrent),
       dailyTokenLimit: isOneTime ? null : (parseTokenLimit(daily) ?? null),
@@ -574,6 +586,47 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
           placeholder="openai, anthropic"
           disabled={busy}
         />
+        {/* A key can refuse a downstream router it was resold to. The ids come
+            from the backend's own list, so the form cannot offer one the
+            gateway cannot fingerprint (it rejects an unknown id on write). */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+            Blocked client routers
+          </span>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            {CLIENT_ROUTER_IDS.map((routerId) => (
+              <label
+                key={routerId}
+                title={`Refuse requests fingerprinted as ${routerId}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={blockedRouters.includes(routerId)}
+                  onChange={() =>
+                    setBlockedRouters((current) =>
+                      current.includes(routerId)
+                        ? current.filter((entry) => entry !== routerId)
+                        : [...current, routerId],
+                    )
+                  }
+                  disabled={busy}
+                />
+                {routerId}
+              </label>
+            ))}
+          </div>
+          <span style={{ fontSize: "10.5px", color: "var(--text-tertiary)" }}>
+            A matched request is refused with 403 before routing. Detection is
+            best-effort: a client that sends no fingerprint is not matched.
+          </span>
+        </div>
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
           {TENANT_KEY_SCOPES.map((scope) => (
             <label

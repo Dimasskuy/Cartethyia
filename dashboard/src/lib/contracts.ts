@@ -8,13 +8,21 @@ import type { SessionStatusResponse } from "../../../src/console/auth/session";
  */
 // `USAGE_DIMENSIONS` is re-exported as a value (not a type-only import) because
 // the Usage page validates the `?dim=` query parameter against it at runtime.
-export { USAGE_DIMENSIONS } from "../../../src/console/domains/stats/contracts";
-export type { UsageDimension } from "../../../src/console/domains/stats/contracts";
+// It comes from the pure `usage-dimensions` module rather than
+// `stats/contracts`, which imports Elysia and reaches `node:crypto` through the
+// error path — re-exporting from there put a Node builtin in the browser bundle.
+export { USAGE_DIMENSIONS } from "../../../src/console/domains/stats/usage-dimensions";
+export type { UsageDimension } from "../../../src/console/domains/stats/usage-dimensions";
 // `TENANT_KEY_SCOPES` is re-exported as a value so the API-key editor renders
 // the backend's own assignable-scope list instead of a hand-kept copy. The
 // module is pure (no imports), so it is safe in the browser bundle.
 export { TENANT_KEY_SCOPES } from "../../../src/security/access-control";
 export type { TenantScope } from "../../../src/security/access-control";
+// `CLIENT_ROUTER_IDS` is re-exported so the API-key editor offers exactly the
+// routers the backend can fingerprint, instead of a hand-kept copy that would
+// let the form offer an id the backend rejects. The module is pure (no imports),
+// so it is safe in the browser bundle.
+export { CLIENT_ROUTER_IDS } from "../../../src/security/client-router-fingerprint";
 
 export type {
   SystemHealthResponse,

@@ -35,13 +35,30 @@ export function buildUpstreamDispatchContext(input: {
   readonly deadline: number;
   readonly signal: AbortSignal;
   readonly headers: Record<string, string>;
+  readonly userAgent?: string;
   readonly outboundFetch?: ValidatedOutboundFetch;
 }): Record<string, unknown> {
+  const credentialKind =
+    typeof input.credential === "object" && input.credential !== null && "credential_kind" in input.credential
+      ? input.credential.credential_kind
+      : undefined;
+  const userAgent = credentialKind === "oauth" || credentialKind === "scoped_access_token"
+    ? undefined
+    : input.userAgent;
+  const sourceFetch = input.outboundFetch;
+  const outboundFetch = sourceFetch && userAgent
+    ? (request: RequestInfo | URL, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        headers.set("user-agent", userAgent);
+        return sourceFetch(request, { ...init, headers });
+      }
+    : sourceFetch;
   return {
     credential: input.credential,
     deadline: input.deadline,
     abort_signal: input.signal,
+    ...(userAgent ? { user_agent: userAgent } : {}),
     ...(Object.keys(input.headers).length > 0 ? { request_headers: input.headers } : {}),
-    ...(input.outboundFetch ? { outbound_fetch: input.outboundFetch } : {}),
+    ...(outboundFetch ? { outbound_fetch: outboundFetch } : {}),
   } as Record<string, unknown>;
 }

@@ -2,20 +2,32 @@ import type { ReactNode } from "react";
 import { Inbox, Loader2, TriangleAlert } from "lucide-react";
 import { Button } from "./button";
 
+/**
+ * A state nested in a dialog or a card must not reserve the route-level
+ * centering floor (`.state-viewport` is 220px tall), which would balloon a
+ * compact panel into mostly empty space. `compact` keeps the same markup and
+ * semantics with the floor removed.
+ */
+function viewportClass(compact: boolean | undefined): string {
+  return compact === true ? "state-viewport state-viewport-compact" : "state-viewport";
+}
+
 export function EmptyState({
   title,
   message,
   icon,
   action,
+  compact,
 }: {
   title: string;
   message: string;
   /** Defaults to an inbox glyph; pass one to name the specific empty thing. */
   icon?: ReactNode;
   action?: ReactNode;
+  compact?: boolean;
 }) {
   return (
-    <div className="state-viewport">
+    <div className={viewportClass(compact)}>
       <div className="state-box">
         <div className="state-box-icon" aria-hidden="true">
           {icon ?? <Inbox size={20} />}
@@ -28,9 +40,9 @@ export function EmptyState({
   );
 }
 
-export function LoadingState({ label = "Loading data…" }: { label?: string }) {
+export function LoadingState({ label = "Loading data…", compact }: { label?: string; compact?: boolean }) {
   return (
-    <div className="state-viewport">
+    <div className={viewportClass(compact)}>
       <div className="state-box">
         <div className="state-box-icon" aria-hidden="true">
           <Loader2 size={20} className="animate-spin" />
@@ -49,15 +61,17 @@ export function ErrorState({
   onRetry,
   retrying = false,
   action,
+  compact,
 }: {
   title?: string;
   message: string;
   onRetry?: () => void;
   retrying?: boolean;
   action?: ReactNode;
+  compact?: boolean;
 }) {
   return (
-    <div className="state-viewport">
+    <div className={viewportClass(compact)}>
       <div className="state-box">
         <div className="state-box-icon state-box-icon-danger" aria-hidden="true">
           <TriangleAlert size={20} />

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   API_CONTENT_SECURITY_POLICY,
+  BADGE_IMAGE_ORIGIN,
   X_FRAME_OPTIONS,
   dashboardContentSecurityPolicy,
   inlineScriptBodies,
@@ -41,6 +42,33 @@ describe("security header policy", () => {
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("https://fonts.googleapis.com");
     expect(csp).toContain("https://fonts.gstatic.com");
+  });
+
+  /**
+   * The landing and share pages render the repository's star/fork counts from
+   * the badge host, so `img-src` must name it. Widening images must not widen
+   * the classes that could execute or exfiltrate: scripts stay same-origin plus
+   * hashes, and `connect-src` stays `'self'`.
+   */
+  test("dashboard CSP admits the badge image host without widening scripts or connections", () => {
+    const csp = dashboardContentSecurityPolicy("<script>boot()</script>");
+    expect(csp).toContain(`img-src 'self' data: blob: ${BADGE_IMAGE_ORIGIN}`);
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("script-src 'self' ");
+    expect(csp).not.toContain("connect-src 'self' https:");
+    expect(csp).not.toContain(`script-src 'self' ${BADGE_IMAGE_ORIGIN}`);
+  });
+
+  /**
+   * The dashboard copies the badge origin rather than importing it (browser code
+   * cannot reach a module that reads `node:crypto`), so this is the join that
+   * keeps the CSP and the badge URL from drifting apart.
+   */
+  test("the dashboard badge origin matches the origin the CSP permits", () => {
+    const csp = dashboardContentSecurityPolicy("");
+    const imgSrc = csp.split("; ").find((directive) => directive.startsWith("img-src "));
+    expect(imgSrc).toBeDefined();
+    expect(imgSrc).toContain(BADGE_IMAGE_ORIGIN);
   });
 
   test("dashboard CSP omits hashes when no inline script exists", () => {

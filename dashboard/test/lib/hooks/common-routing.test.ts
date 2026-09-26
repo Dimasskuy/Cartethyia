@@ -24,9 +24,23 @@ describe("assertProviderRouting", () => {
       enabled: true,
       maxInflight: null,
       bypassProxy: false,
+      userAgent: "codex_cli_rs/0.156.1",
     });
     expect(result.maxInflight).toBeNull();
     expect(result.bypassProxy).toBe(false);
+  });
+
+  test("rejects a routing response without its persisted User-Agent", () => {
+    expect(() =>
+      assertProviderRouting({
+        providerId: "openai",
+        strategy: "fallback",
+        rotateCount: 1,
+        enabled: true,
+        maxInflight: null,
+        bypassProxy: false,
+      }),
+    ).toThrow("Invalid provider routing response");
   });
   test("rejects a response without rotateCount", () => {
     expect(() =>

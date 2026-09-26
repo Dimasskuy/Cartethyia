@@ -33,6 +33,7 @@ export type GatewayErrorCode =
   | "max_connections_exceeded"
   | "proxy_unreachable"
   | "tool_call_loop_detected"
+  | "client_router_denied"
   | "shutting_down";
 
 /** Identifies which boundary produced a safe public error. */

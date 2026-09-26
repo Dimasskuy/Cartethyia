@@ -35,6 +35,7 @@ import { queryKeys } from "../lib/query-keys";
 import { providerDisplayName } from "../lib/provider-names";
 import { toast } from "../lib/toast";
 import type { ProviderAccountResponse } from "../lib/contracts";
+import { providerCanConfigureUserAgent } from "../lib/provider-user-agent";
 import { RoutingStrategyCard } from "./provider-detail/RoutingStrategyCard";
 import { AccountsList, AddAccountModal } from "./provider-detail/Accounts";
 import { DeviceCodeDialog, OAuthBrowserDialog } from "./provider-detail/OAuthDialogs";
@@ -195,7 +196,7 @@ export default function ProviderDetail(): ReactNode {
           const failed = result.results.length - ok - rateLimited;
           toast.success(
             "Grok account probe complete",
-            `${ok} passed · ${rateLimited} returned 202 and were marked degraded · ${failed} other failures`,
+            `${ok} passed · ${rateLimited} returned 202 and were parked in cooldown · ${failed} other failures`,
           );
         },
         onError: (error) =>
@@ -254,8 +255,10 @@ export default function ProviderDetail(): ReactNode {
 
       />
       {/* Routing Strategy */}
-      <RoutingStrategyCard providerId={id} />
-
+      <RoutingStrategyCard
+        providerId={id}
+        showUserAgent={providerCanConfigureUserAgent(provider)}
+      />
       {/* Accounts */}
       {provider.requiresAccount === false ? (
         <Card>

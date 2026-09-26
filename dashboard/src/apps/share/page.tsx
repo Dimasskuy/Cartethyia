@@ -4,6 +4,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardBody } from "../../components/ui/card";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/state";
 import { ClipboardButton } from "../../components/patterns/clipboard-button";
+import { GithubBadge } from "../../components/patterns/github-badge";
 import { readConsoleTheme, applyConsoleTheme } from "../../lib/theme";
 import { useShareData, type ShareEnrollmentData } from "../../lib/hooks/share-data";
 import {
@@ -19,7 +20,6 @@ function message(payload: ApiError): string {
   if (typeof payload.error === "string") return payload.error;
   return payload.error?.message ?? payload.message ?? "Unable to generate an API key.";
 }
-function fmt(value: number | null): string { return value === null ? "Unlimited" : value.toLocaleString(); }
 
 export function tokenFromPathname(pathname: string): string {
   const path = pathname.replace(/\/$/, "");
@@ -117,14 +117,14 @@ export function SharePage(): ReactElement {
   const visibleSecret = restoredSecret ?? secret;
   const data = state.data;
   const canIssue = Boolean(data?.canIssue) && !data?.alreadyIssued && !issueConflict && !visibleSecret;
-  let statusLabel = "Enrollment unavailable";
+  // The page states a problem, not a healthy-but-idle status: "ready to enroll"
+  // is the ordinary state and says nothing, while an unavailable link and an
+  // already-claimed IP both change what the recipient can do.
+  let statusLabel: string | null = null;
   let statusClass = "share-status-closed";
   if (visibleSecret) {
     statusLabel = "Key ready";
     statusClass = "share-status-ready";
-  } else if (canIssue) {
-    statusLabel = "Ready to enroll";
-    statusClass = "share-status-open";
   } else if (data?.alreadyIssued || issueConflict) {
     statusLabel = "Already enrolled";
   }
@@ -146,9 +146,12 @@ export function SharePage(): ReactElement {
             </span>
             <b>Cartethyia</b>
           </a>
-          <a href="/" className="share-home-link">
-            <Home size={13} aria-hidden="true" /> Home
-          </a>
+          <div className="share-topbar-actions">
+            <GithubBadge className="share-github-badge" />
+            <a href="/" className="share-home-link">
+              <Home size={13} aria-hidden="true" /> Home
+            </a>
+          </div>
         </div>
       </header>
       <main className="share-main">
@@ -177,35 +180,18 @@ export function SharePage(): ReactElement {
                 A personal API key for this gateway, subject to the limits below.
               </p>
               <div className="share-hero-meta">
-                <span className={`share-status ${statusClass}`}>
-                  <span className="share-status-dot" aria-hidden="true" />
-                  {statusLabel}
-                </span>
-                {data.keyPrefix ? <span className="share-meta-pill">Prefix {data.keyPrefix}</span> : null}
+                {statusLabel ? (
+                  <span className={`share-status ${statusClass}`}>
+                    <span className="share-status-dot" aria-hidden="true" />
+                    {statusLabel}
+                  </span>
+                ) : null}
                 {data.expiresAt ? (
                   <span className="share-meta-pill">
                     Link expires {new Date(data.expiresAt).toLocaleString()}
                   </span>
                 ) : null}
               </div>
-            </Card>
-
-            <Card className="share-hud-card">
-              <div className="share-section-heading">
-                <h2>Policy &amp; limits</h2>
-                <span className="share-section-caption">Your enrollment terms</span>
-              </div>
-              <dl className="share-policy">
-                <div><dt>Requests / minute</dt><dd>{fmt(data.requestsPerMinute)}</dd></div>
-                <div><dt>Concurrent requests</dt><dd>{fmt(data.maxConcurrentRequests)}</dd></div>
-                <div><dt>Daily token cap</dt><dd>{fmt(data.dailyLimit)}</dd></div>
-                <div><dt>Monthly token cap</dt><dd>{fmt(data.monthlyLimit)}</dd></div>
-                <div><dt>Lifetime cap</dt><dd>{fmt(data.oneTimeLimit)}</dd></div>
-                <div>
-                  <dt>Providers</dt>
-                  <dd>{data.providerAllowlist?.length ? data.providerAllowlist.join(", ") : "All allowed"}</dd>
-                </div>
-              </dl>
             </Card>
 
             <div className="share-credentials">
@@ -340,10 +326,6 @@ export function SharePage(): ReactElement {
                 <p className="share-model-policy">Required model prefix: {data.modelPrefix}</p>
               ) : null}
             </Card>
-            <p className="share-trust-copy">
-              This page never displays a parent credential. One active key per canonical IP;
-              the browser copy is restored only while this link stays valid.
-            </p>
           </>
         ) : (
           <Card className="share-hud-card">

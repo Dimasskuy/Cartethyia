@@ -4,7 +4,7 @@ CREATE TYPE "public"."credential_kind" AS ENUM('api_key', 'oauth', 'none');
 --> statement-breakpoint
 CREATE TYPE "public"."health_entity_kind" AS ENUM('account', 'pool');
 --> statement-breakpoint
-CREATE TYPE "public"."health_status" AS ENUM('active', 'degraded', 'cooldown', 'disabled');
+CREATE TYPE "public"."health_status" AS ENUM('active', 'cooldown', 'disabled');
 --> statement-breakpoint
 CREATE TYPE "public"."network_pool_kind" AS ENUM('http', 'socks5');
 --> statement-breakpoint
@@ -166,6 +166,7 @@ CREATE TABLE "provider_routing_settings" (
   "rotate_count" integer DEFAULT 1 NOT NULL,
   "max_inflight" integer,
   "enabled" boolean DEFAULT false NOT NULL,
+  "user_agent" text DEFAULT 'codex_cli_rs/0.156.1' NOT NULL,
   "bypass_proxy" boolean DEFAULT false NOT NULL,
   CONSTRAINT "provider_routing_settings_provider_id_providers_id_fk" FOREIGN KEY ("provider_id") REFERENCES "providers"("id") ON DELETE cascade,
   CONSTRAINT "provider_routing_settings_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE cascade
@@ -198,6 +199,7 @@ CREATE TABLE "api_keys" (
   "provider_allowlist" jsonb,
   "model_allowlist" jsonb,
   "model_denylist" jsonb,
+  "client_router_denylist" jsonb,
   "model_prefix" text,
   "created_at" timestamptz DEFAULT now() NOT NULL,
   "revoked_at" timestamptz,

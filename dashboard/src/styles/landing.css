@@ -81,8 +81,13 @@ html[data-app="landing"] #root {
 .story-desktop-nav button, .story-desktop-nav a { display: inline-flex; height: 36px; align-items: center; gap: .4rem; padding-inline: .7rem; border: 0; border-radius: 8px; background: transparent; color: rgba(255,255,255,.62); font-size: 12px; font-weight: 600; text-decoration: none; cursor: pointer; transition: background-color 160ms ease, color 160ms ease; }
 .story-desktop-nav button:hover, .story-desktop-nav a:hover { background: rgba(255,255,255,.1); color: white; }
 .story-header-actions { display: flex; align-items: center; gap: .5rem; }
-.story-github-link, .story-console-link, .story-mobile-nav > a { display: inline-flex; align-items: center; gap: .45rem; height: 38px; padding-inline: .9rem; border: 1px solid rgba(255,255,255,.25); border-radius: 10px; background: rgba(255,255,255,.09); color: white; font-size: 12px; font-weight: 700; text-decoration: none; transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease; }
-.story-github-link:hover, .story-console-link:hover { background: white; border-color: white; color: #05070d; }
+.story-console-link, .story-mobile-nav > a { display: inline-flex; align-items: center; gap: .45rem; height: 38px; padding-inline: .9rem; border: 1px solid rgba(255,255,255,.25); border-radius: 10px; background: rgba(255,255,255,.09); color: white; font-size: 12px; font-weight: 700; text-decoration: none; transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease; }
+.story-console-link:hover { background: white; border-color: white; color: #05070d; }
+
+/* The GitHub chip sits on the dark story header, so it drops the shared light
+   surface tokens for translucent white and keeps its height on the header row. */
+.story-github-badge { height: 38px; border-color: rgba(255,255,255,.25); background: rgba(255,255,255,.09); color: white; }
+.story-github-badge:hover { border-color: white; background: white; color: #05070d; }
 .story-mode-button {
   display: none;
   align-items: center;

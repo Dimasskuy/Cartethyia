@@ -161,13 +161,6 @@ html[data-app="share"] body {
   font-weight: 700;
 }
 
-.share-status-open,
-.share-status-ready {
-  border-color: var(--green-soft);
-  background: var(--green-soft);
-  color: var(--green);
-}
-
 .share-status-closed {
   border-color: var(--orange-soft);
   background: var(--orange-soft);
@@ -201,40 +194,6 @@ html[data-app="share"] body {
 .share-section-caption {
   color: var(--text-tertiary);
   font-size: 11px;
-}
-
-.share-policy {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.share-policy > div {
-  min-width: 0;
-  min-height: 72px;
-  padding: 12px 13px;
-  border: 1px solid var(--inner-border);
-  border-radius: 12px;
-  background: var(--surface-2);
-}
-
-.share-policy dt {
-  color: var(--text-tertiary);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.share-policy dd {
-  margin-top: 9px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  overflow-wrap: anywhere;
 }
 
 .share-credentials {
@@ -461,14 +420,6 @@ html[data-app="share"] body {
   overflow-wrap: anywhere;
 }
 
-.share-trust-copy {
-  padding-left: 12px;
-  border-left: 2px solid var(--accent);
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 @media (min-width: 900px) {
   .share-model-groups {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -476,10 +427,6 @@ html[data-app="share"] body {
 }
 
 @media (max-width: 700px) {
-  .share-policy {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .share-credentials {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -511,4 +458,12 @@ html[data-app="share"] body {
   .share-model-groups {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* The topbar keeps its actions grouped so the GitHub chip sits beside Home
+   rather than being spread apart by the bar's space-between. */
+.share-topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }

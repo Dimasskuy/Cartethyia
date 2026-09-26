@@ -176,6 +176,7 @@ export async function handleProviderProxyRequest(
         wire_family: candidate.wire_family,
         endpoint_path: candidate.endpoint,
         capabilities: candidate.capability_profile,
+        user_agent: candidate.user_agent,
       };
       const dispatchRequest =
         candidate.model_id === canonicalRequest.model
@@ -194,6 +195,7 @@ export async function handleProviderProxyRequest(
           deadline: state.deadlineMs,
           signal: state.abortController.signal,
           headers: inboundHeaders,
+          ...(candidate.user_agent === undefined ? {} : { userAgent: candidate.user_agent }),
           ...(wrappedOutboundFetch ? { outboundFetch: wrappedOutboundFetch } : {}),
         });
         // `ProviderAdapter.dispatch` is declared to return a non-nullable
@@ -719,6 +721,7 @@ export async function handleProviderProxyRequest(
         deadline: state.deadlineMs,
         signal: state.abortController.signal,
         headers: inboundHeaders,
+        ...(candidate.user_agent === undefined ? {} : { userAgent: candidate.user_agent }),
         ...(deps.networkBindingFactory
           ? {
               outboundFetch: captureProviderExchange(

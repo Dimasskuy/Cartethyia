@@ -62,11 +62,7 @@ export function StatCard({
 
   const effectiveTone =
     tone ||
-    (status === "degraded" || status === "cooldown"
-      ? "orange"
-      : status === "disabled"
-        ? "red"
-        : "accent");
+    (status === "cooldown" ? "orange" : status === "disabled" ? "red" : "accent");
   const toneColor = toneColorMap[effectiveTone] || "var(--accent)";
   return (
     <div className="stat-card">

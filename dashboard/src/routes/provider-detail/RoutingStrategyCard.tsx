@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Card, CardBody, CardHeader } from "../../components/ui/card";
 import { Inline } from "../../components/ui/inline";
 import { Input } from "../../components/ui/input";
+import { Select } from "../../components/ui/select";
 import { ErrorState, LoadingState } from "../../components/ui/state";
 import { Stack } from "../../components/ui/stack";
 import { Switch } from "../../components/ui/switch";
@@ -12,9 +13,23 @@ import {
   useRoutingStrategy,
 } from "../../lib/use-routing-strategy";
 
-export function RoutingStrategyCard({ providerId }: { readonly providerId: string }): ReactNode {
-  const routing = useRoutingStrategy(providerId);
+const USER_AGENT_PRESETS = [
+  { value: "codex_cli_rs/0.156.1", label: "Codex" },
+  { value: "claude-cli/2.1.280 (external, cli)", label: "Claude Code" },
+] as const;
+
+export function RoutingStrategyCard({
+  providerId,
+  showUserAgent,
+}: {
+  readonly providerId: string;
+  readonly showUserAgent: boolean;
+}): ReactNode {
+  const routing = useRoutingStrategy(providerId, showUserAgent);
   const showUnsupportedHint = PROXY_UNSUPPORTED_HINT_PROVIDERS.has(providerId);
+  const userAgentOptions = USER_AGENT_PRESETS.some((option) => option.value === routing.userAgent)
+    ? USER_AGENT_PRESETS
+    : [...USER_AGENT_PRESETS, { value: routing.userAgent, label: "Custom" }];
 
   if (routing.isLoading) return <LoadingState label="Loading routing..." />;
   if (routing.isError)
@@ -147,6 +162,25 @@ export function RoutingStrategyCard({ providerId }: { readonly providerId: strin
           </div>
         </div>
 
+        {showUserAgent ? (
+          <div style={{ display: "grid", gap: "8px", marginTop: "12px", maxWidth: "480px" }}>
+            <Select
+              id="routing-user-agent-preset"
+              label="Upstream client identity"
+              value={routing.userAgent}
+              options={userAgentOptions}
+              onValueChange={routing.setUserAgent}
+            />
+            <Input
+              id="routing-user-agent"
+              label="User-Agent header value"
+              value={routing.userAgent}
+              maxLength={4096}
+              onChange={(event) => routing.setUserAgent(event.target.value)}
+              hint="Built-in API-key provider requests only; OAuth and custom-provider identity settings stay unchanged."
+            />
+          </div>
+        ) : null}
           <div
             style={{
               display: "flex",

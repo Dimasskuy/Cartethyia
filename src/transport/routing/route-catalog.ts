@@ -18,6 +18,7 @@ import "../../providers/integrations/claude-code/claude-oauth";
 import "../../providers/integrations/codex/codex-oauth";
 import { resolveTenantOverride } from "../../persistence/tenant-scope";
 import {
+  DEFAULT_PROVIDER_USER_AGENT,
   type RouteCandidate,
   type ComboDefinition,
   type PoolRoutingSetting,
@@ -25,9 +26,9 @@ import {
   type RouteSnapshot,
   type SnapshotBuilder,
 } from "./route-model";
-import { DEFAULT_PROXY_BYPASS_PROVIDER_IDS } from "../../providers/provider-registry";
-import { providerUsesBespokeWire } from "../../providers/provider-metadata";
+import { DEFAULT_PROXY_BYPASS_PROVIDER_IDS, isBundledProviderId } from "../../providers/provider-registry";
 import type { WireFamily } from "../canonical-model";
+import { providerUsesBespokeWire } from "../../providers/provider-metadata";
 
 const CLAUDE_MODEL_FAMILIES = new Set(["opus", "sonnet", "haiku", "fable", "mythos"]);
 
@@ -226,6 +227,7 @@ const ROUTING_COLUMNS = {
   maxInflight: providerRoutingSettings.maxInflight,
   enabled: providerRoutingSettings.enabled,
   bypassProxy: providerRoutingSettings.bypassProxy,
+  userAgent: providerRoutingSettings.userAgent,
 } as const;
 
 const POOL_COLUMNS = {
@@ -342,6 +344,7 @@ class RouteCatalogRepository {
         maxInflight: row.maxInflight,
         enabled: row.enabled,
         bypassProxy: row.bypassProxy,
+        userAgent: row.userAgent,
       };
     }
     /** Tenant-specific setting wins over global; an unconfigured provider
@@ -358,6 +361,11 @@ class RouteCatalogRepository {
         globalSetting?.bypassProxy,
         DEFAULT_PROXY_BYPASS_PROVIDER_IDS.has(providerId),
       );
+    }
+    function resolveUserAgent(providerId: string, rowTenantId: string | null): string {
+      const tenantSetting = rowTenantId ? providerRouting[rowTenantId]?.[providerId]?.userAgent : undefined;
+      const globalSetting = providerRouting.__global__?.[providerId]?.userAgent;
+      return resolveTenantOverride(tenantSetting, globalSetting, DEFAULT_PROVIDER_USER_AGENT);
     }
 
     /** Provider-wide concurrency ceiling shared by every account of the provider.
@@ -503,6 +511,9 @@ class RouteCatalogRepository {
           wire_family: model.wireFamily as WireFamily,
           endpoint: model.endpointPath,
           capability_profile: capabilityProfile,
+          ...(isBundledProviderId(model.providerId)
+            ? { user_agent: resolveUserAgent(model.providerId, rowTenantId) }
+            : {}),
           tenant_id: rowTenantId,
           provider_account_id: account.id,
           ...(account.label ? { provider_account_label: account.label } : {}),

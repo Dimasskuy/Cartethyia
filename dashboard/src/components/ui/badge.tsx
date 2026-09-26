@@ -8,7 +8,6 @@ export type BadgeTone =
   | "info"
   | "accent"
   | "active"
-  | "degraded"
   | "cooldown"
   | "disabled"
   | "purple"
@@ -28,7 +27,6 @@ const toneMap: Record<BadgeTone, string> = {
   err: "badge-err",
   disabled: "badge-disabled",
   warn: "badge-warn",
-  degraded: "badge-degraded",
   cooldown: "badge-warn",
   info: "badge-info",
   accent: "badge-accent",

@@ -388,6 +388,8 @@ export const providerRoutingSettings = pgTable(
      * `null` = UNLIMITED concurrency per account. */
     maxInflight: integer("max_inflight"),
     enabled: boolean("enabled").notNull().default(false),
+    // Route-selected User-Agent for built-in API-key providers; OAuth and BYOK identities stay native.
+    userAgent: text("user_agent").notNull().default("codex_cli_rs/0.156.1"),
     // When true, this provider's requests always dial direct. When false,
     // dispatch automatically selects among every active network pool the
     // tenant owns (least-loaded/non-cooldown) — never an admin-pinned pool.
@@ -470,6 +472,16 @@ export const apiKeys = pgTable(
     providerAllowlist: jsonb("provider_allowlist").$type<readonly string[]>(),
     modelAllowlist: jsonb("model_allowlist").$type<readonly string[]>(),
     modelDenylist: jsonb("model_denylist").$type<readonly string[]>(),
+    /**
+     * Client-router ids this key refuses. A request whose fingerprint names one
+     * of these is rejected before routing, so an operator can stop a downstream
+     * router from spending the key. Empty/NULL means "no router is refused".
+     *
+     * A label, not a security control: a client that sends no fingerprint is
+     * simply not matched, which is why this is a per-key policy rather than a
+     * boundary anything else in the system trusts.
+     */
+    clientRouterDenylist: jsonb("client_router_denylist").$type<readonly string[]>(),
     modelPrefix: text("model_prefix"),
     createdAt: createdAtColumn(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),

@@ -239,6 +239,7 @@ function makeStore(): {
           maxInflight: null,
           enabled: false,
           bypassProxy: false,
+          userAgent: "codex_cli_rs/0.156.1",
         }
       );
     },
@@ -253,6 +254,7 @@ function makeStore(): {
           maxInflight: patch.maxInflight ?? null,
           enabled: patch.enabled ?? false,
           bypassProxy: patch.bypassProxy ?? false,
+          userAgent: patch.userAgent ?? "codex_cli_rs/0.156.1",
         };
         rows.push({ tenantId, response: { ...created, tenantId } });
         return created;
@@ -264,6 +266,7 @@ function makeStore(): {
         ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
         ...(patch.bypassProxy !== undefined ? { bypassProxy: patch.bypassProxy } : {}),
         ...(patch.maxInflight !== undefined ? { maxInflight: patch.maxInflight } : {}),
+        ...(patch.userAgent !== undefined ? { userAgent: patch.userAgent } : {}),
       };
       const idx = rows.findIndex(
         (r) => r.response.providerId === providerId && r.tenantId === tenantId,
@@ -289,6 +292,7 @@ describe("ProviderDetailOperations.getRouting", () => {
       maxInflight: null,
       enabled: false,
       bypassProxy: false,
+      userAgent: "codex_cli_rs/0.156.1",
     });
   });
 
@@ -403,6 +407,23 @@ describe("ProviderDetailOperations.updateRouting", () => {
     const cleared = await factory.updateRouting(access, "openai", { maxInflight: null });
     expect(cleared.maxInflight).toBeNull();
     expect((await factory.getRouting(access, "openai")).maxInflight).toBeNull();
+  });
+
+  test("persists a custom User-Agent for a built-in API-key provider", async () => {
+    const { store } = makeStore();
+    const factory = createProviderDetailOperations({ store, accessResolver: () => access });
+    const selected = await factory.updateRouting(access, "openai", {
+      userAgent: "claude-cli/2.1.280 (external, cli)",
+    });
+    expect(selected.userAgent).toBe("claude-cli/2.1.280 (external, cli)");
+    expect((await factory.getRouting(access, "openai")).userAgent).toBe(
+      "claude-cli/2.1.280 (external, cli)",
+    );
+    await expect(
+      factory.updateRouting(access, "openai", {
+        userAgent: `bad${String.fromCharCode(1)}Injected`,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_request" });
   });
 
   test("account inflight normalizes readings and reports zero when unwired", async () => {

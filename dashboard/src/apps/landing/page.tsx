@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
-import { Activity, ArrowRight, ArrowUpRight, GitFork, Home, Menu, MessageCircle, Network, ShieldCheck, Sparkles, Terminal, X } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight, Home, Menu, MessageCircle, Network, ShieldCheck, Sparkles, Terminal, X } from "lucide-react";
+import { GITHUB_REPO_URL, GithubBadge } from "../../components/patterns/github-badge";
 import { useReducedMotion } from "../../lib/use-reduced-motion";
 
 type SignalIconName = "activity" | "network" | "shield" | "sparkles" | "terminal";
@@ -26,7 +27,6 @@ interface StoryChapter {
 }
 
 const ASSET_BASE = import.meta.env.BASE_URL;
-const GITHUB_URL = "https://github.com/risunCode/Cartethyia";
 const CONSOLE_PATH = "/console";
 
 const storyImage = (name: string): string => `${ASSET_BASE}when_yah/${name}`;
@@ -272,16 +272,13 @@ export function LandingPage(): ReactElement {
               <Terminal size={14} aria-hidden={true} />
               Console
             </a>
-            <a href={GITHUB_URL} target="_blank" rel="noreferrer">
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
               <MessageCircle size={14} aria-hidden={true} />
               Community
             </a>
           </nav>
           <div className="story-header-actions">
-            <a className="story-github-link" href={GITHUB_URL} target="_blank" rel="noreferrer">
-              <GitFork size={14} aria-hidden={true} />
-              GitHub
-            </a>
+            <GithubBadge className="story-github-badge" />
             <button
               type="button"
               aria-label={showAll ? "Show story" : "Show all"}

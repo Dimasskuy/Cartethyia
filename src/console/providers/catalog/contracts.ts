@@ -52,7 +52,7 @@ export const MODEL_WRITE_SCOPES = ["models:write"] as const;
 
 /**
  * Account enable/disable states an operator may set, as a runtime tuple.
- * `degraded` and `cooldown` are health-machine-only and deliberately absent.
+ * `cooldown` is health-machine-only and deliberately absent.
  */
 export const ACCOUNT_STATUSES = ["active", "disabled"] as const;
 
@@ -565,6 +565,8 @@ export interface ProviderRoutingResponse {
    * default to bypass because their transport can't route through an HTTP
    * CONNECT proxy; it stays a real, per-tenant-overridable setting. */
   readonly bypassProxy: boolean;
+  /** Built-in API-key upstream User-Agent; OAuth and custom providers retain their own identity. */
+  readonly userAgent: string;
 }
 
 /**

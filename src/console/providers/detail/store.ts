@@ -5,6 +5,7 @@ import { providerRoutingSettings } from "../../../persistence/schema";
 import { resolveTenantOverride } from "../../../persistence/tenant-scope";
 import { DEFAULT_PROXY_BYPASS_PROVIDER_IDS } from "../../../providers/provider-registry";
 import type { ProviderRoutingResponse, UpdateProviderRoutingRequest } from "../catalog/contracts";
+import { DEFAULT_PROVIDER_USER_AGENT } from "../../../transport/routing/route-model";
 import type { ProviderDetailStore } from "./contracts";
 function mapRow(row: typeof providerRoutingSettings.$inferSelect): ProviderRoutingResponse {
   return {
@@ -15,6 +16,7 @@ function mapRow(row: typeof providerRoutingSettings.$inferSelect): ProviderRouti
     maxInflight: row.maxInflight,
     enabled: row.enabled,
     bypassProxy: row.bypassProxy,
+    userAgent: row.userAgent,
   };
 }
 
@@ -64,9 +66,9 @@ export class DrizzleProviderDetailStore implements ProviderDetailStore {
       maxInflight: null,
       enabled: false,
       bypassProxy: DEFAULT_PROXY_BYPASS_PROVIDER_IDS.has(providerId),
+      userAgent: DEFAULT_PROVIDER_USER_AGENT,
     };
   }
-
   async updateRouting(
     providerId: string,
     tenantId: string | null,
@@ -83,6 +85,7 @@ export class DrizzleProviderDetailStore implements ProviderDetailStore {
       maxInflight: patch.maxInflight ?? null,
       enabled: patch.enabled ?? false,
       bypassProxy: patch.bypassProxy ?? DEFAULT_PROXY_BYPASS_PROVIDER_IDS.has(providerId),
+      userAgent: patch.userAgent ?? DEFAULT_PROVIDER_USER_AGENT,
     };
     const setClause: Record<string, unknown> = {};
     if (patch.strategy !== undefined) setClause.strategy = patch.strategy;
@@ -90,6 +93,7 @@ export class DrizzleProviderDetailStore implements ProviderDetailStore {
     if (patch.maxInflight !== undefined) setClause.maxInflight = patch.maxInflight;
     if (patch.enabled !== undefined) setClause.enabled = patch.enabled;
     if (patch.bypassProxy !== undefined) setClause.bypassProxy = patch.bypassProxy;
+    if (patch.userAgent !== undefined) setClause.userAgent = patch.userAgent;
     const upserted = await this.db
       .insert(providerRoutingSettings)
       .values(values)

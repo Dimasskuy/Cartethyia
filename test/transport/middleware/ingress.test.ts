@@ -244,6 +244,7 @@ dbDescribe("checks.test.ts", () => {
 
     async function createTenantWithKey(
       scopes: readonly string[],
+      clientRouterDenylist?: readonly string[],
     ): Promise<{ tenantId: string; token: string }> {
       const db = getDb();
       const [tenant] = await db
@@ -258,9 +259,68 @@ dbDescribe("checks.test.ts", () => {
         keyHash: hashSecret(token),
         label: "auth middleware test key",
         scopes,
+        ...(clientRouterDenylist === undefined
+          ? {}
+          : { clientRouterDenylist }),
       });
       return { tenantId: tenant.id, token };
     }
+
+    /**
+     * The per-key client-router denylist: a request whose fingerprint names a
+     * refused router is rejected with 403 before routing, while the same key
+     * still serves every other caller. Both directions matter — a check that
+     * only ever denies would pass a deny-only test while breaking the key.
+     */
+    test("refuses a request whose fingerprint names a denied client router", async () => {
+      const { token } = await createTenantWithKey(["routing:invoke"], ["9router"]);
+      const stateStore = new ProxyRequestStateStore();
+      const app = buildApp(stateStore);
+      const req = requestFor("/v1/chat/completions", {
+        authorization: `Bearer ${token}`,
+        "x-msh-platform": "9router",
+      });
+      stateStore.initialize(req, Date.now(), 30_000);
+      const response = await app.handle(req);
+      expect(response.status).toBe(403);
+      const body = (await response.json()) as {
+        error?: { code?: string; message?: string; origin?: string };
+      };
+      expect(body.error?.code).toBe("client_router_denied");
+      expect(body.error?.origin).toBe("cartethyia");
+      expect(body.error?.message ?? "").toContain("no API invocation access for this client");
+      // The matched router's name is in the message but not in `details`: the
+      // public detail allowlist is deliberate, so this asserts the shape rather
+      // than assuming the extra field survived sanitisation.
+      expect(body.error?.message ?? "").toContain("9Router");
+    });
+
+    test("serves the same key when the caller is not a denied router", async () => {
+      const { token } = await createTenantWithKey(["routing:invoke"], ["9router"]);
+      const stateStore = new ProxyRequestStateStore();
+      const app = buildApp(stateStore);
+      // A genuine Claude Code caller: the routers imitate these headers, so this
+      // must pass. A false positive here would refuse a paying customer.
+      const req = requestFor("/v1/chat/completions", {
+        authorization: `Bearer ${token}`,
+        "user-agent": "claude-cli/2.1.0 (external, cli)",
+        "x-anthropic-billing-header": "cc_version=2.1.0; cc_entrypoint=cli; cch=00000;",
+      });
+      stateStore.initialize(req, Date.now(), 30_000);
+      expect((await app.handle(req)).status).toBe(200);
+    });
+
+    test("serves a denied router through a key that does not list it", async () => {
+      const { token } = await createTenantWithKey(["routing:invoke"]);
+      const stateStore = new ProxyRequestStateStore();
+      const app = buildApp(stateStore);
+      const req = requestFor("/v1/chat/completions", {
+        authorization: `Bearer ${token}`,
+        "x-msh-platform": "9router",
+      });
+      stateStore.initialize(req, Date.now(), 30_000);
+      expect((await app.handle(req)).status).toBe(200);
+    });
 
     test("passes through non-/v1/ paths without requiring a credential", async () => {
       const stateStore = new ProxyRequestStateStore();

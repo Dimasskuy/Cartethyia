@@ -32,6 +32,8 @@ export interface ApiKeyRecord {
   readonly providerAllowlist?: readonly string[];
   readonly modelAllowlist?: readonly string[];
   readonly modelDenylist?: readonly string[];
+  /** Client-router ids this key refuses; see the schema column for the contract. */
+  readonly clientRouterDenylist?: readonly string[];
   readonly createdAt: Date;
   readonly revokedAt?: Date;
   readonly tokensConsumed: number;
@@ -123,6 +125,9 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
         : { providerAllowlist: row.providerAllowlist as string[] }),
       ...(row.modelAllowlist === null ? {} : { modelAllowlist: row.modelAllowlist as string[] }),
       ...(row.modelDenylist === null ? {} : { modelDenylist: row.modelDenylist as string[] }),
+      ...(row.clientRouterDenylist === null
+        ? {}
+        : { clientRouterDenylist: row.clientRouterDenylist as string[] }),
       createdAt: row.createdAt,
       ...(row.revokedAt ? { revokedAt: row.revokedAt } : {}),
       tokensConsumed: row.lifetimeTokensConsumed,
@@ -178,6 +183,7 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
       providerAllowlist: record.providerAllowlist ?? null,
       modelAllowlist: record.modelAllowlist ?? null,
       modelDenylist: record.modelDenylist ?? null,
+      clientRouterDenylist: record.clientRouterDenylist ?? null,
       lifetimeTokensConsumed: record.tokensConsumed,
     });
   }
@@ -244,6 +250,9 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
             : {}),
           ...(patch.modelAllowlist !== undefined ? { modelAllowlist: patch.modelAllowlist } : {}),
           ...(patch.modelDenylist !== undefined ? { modelDenylist: patch.modelDenylist } : {}),
+          ...(patch.clientRouterDenylist !== undefined
+            ? { clientRouterDenylist: patch.clientRouterDenylist }
+            : {}),
         })
         .where(and(eq(apiKeys.tenantId, tenantId), eq(apiKeys.id, keyId)))
         .returning();

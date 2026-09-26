@@ -633,8 +633,7 @@ html[data-glass-enabled="true"] .card-solid {
   color: var(--red);
 }
 
-.badge-warn,
-.badge-degraded {
+.badge-warn {
   background: var(--orange-soft);
   color: var(--orange);
 }
@@ -846,6 +845,23 @@ main > .state-viewport {
   min-height: clamp(220px, calc(100dvh - 270px), 1000px);
 }
 
+/* A state inside a dialog or card has no route to center in, so it drops the
+   floor and the oversized padding and reads as an inline message. */
+.state-viewport-compact {
+  min-height: 0;
+  padding: 4px 0;
+}
+
+.state-viewport-compact .state-box {
+  gap: 6px;
+  padding: 8px;
+}
+
+.state-viewport-compact .state-box-icon {
+  width: 30px;
+  height: 30px;
+}
+
 .state-box {
   padding: 32px 24px;
   text-align: center;
@@ -1049,4 +1065,39 @@ main > .state-viewport {
   .quota-controls {
     grid-template-columns: 1fr;
   }
+}
+
+/* GitHub repo link with live star/fork badges. Shared by the landing page and
+   the public share page, which load different stylesheets, so it lives here.
+   The chip is neutral: each host surface overrides its colors for its theme. */
+.github-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--inner-border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+
+.github-badge:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.github-badge:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The counts are SVG images from the badge host; the chip keeps them legible
+   without stretching them, and the link is the accessible name. */
+.github-badge-metric {
+  display: block;
+  height: 20px;
+  width: auto;
 }

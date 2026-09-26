@@ -9,8 +9,10 @@ direct, app-specific extension import: `console.css`, `landing.css`, or
 Console-only shell and route styles stay in `console.css`; Landing's dark
 story and manual chapter navigation stay in `landing.css`; Share's public HUD
 stays in `share.css`, without a decorative background and with the same
-`console-theme` preference as Console. Landing's GitHub action sits immediately
-before All view; chapter auto-scroll is disabled.
+`console-theme` preference as Console. Landing's GitHub badge sits immediately
+before All view and links the repository with live star and fork counts; the
+badge images come from an external host the dashboard CSP admits under `img-src`
+only. Chapter auto-scroll is disabled.
 Production serves the built files from `dist/dashboard`.
 
 ## Test tree
@@ -80,7 +82,9 @@ authority; update the mirror in the same change and keep `dashboard/test/*-parit
   drift field-by-field.
 - `src/lib/contracts.ts` re-exports the backend `USAGE_DIMENSIONS` tuple as a value, not a
   type-only copy, because the Usage page validates `?dim=` against it at runtime and offers one
-  breakdown tab per member. Pinned by `test/usage-dimensions-parity.test.ts`.
+  breakdown tab per member. It comes from `console/domains/stats/usage-dimensions`, a module
+  with no imports, rather than from `stats/contracts`, which imports Elysia and reaches
+  `node:crypto` through the console error path. Pinned by `test/usage-dimensions-parity.test.ts`.
 - Usage periods are generated into `src/lib/generated/usage-periods.json` by
   `bun run codegen`; do not hand-maintain a second period list.
 - Query keys, hooks, and route components must use the existing `consoleRequest`
@@ -94,6 +98,15 @@ Vite bundles this tree for browsers. Never import backend modules, Elysia,
 crypto into `dashboard/src`. Keep browser contracts as plain types and values;
 hand-copy only the intentionally mirrored display metadata and protect it with
 a parity test. OAuth tokens and provider credentials must stay server-side.
+
+Vite only *warns* when a Node builtin is externalized for the browser, so this
+rule is enforced by `test/architecture/dashboard-boundary.test.ts`, which walks
+every `dashboard/src` value import into the backend graph and fails on the first
+module that reaches Elysia, a `node:*` API, or a database driver. A backend
+module a value must be shared from has to be import-free (like
+`console/domains/stats/usage-dimensions` and `security/access-control`) or
+reached through a generated file, not through the module that happens to
+declare it.
 
 For route changes, update the lazy import, protected route map, shell navigation,
 API hook, and this table together. For backend contract changes, update the

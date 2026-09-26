@@ -62,6 +62,7 @@ const expectedColumns: Record<string, readonly ExpectedColumn[]> = {
     column("provider_allowlist", "jsonb", "jsonb", "YES"),
     column("model_allowlist", "jsonb", "jsonb", "YES"),
     column("model_denylist", "jsonb", "jsonb", "YES"),
+    column("client_router_denylist", "jsonb", "jsonb", "YES"),
     column("created_at", "timestamp with time zone", "timestamptz", "NO"),
     column("revoked_at", "timestamp with time zone", "timestamptz", "YES"),
     column("model_prefix", "text", "text", "YES"),
@@ -197,6 +198,7 @@ const expectedColumns: Record<string, readonly ExpectedColumn[]> = {
     column("rotate_count", "integer", "int4", "NO"),
     column("max_inflight", "integer", "int4", "YES"),
     column("enabled", "boolean", "bool", "NO"),
+    column("user_agent", "text", "text", "NO"),
     column("bypass_proxy", "boolean", "bool", "NO"),
   ],
   health_events: [

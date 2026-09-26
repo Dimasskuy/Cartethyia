@@ -10,6 +10,7 @@ import { hashSecret } from "../../../security/crypto";
 import { type ShareLinkStore, type ShareLinkSummary } from "../../../persistence/share-store";
 import { API_KEY_MODES, type ApiKeyMode, type ShareLinkKind } from "../../../persistence/schema";
 import { isValidTenantKeyScope, type AccessScope } from "../../../security/access-control";
+import { normalizeClientRouterId } from "../../../security/client-router-fingerprint";
 import type { ShareActivityPort } from "../../share/share-usage";
 import { ConsoleDomainError } from "../../shared/errors";
 import type { ConsoleAccessResolver } from "../../auth/access";
@@ -36,6 +37,8 @@ export interface CreateApiKeyRequest {
   providerAllowlist?: readonly string[];
   modelAllowlist?: readonly string[];
   modelDenylist?: readonly string[];
+  /** Client-router ids this key refuses; see `client-router-fingerprint.ts`. */
+  clientRouterDenylist?: readonly string[];
   notesTitle?: string;
   notesSubtitle?: string;
   notesBody?: string;
@@ -57,6 +60,7 @@ export interface ApiKeyResponse {
   readonly providerAllowlist?: readonly string[];
   readonly modelAllowlist?: readonly string[];
   readonly modelDenylist?: readonly string[];
+  readonly clientRouterDenylist?: readonly string[];
   readonly maxConcurrentRequests?: number;
   readonly notesTitle?: string;
   readonly notesSubtitle?: string;
@@ -182,6 +186,27 @@ export function validateApiKeyRequest(request: CreateApiKeyRequest): readonly Ac
       "keyPrefix must be a non-empty string if provided",
     );
   }
+  if (request.clientRouterDenylist !== undefined) {
+    if (!Array.isArray(request.clientRouterDenylist)) {
+      throw new ConsoleDomainError(
+        "invalid_client_router_denylist",
+        400,
+        "clientRouterDenylist must be an array of client-router ids",
+      );
+    }
+    // An unrecognised id would persist a rule that can never match — the operator
+    // would believe a router is blocked while nothing blocks it. Rejecting it is
+    // the only outcome that keeps the stored policy honest.
+    for (const id of request.clientRouterDenylist) {
+      if (typeof id !== "string" || normalizeClientRouterId(id) === undefined) {
+        throw new ConsoleDomainError(
+          "invalid_client_router_denylist",
+          400,
+          `Unknown client router: ${String(id)}`,
+        );
+      }
+    }
+  }
   return scopes as AccessScope[];
 }
 
@@ -206,6 +231,9 @@ export function sanitizeApiKeyResponse(record: ApiKeyRecord): ApiKeyResponse {
     ...(record.providerAllowlist === undefined ? {} : { providerAllowlist: record.providerAllowlist }),
     ...(record.modelAllowlist === undefined ? {} : { modelAllowlist: record.modelAllowlist }),
     ...(record.modelDenylist === undefined ? {} : { modelDenylist: record.modelDenylist }),
+    ...(record.clientRouterDenylist === undefined
+      ? {}
+      : { clientRouterDenylist: record.clientRouterDenylist }),
     createdAt: record.createdAt.toISOString(),
     ...(record.revokedAt === undefined ? {} : { revokedAt: record.revokedAt.toISOString() }),
     tokensConsumed: record.tokensConsumed,

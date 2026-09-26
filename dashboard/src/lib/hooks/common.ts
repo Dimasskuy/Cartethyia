@@ -283,7 +283,10 @@ export function assertProviderRouting(value: unknown): ProviderRoutingResponse {
     value.rotateCount > 1000 ||
     typeof value.enabled !== "boolean" ||
     (value.maxInflight !== null && typeof value.maxInflight !== "number") ||
-    typeof value.bypassProxy !== "boolean"
+    typeof value.bypassProxy !== "boolean" ||
+    typeof value.userAgent !== "string" ||
+    value.userAgent.length === 0 ||
+    value.userAgent.length > 4096
   ) {
     throw invalidResponse("Invalid provider routing response");
   }
@@ -326,7 +329,7 @@ export function assertNetworkPools(value: unknown): NetworkPoolResponse[] {
       typeof pool.id !== "string" ||
       typeof pool.kind !== "string" ||
       typeof pool.endpoint !== "string" ||
-      !["active", "degraded", "cooldown", "disabled"].includes(pool.status as string)
+      !["active", "cooldown", "disabled"].includes(pool.status as string)
     ) {
       throw invalidResponse("Invalid network pool response");
     }

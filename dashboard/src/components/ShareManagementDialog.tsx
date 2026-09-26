@@ -29,13 +29,24 @@ function compactTokens(value: number | null | undefined): string {
   return amount.toLocaleString();
 }
 
+/** One limit rendered as a compact labelled figure; "Unlimited" when unset. */
+function Limit({ label, value }: { label: string; value: number | null | undefined }): ReactNode {
+  return (
+    <div className="share-stat">
+      <dt>{label}</dt>
+      <dd>{value == null ? "Unlimited" : count(value)}</dd>
+    </div>
+  );
+}
+
 /** Expanded recipient body: model totals and recent requests, loaded on demand. */
 export function ChildDetail({ parentId, childId }: { parentId: string; childId: string }): ReactNode {
   const detail = useSharedKeyActivity(parentId, childId);
-  if (detail.isPending) return <LoadingState label="Loading activity…" />;
+  if (detail.isPending) return <LoadingState label="Loading activity…" compact />;
   if (detail.isError) {
     return (
       <ErrorState
+        compact
         message={getErrorMessage(detail.error, "Could not load activity.")}
         onRetry={() => void detail.refetch()}
       />
@@ -48,7 +59,7 @@ export function ChildDetail({ parentId, childId }: { parentId: string; childId: 
       <section>
         <h4 className="share-detail-heading">Top models</h4>
         {activity.models.length ? (
-          <table className="data-table">
+          <table className="data-table share-table">
             <thead>
               <tr>
                 <th scope="col">Model</th>
@@ -75,7 +86,7 @@ export function ChildDetail({ parentId, childId }: { parentId: string; childId: 
       <section>
         <h4 className="share-detail-heading">Recent requests</h4>
         {activity.requests.length ? (
-          <table className="data-table">
+          <table className="data-table share-table">
             <thead>
               <tr>
                 <th scope="col">Model</th>
@@ -108,21 +119,23 @@ export function ChildDetail({ parentId, childId }: { parentId: string; childId: 
   );
 }
 
-export function ShareManagementDialog({
-  parent,
-  onClose,
-}: {
-  parent: ApiKeyResponse;
-  onClose: () => void;
-}): ReactNode {
+/**
+ * The dialog's body. Split from the portal so the section logic — which query
+ * is enabled, which section a key mode gets — is renderable without a DOM,
+ * which the `Dialog`'s `createPortal` requires.
+ */
+export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): ReactNode {
   const [expanded, setExpanded] = useState<string | null>(null);
   const share = useShareApiKey();
   const regenerate = useRegenerateApiKey();
   const revoke = useRevokeSharedKey();
   const link = useShareLink(parent.id);
-  const summary = useSharedKeys(parent.id);
-  const children = summary.data ?? [];
   const isPersonal = parent.keyMode !== "share";
+  // A personal key has no recipients: `/shared-keys` is a share-template route
+  // and answers 404 for it, so the query stays disabled instead of rendering an
+  // error box over the key's own usage.
+  const summary = useSharedKeys(isPersonal ? null : parent.id);
+  const children = summary.data ?? [];
 
   useEffect(() => {
     setExpanded(null);
@@ -160,58 +173,65 @@ export function ShareManagementDialog({
   const url = link.data?.url ?? null;
 
   return (
-    <Dialog
-      open
-      onClose={onClose}
-      title={`Sharing — ${parent.label || "API key"}`}
-      description={
-        isPersonal
-          ? "One stable handoff link for this key. Regenerating rotates the key itself."
-          : "One stable enrollment link. Regenerating replaces the URL; recipients keep the keys they already generated."
-      }
-      width={860}
-    >
-      <div style={{ display: "grid", gap: 16 }}>
-        <section aria-label="Link" style={{ display: "grid", gap: 8 }}>
-          {link.isPending ? (
-            <LoadingState label="Loading link…" />
-          ) : link.isError ? (
-            <ErrorState
-              message={getErrorMessage(link.error, "Could not load the link.")}
-              onRetry={() => void link.refetch()}
-            />
-          ) : url ? (
-            <div className="share-link-row">
-              <Link2 size={14} aria-hidden="true" />
-              <code>{url}</code>
-              <ClipboardButton value={url} size="sm" variant="secondary" label="Copy" copiedLabel="Copied" />
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={<RotateCw size={13} />}
-                loading={busy}
-                disabled={busy}
-                onClick={onRegenerate}
-              >
-                Regenerate
-              </Button>
-            </div>
-          ) : (
-            <div className="share-link-row">
-              <Link2 size={14} aria-hidden="true" />
-              <span className="share-link-empty">No link yet.</span>
-              <Button variant="primary" size="sm" loading={busy} disabled={busy} onClick={onEnsureLink}>
-                Create link
-              </Button>
-            </div>
-          )}
-        </section>
+    <div className="share-modal">
+      <section aria-label="Link">
+        {link.isPending ? (
+          <LoadingState label="Loading link…" compact />
+        ) : link.isError ? (
+          <ErrorState
+            compact
+            message={getErrorMessage(link.error, "Could not load the link.")}
+            onRetry={() => void link.refetch()}
+          />
+        ) : url ? (
+          <div className="share-link-row">
+            <Link2 size={14} aria-hidden="true" />
+            {/* The URL truncates to keep the row from scrolling the modal; the
+                full value stays readable on hover and Copy takes it verbatim. */}
+            <code title={url}>{url}</code>
+            <ClipboardButton value={url} size="sm" variant="secondary" label="Copy" copiedLabel="Copied" />
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<RotateCw size={13} />}
+              loading={busy}
+              disabled={busy}
+              onClick={onRegenerate}
+            >
+              Regenerate
+            </Button>
+          </div>
+        ) : (
+          <div className="share-link-row">
+            <Link2 size={14} aria-hidden="true" />
+            <span className="share-link-empty">No link yet.</span>
+            <Button variant="primary" size="sm" loading={busy} disabled={busy} onClick={onEnsureLink}>
+              Create link
+            </Button>
+          </div>
+        )}
+      </section>
 
-        <section aria-label="Recipients" style={{ display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <strong style={{ fontSize: 12 }}>
-              {isPersonal ? "Usage" : "Recipients"}
-            </strong>
+      {isPersonal ? (
+        <section aria-label="Usage" className="share-section">
+          <div className="share-section-head">
+            <strong>Usage</strong>
+          </div>
+          <dl className="share-stats">
+            <div className="share-stat">
+              <dt>Lifetime tokens</dt>
+              <dd>{compactTokens(parent.tokensConsumed)}</dd>
+            </div>
+            <Limit label="Requests / min" value={parent.requestsPerMinute} />
+            <Limit label="Daily tokens" value={parent.dailyTokenLimit} />
+            <Limit label="Monthly tokens" value={parent.monthlyTokenLimit} />
+            <Limit label="Lifetime budget" value={parent.lifetimeTokenBudget} />
+          </dl>
+        </section>
+      ) : (
+        <section aria-label="Recipients" className="share-section">
+          <div className="share-section-head">
+            <strong>Recipients</strong>
             <Button
               variant="ghost"
               size="sm"
@@ -222,29 +242,31 @@ export function ShareManagementDialog({
             </Button>
           </div>
           {summary.isPending && !summary.data ? (
-            <LoadingState label="Loading recipients…" />
+            <LoadingState label="Loading recipients…" compact />
           ) : summary.isError ? (
             <ErrorState
+              compact
               message={getErrorMessage(summary.error, "Could not load recipients.")}
               onRetry={() => void summary.refetch()}
             />
           ) : children.length === 0 ? (
             <EmptyState
+              compact
               title="No recipients yet"
               message="Keys generated through this link appear here with their masked client IP and token usage."
             />
           ) : (
-            <div className="data-table-container">
-              <table className="data-table">
+            <div className="data-table-container share-table-container">
+              <table className="data-table share-table">
                 <thead>
                   <tr>
-                    <th scope="col" style={{ width: 26 }} aria-label="Expand" />
+                    <th scope="col" className="share-col-toggle" aria-label="Expand" />
                     <th scope="col">Key</th>
                     <th scope="col">Status</th>
-                    <th scope="col">Today tokens</th>
-                    <th scope="col">Lifetime tokens</th>
+                    <th scope="col">Today</th>
+                    <th scope="col">Lifetime</th>
                     <th scope="col">Last activity</th>
-                    <th scope="col" style={{ textAlign: "right" }}>
+                    <th scope="col" className="share-col-actions">
                       Actions
                     </th>
                   </tr>
@@ -276,7 +298,7 @@ export function ShareManagementDialog({
                           <td>{compactTokens(child.today.totalTokens)}</td>
                           <td>{compactTokens(child.allTime.totalTokens)}</td>
                           <td>{stamp(child.lastUsedAt)}</td>
-                          <td style={{ textAlign: "right" }}>
+                          <td className="share-col-actions">
                             <Button
                               variant="danger"
                               size="sm"
@@ -310,7 +332,32 @@ export function ShareManagementDialog({
             </div>
           )}
         </section>
-      </div>
+      )}
+    </div>
+  );
+}
+
+export function ShareManagementDialog({
+  parent,
+  onClose,
+}: {
+  parent: ApiKeyResponse;
+  onClose: () => void;
+}): ReactNode {
+  const isPersonal = parent.keyMode !== "share";
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Sharing — ${parent.label || "API key"}`}
+      description={
+        isPersonal
+          ? "One stable handoff link for this key. Regenerating rotates the key itself."
+          : "One stable enrollment link. Regenerating replaces the URL; recipients keep the keys they already generated."
+      }
+      width={720}
+    >
+      <ShareManagementContent parent={parent} />
     </Dialog>
   );
 }

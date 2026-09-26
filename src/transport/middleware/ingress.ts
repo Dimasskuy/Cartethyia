@@ -11,6 +11,10 @@ import type { ProxyRequestPreparer } from "../request/preparer";
 import type { CanonicalRequest } from "../canonical-model";
 import type { SurfaceAdapterRegistry } from "../surface/adapters";
 import { requestToken, resolveApiKeyAuthorization } from "../../security/api-key-auth";
+import {
+  deniedClientRouter,
+  detectClientRouter,
+} from "../../security/client-router-fingerprint";
 import { createAccessDecision } from "../../security/access-control";
 import { GATEWAY_SECURITY_HEADERS } from "../../security/outbound-headers";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
@@ -367,6 +371,21 @@ export function createApiKeyAuthenticationMiddleware(deps: {
       });
       if (!decision.scopes.includes("routing:invoke"))
         throw new GatewayError("invalid_request", 403, "API key lacks routing:invoke scope");
+      // A key may refuse a downstream router it has been resold to. This is a
+      // policy check on the resolved key, so it belongs with the other
+      // authorization decisions rather than in routing: the request is refused
+      // before a route is planned or an upstream is touched.
+      const denied = deniedClientRouter(
+        authorization.snapshot.client_router_denylist,
+        detectClientRouter({ headers: request.headers }),
+      );
+      if (denied !== null)
+        throw new GatewayError(
+          "client_router_denied",
+          403,
+          `no API invocation access for this client: ${denied}`,
+          { reason: "client_router_denied", clientRouter: denied },
+        );
       deps.stateStore.require(request).authorization = authorization;
     })
     .as("plugin");

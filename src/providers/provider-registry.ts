@@ -144,10 +144,28 @@ export interface ProviderDispatchContext {
   readonly deadline: number;
   readonly abort_signal: AbortSignal;
   readonly outbound_fetch?: ValidatedOutboundFetch | undefined;
+  /** Built-in API-key route-selected User-Agent; custom providers leave this unset. */
+  readonly user_agent?: string | undefined;
   /** Internal origin marker for provider probes; adapters must not forward it. */
   readonly probe_marker?: typeof CARTETHYIA_PROBE_MARKER;
   /** Original inbound headers needed only for provider-specific negotiation. */
   readonly request_headers?: Readonly<Record<string, string>> | undefined;
+}
+
+/** Applies the configured route identity without changing OAuth-native headers. */
+export function applyRouteUserAgent(
+  headers: Record<string, string>,
+  credential: ResolvedCredential,
+  userAgent: string | undefined,
+): void {
+  if (
+    credential.credential_kind === "oauth" ||
+    credential.credential_kind === "scoped_access_token" ||
+    userAgent === undefined
+  ) {
+    return;
+  }
+  headers["user-agent"] = userAgent;
 }
 
 /** ProviderDispatchTarget identity already resolved by routing before credential leasing. */
