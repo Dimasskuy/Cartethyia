@@ -35,6 +35,34 @@ edge proxy, which emits the SSE body in a few large bursts rather than per token
 so a short Desktop answer can arrive in one or two frames. This is an upstream
 property; MiMo Studio's bot endpoint flushes per token and stays smooth.
 
+### Connection strings resolve from the platform's published variables
+
+`requireDatabaseUrl()` now checks `DATABASE_URL`, then `DATABASE_PRIVATE_URL` and
+`DATABASE_PUBLIC_URL`, then assembles a URL from `PGHOST`, `PGPORT`, `PGUSER`,
+`PGPASSWORD` and `PGDATABASE`. An empty value is treated as absent, which is what
+a `${{ Service.VAR }}` reference to a misspelled service name produces on Railway
+— that used to reach boot as "DATABASE_URL is required" with no hint that the
+variable existed but resolved to nothing. Credentials and the database name are
+percent-encoded when assembling, explicit host and port are still required, and
+the boot error now names every variable that would satisfy it.
+
+`requireRedisUrl()` follows the same order — `REDIS_URL`, then
+`REDIS_PUBLIC_URL`, then `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` —
+so a Redis reference that resolves to an empty string no longer takes the
+gateway down with a bare "REDIS_URL is required". Both resolvers share
+`connection-url.ts`; neither ever infers a Docker or Laragon host.
+
+### The data directory repairs its own ownership
+
+A volume mounted at `/app/data` arrives owned by root, while the application
+runs as uid `10001` — so every telemetry payload capture failed and the console
+still reported the switch as On. The image no longer declares `USER`; the
+entrypoint starts as root, takes ownership of the data directory for
+`10001:10001`, and drops privileges with `setpriv` before exec'ing the binary, so
+the application itself never runs as root and a root-owned mount needs no
+host-side preparation. A container forced to start unprivileged still gets the
+warning naming the ownership the host directory needs.
+
 ### Provider detail shows where to get a credential
 
 Every bundled provider now declares its credential page in `provider-metadata.ts`, and the

@@ -1,29 +1,33 @@
 #!/bin/sh
 # Cartethyia container entrypoint
-# Handles bind mount permission fixes and binary execution
+# Fixes the data directory's ownership, then executes the application as the
+# unprivileged runtime identity.
 
 set -e
 
 APP_UID=10001
 APP_GID=10001
 
-# A bind-mounted data directory arrives with the host's ownership, which is
-# usually root. The runtime user then cannot create the telemetry payload
-# directory, so every capture fails while the console still reports capture as
-# enabled. Fix the ownership when we can, and say so when we cannot: running
-# unprivileged is the default (the image sets USER), so this is normally a
-# no-op and the host directory has to be prepared instead.
 DATA_DIR="${CARTETHYIA_TELEMETRY_PAYLOAD_DIR:-/app/data}"
 case "$DATA_DIR" in /*) ;; *) DATA_DIR="/app/data" ;; esac
 
+# A mounted volume arrives owned by root, while the application runs as 10001.
+# The image deliberately does not set USER, so the entrypoint starts as root,
+# repairs the ownership of the data directory, and then drops privileges —
+# otherwise every telemetry payload capture fails while the console still
+# reports capture as enabled.
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$DATA_DIR" 2>/dev/null || true
   chown -R "$APP_UID:$APP_GID" "$DATA_DIR" 2>/dev/null || true
-elif [ ! -w "$DATA_DIR" ]; then
-  echo "cartethyia: $DATA_DIR is not writable by uid $(id -u); telemetry payload capture will fail." >&2
-  echo "cartethyia: chown it to $APP_UID:$APP_GID on the host, or run the container as root to have it fixed." >&2
+  exec setpriv --reuid="$APP_UID" --regid="$APP_GID" --init-groups "$@"
 fi
 
-# Execute the provided command (binary or shell command)
-# Use exec to replace the entrypoint process, allowing signal propagation
+# Started unprivileged (the operator pinned a user, or the platform forbids
+# root): nothing can be repaired from here, so report the exact ownership the
+# host directory needs.
+if [ ! -w "$DATA_DIR" ]; then
+  echo "cartethyia: $DATA_DIR is not writable by uid $(id -u); telemetry payload capture will fail." >&2
+  echo "cartethyia: chown it to $APP_UID:$APP_GID on the host, or let the entrypoint start as root so it can fix the mount." >&2
+fi
+
 exec "$@"

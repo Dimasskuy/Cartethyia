@@ -238,19 +238,24 @@ docker compose logs -f app
 docker compose down
 ```
 
-The Docker image builds the dashboard and compiled backend, runs as a dedicated
-non-root user (uid/gid `10001`), and exposes port `12800`. PostgreSQL must be
-reachable through `DATABASE_URL`; Compose manages Redis only.
+The Docker image builds the dashboard and compiled backend, exposes port
+`12800`, and runs the application as a dedicated non-root user (uid/gid
+`10001`). PostgreSQL must be reachable through `DATABASE_URL`; Compose manages
+Redis only.
 
-If you bind-mount a data directory for telemetry payload capture, the host
-directory's ownership overrides the image's, so create it with the runtime uid
-before starting the container:
+If you bind-mount or attach a volume at the data directory for telemetry payload
+capture, the mount's ownership overrides the image's. The entrypoint starts as
+root, takes ownership of that directory for uid/gid `10001`, and only then drops
+privileges to run the application, so a root-owned mount works with no host-side
+preparation. Ownership is only repaired when the container is allowed to start
+as root — an explicit `USER`, `--user`, or a platform that forbids root skips it,
+and in that case prepare the host directory with the runtime uid:
 
 ```bash
 mkdir -p ./data && sudo chown -R 10001:10001 ./data
 ```
 
-Without that the directory is not writable by the runtime user, every payload
+Without either, the directory is not writable by the runtime user, every payload
 capture fails while the console still shows the switch as On, and the gateway
 logs a single warning naming the directory and this fix.
 

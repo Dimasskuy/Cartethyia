@@ -8,7 +8,7 @@ import { resolve } from "path";
  * - Multi-stage build structure
  * - No source code or node_modules in runtime stage
  * - Required directives (PORT, STOPSIGNAL, HEALTHCHECK)
- * - Non-root user execution
+ * - Non-root execution via the entrypoint's privilege drop
  * - Proper bind mount handling in entrypoint
  */
 
@@ -263,6 +263,33 @@ describe("Docker Contract", () => {
 
   it("entrypoint script uses exec for signal propagation", () => {
     expect(entrypointContent).toContain("exec");
+  });
+
+  it("leaves the runtime stage as root so the entrypoint can repair a mounted data directory", () => {
+    // The application still runs as uid 10001 — the privilege drop happens in
+    // the entrypoint, after it has taken ownership of the data directory. A
+    // USER directive here would start the container unprivileged and leave a
+    // root-owned mounted volume unwritable, failing every payload capture.
+    const runtimeStage = getRuntimeStage();
+    expect(runtimeStage.instructions.USER ?? []).toEqual([]);
+  });
+
+  it("installs the package that provides setpriv", () => {
+    const runtimeStage = getRuntimeStage();
+    const runInstructions = (runtimeStage.instructions.RUN ?? []).join("\n");
+    expect(runInstructions).toContain("util-linux");
+  });
+
+  it("entrypoint drops privileges to the pinned runtime uid and gid", () => {
+    expect(entrypointContent).toContain("APP_UID=10001");
+    expect(entrypointContent).toContain("APP_GID=10001");
+    expect(entrypointContent).toMatch(
+      /exec setpriv --reuid="\$APP_UID" --regid="\$APP_GID" --init-groups "\$@"$/m,
+    );
+    // The unprivileged path still execs the command directly, so an operator
+    // who pins a user keeps a working container instead of a privilege-drop
+    // failure.
+    expect(entrypointContent).toMatch(/^exec "\$@"$/m);
   });
 
   it(".dockerignore excludes the root test tree without excluding runtime source", () => {

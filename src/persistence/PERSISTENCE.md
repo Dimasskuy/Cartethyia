@@ -16,6 +16,7 @@ src/persistence/
   schema.ts               canonical Drizzle source: every table, enum, index, shared type
   postgres.ts             bounded pg Pool + drizzle singleton + migration ledger runner
   redis.ts                shared ioredis client + atomic Lua eval guard
+  connection-url.ts       shared connection-string resolution/validation for both clients
   readiness.ts            boot probe (DB + migrations + Redis) with 5s memo
   telemetry-store.ts      event writes, durable usage totals, retention/payload ops
   share-store.ts          enroll/handoff links (hashed lookup + retained ciphertext) + atomic child-key issuance
@@ -83,8 +84,12 @@ ciphertext.
 
 ## Connections and migrations
 
-- `postgres.ts`: `requireDatabaseUrl()` (`DATABASE_URL` only, explicit host +
-  port, never inferred from Docker/Laragon); `poolMaxFromEnv()`; `getPool()`
+- `postgres.ts`: `requireDatabaseUrl()` resolves the connection string from
+  `DATABASE_URL`, then `DATABASE_PRIVATE_URL` / `DATABASE_PUBLIC_URL`, then an
+  assembled `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` set. An empty
+  value is treated as absent, because an unresolved platform reference yields
+  `""` rather than an error; explicit host + port are still required, and no
+  host is ever inferred from Docker/Laragon. `poolMaxFromEnv()`; `getPool()`
   and `getDb()` singletons cached on `globalThis` (idle 60s, connect 5s,
   statement 30s, idle-in-transaction 60s, lock 5s, keepAlive; PgBouncer-safe:
   no session state, no LISTEN/NOTIFY). `DATABASE_POOL_MAX` is a per-process
@@ -105,7 +110,10 @@ ciphertext.
   discovered files against ledger rows, `ensureMigrated()` once-flag,
   `closeDb()`; `setPoolForTesting()` mirrors `setRedisForTesting()` for the
   capacity check.
-- `redis.ts`: `requireRedisUrl()` (explicit host + port); `getRedis()`
+- `redis.ts`: `requireRedisUrl()` resolves from `REDIS_URL`, then
+  `REDIS_PUBLIC_URL`, then an assembled `REDISHOST`/`REDISPORT`/`REDISUSER`/
+  `REDISPASSWORD` set — the same empty-is-absent rule as `postgres.ts`, applied
+  through the shared `connection-url.ts`. `getRedis()`
   singleton (`maxRetriesPerRequest: 2`, error logged without crashing);
   `getRedisOrUndefined()` for metrics/readiness paths that must not throw;
   `closeRedis()` (QUIT raced with a bounded timeout, `disconnect()` fallback);
@@ -155,8 +163,10 @@ ciphertext.
 
 ## Rules
 
-- `DATABASE_URL` and `REDIS_URL` are the only connection sources; never infer
-  a host.
+- `DATABASE_URL` and `REDIS_URL` are the documented connection sources; a host
+  is never inferred. Both resolvers additionally accept the published aliases
+  and the discrete variable set (see above), and each of those is a value the
+  deployment explicitly provided rather than a guess.
 - Schema changes go through `schema.ts` and `migrations/0000_baseline.sql`.
   `migrationFiles()` reads numbered `NNNN_*.sql` files directly from the
   repository's tracked `migrations/` directory and applies them in order at

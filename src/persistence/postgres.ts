@@ -6,6 +6,12 @@ import { basename, resolve } from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { DEFAULT_BOUNDS } from "../transport/resources";
 import { GatewayError } from "../transport/gateway-error";
+import {
+  encodeConnectionComponent,
+  formatConnectionHost,
+  requireConnectionUrl,
+  type ConnectionUrlCandidate,
+} from "./connection-url";
 import * as schema from "./schema";
 import { log } from "../observability/logger";
 /**
@@ -47,26 +53,69 @@ export type CartethyiaDatabase = NodePgDatabase<typeof fullSchema>;
  *   resource to close.
  */
 
+/**
+ * Connection-string sources in resolution order.
+ *
+ * `DATABASE_URL` is the documented contract and is checked first. The other two
+ * are the names a deployment platform may publish instead, because an operator
+ * cannot always control which one exists: Railway's Postgres service exposes
+ * `DATABASE_URL` next to `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`,
+ * and a `${{ Service.VAR }}` reference to a service that does not exist resolves
+ * to an empty string rather than failing — which reaches boot as "no database
+ * configured at all" and hides a one-word mistake in the service name.
+ *
+ * Read at call time, not captured at module load: the value is deployment
+ * input, and a module-level snapshot would freeze whatever the first import saw.
+ */
+function databaseUrlCandidates(): readonly ConnectionUrlCandidate[] {
+  return [
+    { source: "DATABASE_URL", value: process.env.DATABASE_URL },
+    { source: "DATABASE_PRIVATE_URL", value: process.env.DATABASE_PRIVATE_URL },
+    { source: "DATABASE_PUBLIC_URL", value: process.env.DATABASE_PUBLIC_URL },
+  ];
+}
+
+/**
+ * Assembles the standard libpq variable set into a URL, or `undefined` when it
+ * is incomplete. `PGDATABASE` and `PGPASSWORD` are optional: the first defaults
+ * upstream, and a passwordless role is a legitimate configuration.
+ */
+function databaseUrlFromLibpqEnv(): string | undefined {
+  const host = process.env.PGHOST?.trim();
+  const port = process.env.PGPORT?.trim();
+  if (!host || !port) return undefined;
+  const user = process.env.PGUSER?.trim();
+  const password = process.env.PGPASSWORD;
+  const database = process.env.PGDATABASE?.trim();
+  const authorityHost = formatConnectionHost(host);
+  let credentials = "";
+  if (user !== undefined && user.length > 0) {
+    credentials =
+      password === undefined || password.length === 0
+        ? `${encodeConnectionComponent(user)}@`
+        : `${encodeConnectionComponent(user)}:${encodeConnectionComponent(password)}@`;
+  }
+  const path =
+    database === undefined || database.length === 0 ? "" : `/${encodeConnectionComponent(database)}`;
+  return `postgres://${credentials}${authorityHost}:${port}${path}`;
+}
+
 export function requireDatabaseUrl(): string {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error(
-      "DATABASE_URL is required (e.g. postgres://user:pass@host:5432/db). " +
-        "Cartethyia never infers a Docker or Laragon connection automatically.",
-    );
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`DATABASE_URL is not a valid URL: ${url}`);
-  }
-  if (!parsed.hostname || !parsed.port) {
-    throw new Error(
-      `DATABASE_URL must include explicit host and port (got hostname="${parsed.hostname}" port="${parsed.port}")`,
-    );
-  }
-  return url;
+  return requireConnectionUrl({
+    schemes: ["postgres:", "postgresql:"],
+    candidates: databaseUrlCandidates(),
+    assembled: {
+      source: "PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE",
+      value: databaseUrlFromLibpqEnv(),
+    },
+    missing:
+      "No Postgres connection string is configured. Set DATABASE_URL to the full URL " +
+      "(postgres://user:pass@host:5432/db). On Railway, reference the database service from the " +
+      "app service's Variables tab (DATABASE_URL=${{ Postgres.DATABASE_URL }}), spelling the service " +
+      "name exactly — a reference to a service that does not exist resolves to an empty string. " +
+      "PGHOST, PGPORT, PGUSER, PGPASSWORD and PGDATABASE are accepted as an alternative. " +
+      "Cartethyia never infers a Docker or Laragon connection automatically.",
+  });
 }
 
 export function poolMaxFromEnv(): number {

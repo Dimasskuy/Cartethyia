@@ -1,31 +1,57 @@
 import Redis from "ioredis";
 import { log } from "../observability/logger";
 import { timeoutAfter } from "../runtime/timeout";
+import { encodeConnectionComponent, formatConnectionHost, requireConnectionUrl } from "./connection-url";
 
 export type RedisClient = InstanceType<typeof Redis>;
 
 const DEFAULT_QUIT_TIMEOUT_MS = 2_000;
 
+/**
+ * Assembles the discrete Redis variables into a URL, or `undefined` when the
+ * host/port pair is missing.
+ *
+ * Redis puts the password in the URL's userinfo as `:password@` when there is no
+ * username, so a password-only configuration must still emit the leading colon.
+ */
+function redisUrlFromParts(): string | undefined {
+  const host = process.env.REDISHOST?.trim();
+  const port = process.env.REDISPORT?.trim();
+  if (!host || !port) return undefined;
+  const user = process.env.REDISUSER?.trim();
+  const password = process.env.REDISPASSWORD;
+  const hasUser = user !== undefined && user.length > 0;
+  const hasPassword = password !== undefined && password.length > 0;
+  let credentials = "";
+  if (hasUser && hasPassword) {
+    credentials = `${encodeConnectionComponent(user)}:${encodeConnectionComponent(password)}@`;
+  } else if (hasUser) {
+    credentials = `${encodeConnectionComponent(user)}@`;
+  } else if (hasPassword) {
+    credentials = `:${encodeConnectionComponent(password)}@`;
+  }
+  return `redis://${credentials}${formatConnectionHost(host)}:${port}`;
+}
+
 function requireRedisUrl(): string {
-  const url = process.env.REDIS_URL;
-  if (!url) {
-    throw new Error(
-      "REDIS_URL is required (e.g. redis://localhost:6379). " +
-        "Cartethyia never infers a Docker or Laragon connection automatically.",
-    );
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`REDIS_URL is not a valid URL: ${url}`);
-  }
-  if (!parsed.hostname || !parsed.port) {
-    throw new Error(
-      `REDIS_URL must include explicit host and port (got hostname="${parsed.hostname}" port="${parsed.port}")`,
-    );
-  }
-  return url;
+  return requireConnectionUrl({
+    schemes: ["redis:", "rediss:"],
+    candidates: [
+      { source: "REDIS_URL", value: process.env.REDIS_URL },
+      { source: "REDIS_PUBLIC_URL", value: process.env.REDIS_PUBLIC_URL },
+    ],
+    assembled: {
+      source: "REDISHOST/REDISPORT/REDISUSER/REDISPASSWORD",
+      value: redisUrlFromParts(),
+    },
+    missing:
+      "No Redis connection string is configured. Set REDIS_URL to the full URL " +
+      "(redis://localhost:6379). On Railway, reference the Redis service from the app service's " +
+      "Variables tab (REDIS_URL=${{ Redis.REDIS_URL }}), spelling the service name exactly — a " +
+      "reference to a service that does not exist resolves to an empty string. REDISHOST, REDISPORT, " +
+      "REDISUSER and REDISPASSWORD are accepted as an alternative. " +
+      "Cartethyia never infers a Docker or Laragon connection automatically.",
+  });
 }
 
 declare global {

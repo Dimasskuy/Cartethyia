@@ -38,12 +38,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a dedicated non-root runtime identity. The UID/GID are pinned so an
-# operator can chown a bind-mounted data directory to a known id instead of
-# discovering the allocator's choice; `docker-entrypoint.sh` refers to the same
-# numbers and reports the value to use when the mount is not writable.
+# Create a dedicated non-root runtime identity. The UID/GID are pinned so the
+# entrypoint can drop privileges to a known id and an operator can chown a
+# bind-mounted data directory to the same numbers.
 RUN groupadd -r -g 10001 cartethyia && useradd -r -u 10001 -g cartethyia cartethyia && \
     mkdir -p /app/data && chown -R cartethyia:cartethyia /app
 
@@ -61,7 +61,9 @@ STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f "http://localhost:${PORT:-12800}/health/ready" || exit 1
-# Entrypoint remains exec-form and the application itself runs unprivileged.
-USER cartethyia
+# The entrypoint starts as root, repairs the data-directory ownership, and
+# drops to `cartethyia` via setpriv before exec'ing the application, so the
+# process itself never runs as root. Setting USER here would skip that repair
+# on a mounted volume.
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["./cartethyia"]
