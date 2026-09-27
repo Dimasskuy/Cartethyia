@@ -40,6 +40,18 @@ describe("API key mode form", () => {
     expect(createMarkup).not.toContain("Custom API key value");
     expect(editMarkup).not.toContain("Custom API key value");
   });
+
+  test("locks the credential mode when editing but not when creating", () => {
+    const createMarkup = render("create", null);
+    const editMarkup = render("edit", shareRecord);
+    // Both mode buttons are disabled on an existing credential: the mode is
+    // fixed once the key exists, so the edit form cannot convert it.
+    const disabledButtons = (markup: string): number =>
+      (markup.match(/disabled=""[^>]*>Personal<\/button>/) ? 1 : 0) +
+      (markup.match(/disabled=""[^>]*>Share template<\/button>/) ? 1 : 0);
+    expect(disabledButtons(createMarkup)).toBe(0);
+    expect(disabledButtons(editMarkup)).toBe(2);
+  });
   test("share submission omits a raw bearer value while personal submission can carry one", () => {
     const shareBody = JSON.stringify(keyCredentialFields("share", "never-send-this", "rk_"));
     const personalBody = JSON.stringify(keyCredentialFields("personal", "rk_personal-once", "rk_"));

@@ -219,6 +219,10 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
     record?.keyMode ?? "personal",
   );
   const isOneTime = budgetMode === "one-time";
+  // A credential's mode is fixed once the key exists: converting a share
+  // template to a personal key (or back) revokes its children and links, so the
+  // edit form shows the mode but never lets it change.
+  const modeLocked = mode === "edit";
   const toggleScope = (scope: string) =>
     setScopes((cur) => (cur.includes(scope) ? cur.filter((s) => s !== scope) : [...cur, scope]));
   const submit = () => {
@@ -245,10 +249,12 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
         <div role="group" aria-label="Credential mode" style={{ display: "flex", gap: "8px" }}>
           {(["personal", "share"] as const).map((modeOption) => (
             <button key={modeOption} type="button" aria-pressed={keyMode === modeOption}
-              disabled={busy} onClick={() => setKeyMode(modeOption)}
+              disabled={busy || modeLocked} onClick={() => setKeyMode(modeOption)}
+              title={modeLocked ? "Credential mode cannot change after creation" : undefined}
               style={{ border: "1px solid var(--inner-border)", borderRadius: "8px", padding: "8px 12px",
                 color: keyMode === modeOption ? "var(--accent)" : "var(--text-secondary)",
-                background: keyMode === modeOption ? "var(--accent-soft)" : "var(--surface-2)", cursor: "pointer" }}>
+                background: keyMode === modeOption ? "var(--accent-soft)" : "var(--surface-2)",
+                cursor: modeLocked ? "not-allowed" : "pointer", opacity: modeLocked && keyMode !== modeOption ? 0.5 : 1 }}>
               {modeOption === "personal" ? "Personal" : "Share template"}
             </button>
           ))}
@@ -256,9 +262,7 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
         <p style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>
           {keyMode === "share"
             ? "A share template does not authenticate requests. Recipients generate their own child key from its public enrollment page."
-            : record?.keyMode === "share"
-              ? "Converting this template to a personal key revokes all child keys and enrollment links. A new personal secret will be shown once."
-              : "A personal key authenticates requests directly; its secret is shown once when created or rotated."}
+            : "A personal key authenticates requests directly; its secret is shown once when created or rotated."}
         </p>
       </section>
       {mode === "create" && (
