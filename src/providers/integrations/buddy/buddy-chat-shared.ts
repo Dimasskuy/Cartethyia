@@ -245,8 +245,7 @@ export function dropEmptyBuddyMessages(messages: Array<Record<string, unknown>>)
     if (Array.isArray(message["tool_calls"]) && message["tool_calls"].length > 0) return true;
     if (typeof message["tool_call_id"] === "string" && message["tool_call_id"].trim().length > 0)
       return true;
-    if (typeof message["reasoning_content"] === "string" && message["reasoning_content"].trim().length > 0)
-      return true;
+    if (typeof message["reasoning_content"] === "string") return true;
     const content = message["content"];
     if (typeof content === "string") return content.trim().length > 0;
     if (Array.isArray(content)) return content.length > 0;

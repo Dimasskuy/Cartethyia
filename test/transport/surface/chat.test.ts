@@ -84,6 +84,26 @@ describe("ChatAdapter.parse", () => {
       "worked it out",
     ]);
   });
+  test("preserves empty reasoning_content string on assistant turns for DeepSeek thinking mode", () => {
+    const adapter = new ChatAdapter();
+    const request = adapter.parse({
+      model: "deepseek-v4-flash",
+      messages: [
+        { role: "user", content: "hello" },
+        {
+          role: "assistant",
+          content: "answer",
+          reasoning_content: "",
+        },
+      ],
+      stream: false,
+    });
+    const assistant = request.messages.find((m) => m.role === "assistant");
+    const reasoning = assistant?.content.filter((p) => p.kind === "reasoning") ?? [];
+    expect(reasoning).toHaveLength(1);
+    expect(reasoning[0]).toMatchObject({ kind: "reasoning", payload: "", summary: "" });
+  });
+
 
   test("normalizes an explicitly empty tool-call argument string to {}", () => {
     const adapter = new ChatAdapter();

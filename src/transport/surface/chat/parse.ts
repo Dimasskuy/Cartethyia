@@ -206,9 +206,19 @@ export function parseMessage(value: unknown): CanonicalMessage {
   const content = parseContent(value.content);
   // Chat carries prior reasoning as a sibling string, not a content block.
   // Dropping it loses the chain of thought on every follow-up turn.
+  //
+  // Presence, not length, decides: a client that already learned DeepSeek's rule
+  // sends `reasoning_content: ""` on a thinking turn whose text is not readable
+  // back (the field is mandatory on every assistant message once the turn
+  // carried a tool call). Gating on a non-empty string dropped exactly that
+  // value, so the replayed turn went upstream without the field and the request
+  // failed with "the reasoning content from the previous turn must be passed
+  // back in thinking mode" — the error the client was sending the empty string
+  // to avoid. A message with no such key at all still gains no reasoning part,
+  // so nothing is fabricated for a turn that never claimed one.
   if (role === "assistant") {
     const reasoning = readString(value, "reasoning_content");
-    if (reasoning !== undefined && reasoning.length > 0) {
+    if (reasoning !== undefined) {
       content.unshift({ kind: "reasoning", payload: reasoning, summary: reasoning });
     }
   }
