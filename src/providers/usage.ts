@@ -465,6 +465,7 @@ export function readReasoningText(source: Record<string, unknown>): string | und
  */
 export const RESPONSES_REASONING_DELTA_TYPES: readonly string[] = [
   "response.reasoning_summary_text.delta",
+  "response.reasoning_text.delta",
 ];
 
 /** String `delta` of a known reasoning-summary event, or undefined. */

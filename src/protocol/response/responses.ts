@@ -150,7 +150,9 @@ export function parseResponsesResponseToEvents(
       }
     } else if (item["type"] === "reasoning") {
       const summaryParts = (item["summary"] as Array<Record<string, unknown>> | undefined) ?? [];
-      const summaries = summaryParts
+      const contentParts = (item["content"] as Array<Record<string, unknown>> | undefined) ?? [];
+      const rawParts = summaryParts.length > 0 ? summaryParts : contentParts;
+      const summaries = rawParts
         .map((part, index) => ({
           index,
           text: typeof part["text"] === "string" ? part["text"] : "",
@@ -354,6 +356,7 @@ export async function* decodeResponsesSseStream(
         }
         break;
       }
+      case "response.reasoning_text.delta":
       case "response.reasoning_summary_text.delta": {
         const summary = readResponsesReasoningDelta(event);
         if (typeof summary === "string" && summary.length > 0) {
@@ -422,7 +425,10 @@ export async function* decodeResponsesSseStream(
         } else if (item?.["type"] === "reasoning") {
           const summaryParts =
             (item["summary"] as Array<Record<string, unknown>> | undefined) ?? [];
-          const summaries = summaryParts
+          const contentParts =
+            (item["content"] as Array<Record<string, unknown>> | undefined) ?? [];
+          const rawParts = summaryParts.length > 0 ? summaryParts : contentParts;
+          const summaries = rawParts
             .map((part, index) => ({
               index,
               text: typeof part["text"] === "string" ? part["text"] : "",
@@ -535,6 +541,39 @@ export async function* decodeResponsesSseStream(
               call_id: callId,
               content: computerOutputToContent(item["output"]),
             } as CanonicalEvent;
+          }
+        } else if (item?.["type"] === "reasoning") {
+          const summaryParts =
+            (item["summary"] as Array<Record<string, unknown>> | undefined) ?? [];
+          const contentParts =
+            (item["content"] as Array<Record<string, unknown>> | undefined) ?? [];
+          const rawParts = summaryParts.length > 0 ? summaryParts : contentParts;
+          const summaries = rawParts
+            .map((part, index) => ({
+              index,
+              text: typeof part["text"] === "string" ? part["text"] : "",
+            }))
+            .filter((part) => part.text.length > 0);
+          const encryptedContent =
+            typeof item["encrypted_content"] === "string" ? item["encrypted_content"] : undefined;
+          const itemId = typeof item["id"] === "string" ? item["id"] : undefined;
+          if (summaries.length > 0) {
+            for (const [position, summary] of summaries.entries()) {
+              yield {
+                type: "content_delta",
+                sequence_number: seq++,
+                ...(itemId === undefined ? {} : { item_id: itemId }),
+                content: {
+                  kind: "reasoning",
+                  payload: null,
+                  summary: summary.text,
+                  summary_index: summary.index,
+                  ...(position === 0 && encryptedContent !== undefined
+                    ? { encrypted_content: encryptedContent }
+                    : {}),
+                },
+              } as CanonicalEvent;
+            }
           }
         }
         break;

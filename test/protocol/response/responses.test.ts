@@ -163,6 +163,47 @@ describe("decodeResponsesSseStream reasoning items", () => {
       [1, "Concise Thinking2"],
     ]);
   });
+  test("yields reasoning from response.reasoning_text.delta stream frames", async () => {
+    const body =
+      `data: {"type":"response.reasoning_text.delta","delta":"Thinking text delta"}\n\n` +
+      `data: {"type":"response.completed","response":{"status":"completed","usage":{}}}\n\n` +
+      `data: [DONE]\n\n`;
+    const events = await collect(decodeResponsesSseStream(streamOf(body), fakeRequest()));
+    const summaries = events
+      .filter(
+        (event): event is Extract<CanonicalEvent, { type: "content_delta" }> =>
+          event.type === "content_delta" && event.content.kind === "reasoning",
+      )
+      .map((event) => (event.content as Extract<ContentPart, { kind: "reasoning" }>).summary);
+    expect(summaries).toEqual(["Thinking text delta"]);
+  });
+
+  test("yields reasoning from reasoning item with content blocks", () => {
+    const events = parseResponsesResponseToEvents(
+      {
+        id: "resp-content",
+        output: [
+          {
+            type: "reasoning",
+            id: "rs-content",
+            content: [
+              { type: "reasoning_text", text: "Reasoning in content" },
+            ],
+          },
+        ],
+        status: "completed",
+      } as never,
+      fakeRequest(),
+    );
+    const summaries = events
+      .filter(
+        (event): event is Extract<CanonicalEvent, { type: "content_delta" }> =>
+          event.type === "content_delta" && event.content.kind === "reasoning",
+      )
+      .map((event) => (event.content as Extract<ContentPart, { kind: "reasoning" }>).summary);
+    expect(summaries).toEqual(["Reasoning in content"]);
+  });
+
 });
 
 describe("decodeResponsesSseStream parallel-call identity", () => {
