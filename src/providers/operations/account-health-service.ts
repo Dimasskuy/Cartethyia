@@ -253,10 +253,24 @@ export function classifyAccountError(
     lower.includes("tool invocation") ||
     lower.includes("tool call failed") ||
     lower.includes("search backend");
+  // A model-scoped license or entitlement rejection is NOT credential invalidation.
+  // Google Cloud Code / Antigravity answers HTTP 403 with "You do not have a valid
+  // license of this product" when an account lacks entitlement for one specific model
+  // (e.g. claude-opus-4-6), while the account itself and its tokens remain fully valid
+  // for all other models. Disabling the whole account breaks healthy models.
+  const modelEntitlementFailure =
+    statusCode === 403 &&
+    (lower.includes("not have a valid license") ||
+      lower.includes("valid license of this product") ||
+      lower.includes("model not supported") ||
+      lower.includes("not entitled to") ||
+      lower.includes("no access to model") ||
+      lower.includes("model_not_supported"));
   const authSignal =
     !quotaSignal &&
     !policyRejection &&
     !hostedToolFailure &&
+    !modelEntitlementFailure &&
     (providerCode === "authentication_failed" ||
       lower.includes("invalid_api_key") ||
       lower.includes("incorrect api key") ||

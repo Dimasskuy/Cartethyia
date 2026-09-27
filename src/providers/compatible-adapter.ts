@@ -11,7 +11,6 @@ import {
 } from "../transport/failure-policy";
 import {
   applyRouteUserAgent,
-  CARTETHYIA_PROBE_MARKER,
   type ProviderAdapter,
   type ProviderDispatchTarget,
   type ProviderId,
@@ -305,19 +304,6 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
     candidate: ProviderDispatchTarget,
     context: ProviderDispatchContext,
   ): AsyncIterable<CanonicalEvent> {
-    if (
-      res.status === 202 &&
-      candidate?.wire_family === "responses" &&
-      context.probe_marker === CARTETHYIA_PROBE_MARKER
-    ) {
-      throw new GatewayError(
-        "transport_unavailable",
-        502,
-        "upstream probe returned HTTP 202",
-        { upstreamStatus: 202, providerCode: "rate_limit_exceeded" },
-        "upstream",
-      );
-    }
     if (!res.ok) {
       await throwIfHtmlResponse(res);
       await mapUpstreamHttpError(res, this.provider_id);

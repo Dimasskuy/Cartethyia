@@ -93,8 +93,7 @@ serving an OpenAI wire uses `Authorization: Bearer`.
 
 `cli_identity` controls custom providers' additional CLI fingerprint headers; their
 `gateway_user_agent` compatibility setting remains their existing User-Agent choice. Built-in
-route-selected User-Agent settings are not applied to custom providers. Probes strip User-Agent by
-design. `POST /providers/connection-test` (ad-hoc, unsaved provider) uses the derived wire and matching
+route-selected User-Agent settings are not applied to custom providers. Probes preserve adapter-native User-Agent. `POST /providers/connection-test` (ad-hoc, unsaved provider) uses the derived wire and matching
 auth header for `GET <base>/v1/models` before anything is persisted.
 
 ## Seeding / catalog / discovery flow
@@ -167,8 +166,10 @@ stay in `integrations/<name>/*-oauth.ts`.
   `invalid_request` *before* a consent screen, which is why the Codex browser flow could never complete
   against the shared loopback default; Z.AI rejects every loopback URI for the ZCode client and accepts only
   its own `zcode://` scheme; Google registers `http://127.0.0.1:51121/oauth-callback` for Antigravity and
-  Anthropic `http://127.0.0.1:54545/callback` for Claude Code, and both answer
+  Anthropic `http://localhost:54545/callback` for Claude Code, and both answer
   `redirect_uri_mismatch` (Google, 400) or an equivalent rejection for the gateway's console URL. The
+  registered host is part of the string: `localhost` and `127.0.0.1` resolve to the same address but are
+  different URIs to an allowlist, so the spelling must match the registration exactly. The
   console route reads the client's value when it states one and the gateway default otherwise, and the same
   string is reused at exchange because the token endpoint compares it against what the authorize step sent —
   a client that hardcoded a different URI in `exchangeCode` therefore failed the exchange while its
@@ -282,6 +283,19 @@ for key-only providers. Provider specifics (endpoint URLs, field names, plan der
   operator cannot select. The set is derived from `ANTIGRAVITY_MODELS`, so removing a catalog
   model removes its quota row in the same change; a permissive id pattern in its place is what
   let a retired deployment keep reporting.
+- **Login must provision the project, not just read it.** Antigravity
+  (Cloud Code Assist) serves an account only after it has a
+  `cloudaicompanionProject`, and a fresh account has none: the native client
+  calls `loadCodeAssist`, enrolls the free tier via `onboardUser` when no
+  `currentTier` is present, then re-reads the project. Skipping the enrollment
+  leaves both dispatch and quota rejected with "You do not have a valid license
+  of this product". Two details are load-bearing: the control-plane metadata is
+  `ideType: ANTIGRAVITY` (the Gemini CLI's `IDE_UNSPECIFIED`/`pluginType:
+  GEMINI` shape makes the backend treat the call as a different client), and a
+  failed enrollment must fail the *login* so the operator sees the reason
+  instead of a stored-but-unusable account. `discoverAntigravityProject`
+  (`antigravity-protocol.ts`) owns this; the OAuth exchange calls it and the
+  dispatch path falls back to it, cached per access-token hash.
 - **Both quota endpoints are read and merged.** For Antigravity, `fetchAvailableModels` carries
   the per-model windows and `retrieveUserQuotaSummary` carries the weekly ones — and the weekly
   summary is the *only* quota a free-tier account has, because the upstream omits per-model quota
@@ -412,9 +426,8 @@ database. Per-provider entry points live in `integrations/`, registered as each 
   computation, and sample extraction — live in `discovery/probe-phases.ts` as plain functions taking a small
   args object, so the method body reads as named steps. The dispatch-and-retry step stays inline: it owns
   the event stream, TTFB, captured request, and pool binding across the retry, and its `release` must run on
-  the same frame as the binding. Probe dispatch carries `CARTETHYIA_PROBE_MARKER` in
-  `ProviderDispatchContext` and telemetry; `createProbeFetch` strips any
-  `User-Agent` before the validated fetch.
+  the same frame as the binding. Probe dispatch preserves any native `User-Agent` configured by the
+  provider adapter so upstream receives valid first-party tooling identity, while avoiding gateway-level markers.
   Two request defaults are shared by every entry point, both set in `buildProbeCanonicalRequest` /
   `loadProbePreferences`:
   - **Streaming by default** (`stream: request.stream ?? true`). A streamed probe is the only one that
@@ -560,14 +573,12 @@ deadlines. Routing, console, and discovery consume providers through these servi
 - **Dispatch-time request context.** `resolveCustomCliHeaders` stamps Codex-CLI identity
   (`codex_cli_rs/<version>`) on chat/responses traffic and Claude-CLI identity (`x-app: cli` + stainless
   headers) on messages traffic so upstream sees realistic first-party tooling.
-  Probe dispatch carries the internal `Cartethyia-Probe` marker in context and
-  telemetry; `createProbeFetch` strips any `User-Agent` before the network
-  boundary.
+  Probe dispatch preserves adapter-native `User-Agent` without injecting gateway-level markers.
   `resolveInboundSessionId` extracts affinity from session headers in declaration order (`x-conversation-id`, `x-session-id`,
   `x-session-affinity`, `x-opencode-session`, `x-claude-code-session-id`, `prompt_cache_key`,
-  `prompt-cache-key`, `session-id`) or the canonical conversation id; `resolvePromptCacheKey` prefers an explicit caller cache key from any surface
+  `prompt-cache-key`, `session-id`) or the canonical conversation id; `resolvePromptCacheKey(request, context)` prefers an explicit caller cache key from any surface
   (chat `prompt_cache_key`, responses `prompt_cache_key`, messages `metadata.user_id`) before that
-  session fallback, and never includes the client IP. `withUpstreamDeadline` binds the dispatch `deadline` to an abort signal (aborts →
+  session fallback (headers on `context`, then conversation id), and never includes the client IP. `withUpstreamDeadline` binds the dispatch `deadline` to an abort signal (aborts →
   `transport_closed` 499) with a releasable lifecycle so timers never leak. The deadline bounds **TTFB
   only**: a streaming adapter must call `lifecycle.release()` as soon as response headers arrive, because
   from there the gateway's stall/first-chunk watchdog owns the body. Leaving the timer armed silently

@@ -33,6 +33,22 @@ const OAUTH_SHAPE_FIELDS = [
   "idToken",
 ] as const;
 
+/**
+ * Fields whose presence identifies one record as a Cartethyia account export
+ * row (`ProviderAccountExport`). Such a row carries the credential under
+ * `secret` and the kind under `credentialKind`; without this, an exported row
+ * was read as an opaque blob, so a re-import landed the whole JSON as an API
+ * key and lost the credential entirely.
+ */
+const EXPORT_ROW_FIELDS = ["credentialKind", "providerId", "secret"] as const;
+
+/**
+ * Wrapper keys a batch export nests its rows under. Cartethyia's own export
+ * uses `accounts`; the batch-import shape shared by the reference dashboards
+ * uses the same key, so one unwrap serves both.
+ */
+const ACCOUNTS_WRAPPER_KEYS = ["accounts", "items", "connections"] as const;
+
 /** Fields consulted (in order) to auto-name an account from a parsed JSON credential. */
 const IDENTITY_FIELD_PRIORITY = [
   "email",
@@ -241,11 +257,46 @@ function entryFromCookieBundle(
 }
 
 function entryFromObject(obj: Record<string, unknown>): ParsedCredentialEntry {
+  // A Cartethyia export row names its credential kind and carries the value
+  // under `secret`; read those directly instead of guessing from shape.
+  const exportKind = obj["credentialKind"];
+  if (
+    typeof exportKind === "string" &&
+    typeof obj["secret"] === "string" &&
+    EXPORT_ROW_FIELDS.every((field) => field in obj)
+  ) {
+    const label = typeof obj["label"] === "string" && obj["label"].trim().length > 0
+      ? obj["label"].trim()
+      : undefined;
+    return {
+      value: obj["secret"],
+      kind: exportKind === "oauth" ? "oauth" : "api_key",
+      ...(label ? { identity: label } : {}),
+    };
+  }
   const kind: DetectedCredentialKind = oauthShapeFromObject(obj) ? "oauth" : "api_key";
   const value =
     kind === "oauth" ? JSON.stringify(obj) : (extractFromObject(obj)?.value ?? JSON.stringify(obj));
   const identity = identityFromObject(obj);
   return identity ? { value, kind, identity } : { value, kind };
+}
+
+/**
+ * Rows a batch export nests under a wrapper key, or `undefined` when the blob
+ * is not a wrapper. Cartethyia's own export is `{ exportedAt, accounts: [...] }`
+ * and the reference batch-import shape is `{ accounts: [...] }`, so without
+ * this an export re-import became one opaque entry.
+ */
+function wrapperRows(obj: Record<string, unknown>): readonly Record<string, unknown>[] | undefined {
+  for (const key of ACCOUNTS_WRAPPER_KEYS) {
+    const value = obj[key];
+    if (!Array.isArray(value)) continue;
+    const rows = value
+      .map((item) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => item !== undefined);
+    if (rows.length > 0) return rows;
+  }
+  return undefined;
 }
 
 /**
@@ -275,7 +326,11 @@ export function parseCredentialBatch(raw: string): ParsedCredentialEntry[] {
     }
   } else {
     const obj = asRecord(wholeBlob);
-    if (obj) return [entryFromObject(obj)];
+    if (obj) {
+      const rows = wrapperRows(obj);
+      if (rows) return rows.map(entryFromObject);
+      return [entryFromObject(obj)];
+    }
   }
 
   const lines = trimmed
@@ -283,7 +338,7 @@ export function parseCredentialBatch(raw: string): ParsedCredentialEntry[] {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   if (lines.length === 0) return [];
-  if (lines.length === 1) return [parseSingleLine(lines[0] as string)];
+  if (lines.length === 1) return parseSingleLine(lines[0] as string);
 
   // Every line matches `key: value` → one structured credential, not a batch.
   const asKeyValue = parseKeyValueLines(trimmed);
@@ -291,13 +346,17 @@ export function parseCredentialBatch(raw: string): ParsedCredentialEntry[] {
     return [entryFromObject(asKeyValue)];
   }
 
-  return lines.map(parseSingleLine);
+  return lines.flatMap(parseSingleLine);
 }
 
-function parseSingleLine(line: string): ParsedCredentialEntry {
+function parseSingleLine(line: string): ParsedCredentialEntry[] {
   const obj = asRecord(parsedJson(line));
-  if (obj) return entryFromObject(obj);
-  return { value: line, kind: detectCredentialKind(line) };
+  if (obj) {
+    const rows = wrapperRows(obj);
+    if (rows) return rows.map(entryFromObject);
+    return [entryFromObject(obj)];
+  }
+  return [{ value: line, kind: detectCredentialKind(line) }];
 }
 
 /**

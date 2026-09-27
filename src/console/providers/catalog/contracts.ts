@@ -546,6 +546,8 @@ export interface ProviderCatalogStore {
  */
 export type OAuthDevicePollResponse =
   | { status: "pending" }
+  /** The provider asked us to poll more slowly; the dashboard reschedules. */
+  | { status: "slow_down"; retryAfterSeconds?: number }
   | { status: "complete"; accountId: string }
   | { status: "failed"; reason: string };
 

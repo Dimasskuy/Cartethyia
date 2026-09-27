@@ -8,7 +8,7 @@ import { readJsonResponse } from "../../authentication/oauth-flow-store";
 import type { OAuthExchangeResult } from "../../authentication/oauth-flow-store";
 import type { OAuthTokenRefreshResult } from "../../authentication/oauth-refresh-service";
 import { OAuthClient, type FetchLike } from "../../authentication/oauth-client";
-import { loadAntigravityProject } from "./antigravity-protocol";
+import { discoverAntigravityProject } from "./antigravity-protocol";
 import { isRecord } from "../../../protocol/primitives";
 
 // The Google OAuth client identity is public provider configuration. These
@@ -121,12 +121,11 @@ async function exchangeCodeForToken(
   }
   const [email] = await Promise.all([
     fetchUserinfoEmail(body.access_token, fetchFn),
-    // Warm the shared project-id cache (`google-antigravity-project` hook in
-    // the provider project lookup). Best-effort — a slow / failing `loadCodeAssist`
-    // must never block the OAuth exchange from returning.
-    loadAntigravityProject(body.access_token, { fetcher: fetchFn }).catch(
-      () => undefined,
-    ),
+    // Enroll the account and resolve its Cloud Code project now: without it
+    // every later dispatch/quota call is rejected as "You do not have a valid
+    // license of this product". A failure here must fail the login so the
+    // operator sees the real reason instead of a stored-but-unusable account.
+    discoverAntigravityProject(body.access_token, { fetcher: fetchFn }),
   ]);
   if (
     typeof body.expires_in !== "number" ||
@@ -165,6 +164,7 @@ export class AntigravityOAuthClient extends OAuthClient {
     code: string,
     codeVerifier: string,
     redirectUri: string,
+    _state?: string,
   ): Promise<OAuthExchangeResult> {
     return exchangeCodeForToken(code, codeVerifier, redirectUri, this.fetchFn);
   }

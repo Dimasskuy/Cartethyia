@@ -206,6 +206,7 @@ export class ZcodeOAuthClient extends OAuthClient {
     code: string,
     _codeVerifier: string,
     redirectUri: string,
+    state?: string,
   ): Promise<OAuthExchangeResult> {
     const payload = record(
       unwrapEnvelope(
@@ -215,7 +216,7 @@ export class ZcodeOAuthClient extends OAuthClient {
             provider: "zai",
             code,
             redirect_uri: redirectUri,
-            state: "",
+            state: state ?? "",
           },
           {},
           this.fetchFn,

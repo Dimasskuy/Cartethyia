@@ -187,6 +187,7 @@ export class MimoDesktopOAuthClient extends OAuthClient {
     _code: string,
     _codeVerifier: string,
     _redirectUri: string,
+    _state?: string,
   ): Promise<OAuthExchangeResult> {
     const creds = await readDesktopPassToken();
     if (!creds) {

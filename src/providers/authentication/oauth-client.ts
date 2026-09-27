@@ -99,7 +99,12 @@ export abstract class OAuthClient implements OAuthLoginClient, OAuthTokenRefresh
     });
   }
 
-  async exchangeCode(code: string, codeVerifier: string, redirectUri: string): Promise<OAuthExchangeResult> {
+  async exchangeCode(
+    code: string,
+    codeVerifier: string,
+    redirectUri: string,
+    _state?: string,
+  ): Promise<OAuthExchangeResult> {
     if (!this.supportsBrowserCode) {
       throw new Error(`${this.providerLabel} does not support browser code exchange`);
     }

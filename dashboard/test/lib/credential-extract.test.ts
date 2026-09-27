@@ -117,6 +117,43 @@ describe("parseCredentialBatch", () => {
     expect(entries[0]?.kind).toBe("oauth");
     expect(entries[0]?.identity).toBe("a@example.com");
   });
+
+  test("a Cartethyia export wrapper re-imports each account with its kind and secret", () => {
+    // Regression: `{ exportedAt, accounts: [...] }` was read as one opaque
+    // entry, so a round-trip import landed the whole JSON as an API key and
+    // lost every credential.
+    const body = {
+      exportedAt: "2026-09-27T00:00:00.000Z",
+      accounts: [
+        { id: "a1", providerId: "mimostudio", label: "6874327696", credentialKind: "oauth", status: "active", secret: "{\"cookies\":[]}", createdAt: "x" },
+        { id: "a2", providerId: "mimostudio", label: "6895175265", credentialKind: "api_key", status: "active", secret: "sk-live-abc", createdAt: "x" },
+      ],
+    };
+    const entries = parseCredentialBatch(JSON.stringify(body));
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toEqual({ value: "{\"cookies\":[]}", kind: "oauth", identity: "6874327696" });
+    expect(entries[1]).toEqual({ value: "sk-live-abc", kind: "api_key", identity: "6895175265" });
+  });
+
+  test("a bare export rows array re-imports each row from credentialKind + secret", () => {
+    const rows = [
+      { providerId: "codex", label: "u@example.com", credentialKind: "oauth", secret: "{\"access\":\"t\"}" },
+    ];
+    const entries = parseCredentialBatch(JSON.stringify(rows));
+    expect(entries).toEqual([{ value: "{\"access\":\"t\"}", kind: "oauth", identity: "u@example.com" }]);
+  });
+
+  test("a `{ accounts: [...] }` wrapper (reference batch-import shape) unwraps to one entry per row", () => {
+    const body = {
+      accounts: [
+        { accessToken: "eyJ.a", refreshToken: "rt", idToken: "eyJ.i", email: "u@example.com" },
+      ],
+    };
+    const entries = parseCredentialBatch(JSON.stringify(body));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.kind).toBe("oauth");
+    expect(entries[0]?.identity).toBe("u@example.com");
+  });
 });
 
 describe("assignAccountNames", () => {

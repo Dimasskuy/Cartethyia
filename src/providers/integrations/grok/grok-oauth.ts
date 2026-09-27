@@ -1,5 +1,5 @@
 /** xAI Grok Build device-code OAuth client. */
-import { isDevicePollPending, nonEmptyTrimmedString, parseDeviceAuthStart, postFormTokenRequest, readJsonResponse } from "../../authentication/oauth-flow-store";
+import { devicePollBackoff, nonEmptyTrimmedString, parseDeviceAuthStart, postFormTokenRequest, readJsonResponse } from "../../authentication/oauth-flow-store";
 import type {
   OAuthDeviceFlowContext,
   OAuthDevicePollResult,
@@ -37,6 +37,7 @@ interface TokenPayload {
   expires_in?: unknown;
   error?: unknown;
   error_description?: unknown;
+  interval?: unknown;
 }
 interface UserPayload {
   email?: unknown;
@@ -133,7 +134,8 @@ export class GrokOAuthClient extends OAuthDeviceFlow {
       return { status: "failed", reason: "grok token endpoint returned invalid JSON" };
     }
     const error = nonEmptyTrimmedString(payload.error);
-    if (isDevicePollPending(error)) return { status: "pending" };
+    const verdict = devicePollBackoff(error, payload.interval);
+    if (verdict !== undefined) return verdict;
     if (!response.ok) {
       return { status: "failed", reason: nonEmptyTrimmedString(payload.error_description) ?? error ?? `token polling failed (${response.status})` };
     }

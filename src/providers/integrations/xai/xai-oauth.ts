@@ -19,7 +19,7 @@
  * authorization.
  */
 import {
-  isDevicePollPending,
+  devicePollBackoff,
   nonEmptyTrimmedString,
   parseDeviceAuthStart,
   postFormTokenRequest,
@@ -62,6 +62,7 @@ interface TokenPayload {
   expires_in?: unknown;
   error?: unknown;
   error_description?: unknown;
+  interval?: unknown;
 }
 
 interface UserInfoPayload {
@@ -148,7 +149,8 @@ export class XaiOAuthClient extends OAuthDeviceFlow {
       return { status: "failed", reason: "xAI token endpoint returned invalid JSON" };
     }
     const error = nonEmptyTrimmedString(payload.error);
-    if (isDevicePollPending(error)) return { status: "pending" };
+    const verdict = devicePollBackoff(error, payload.interval);
+    if (verdict !== undefined) return verdict;
     if (!response.ok) {
       return {
         status: "failed",

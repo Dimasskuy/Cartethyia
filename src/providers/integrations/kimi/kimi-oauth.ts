@@ -4,7 +4,7 @@
 import * as crypto from "node:crypto";
 import * as os from "node:os";
 import { isRecord } from "../../../protocol/primitives";
-import { expiryFromSeconds, isDevicePollPending, parseDeviceAuthStart, readJsonResponse } from "../../authentication/oauth-flow-store";
+import { devicePollBackoff, expiryFromSeconds, parseDeviceAuthStart, readJsonResponse } from "../../authentication/oauth-flow-store";
 import type { OAuthDeviceFlowContext, OAuthDevicePollResult, OAuthDeviceStartResult } from "../../authentication/oauth-flow-store";
 import type { OAuthTokenRefreshResult } from "../../authentication/oauth-refresh-service";
 import { OAuthDeviceFlow } from "../../authentication/oauth-device-flow";
@@ -122,6 +122,7 @@ interface DeviceTokenResponse {
   error_description?: unknown;
   user_id?: unknown;
   sub?: unknown;
+  interval?: unknown;
 }
 
 export class KimiCodeOAuthClient extends OAuthDeviceFlow {
@@ -186,7 +187,8 @@ export class KimiCodeOAuthClient extends OAuthDeviceFlow {
     }
     if (response.status === 400 || response.status === 428) {
       const err = payload && typeof payload.error === "string" ? payload.error : "";
-      if (isDevicePollPending(err)) return { status: "pending" };
+      const verdict = devicePollBackoff(err, payload?.interval);
+      if (verdict !== undefined) return verdict;
       return { status: "failed", reason: err || `device polling failed (${response.status})` };
     }
     if (!response.ok || !payload) {

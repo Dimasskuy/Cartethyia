@@ -375,6 +375,83 @@ describe("codex adapter headers and body", () => {
     expect(capturedBody["conversation_id"]).toBeUndefined();
   });
 
+  test("pins prompt_cache_key to an inbound session header when the body has none", async () => {
+    const { fetch, requests } = captureRequest({
+      id: "r",
+      model: "gpt-5-codex",
+      output: [],
+    });
+    const adapter = createCodexAdapter({ provider_id: "codex", fetch });
+    const events = [];
+    for await (const ev of adapter.dispatch(
+      fakeCanonicalRequest(),
+      fakeProviderDispatchTarget(),
+      {
+        ...dispatchContext("codex", {
+          credential_kind: "oauth",
+          secret: new TextEncoder().encode("tok"),
+          account_id: "acc-1",
+        }),
+        request_headers: { "x-session-id": "header-session" },
+      },
+    )) {
+      events.push(ev);
+    }
+    expect(requests[0]?.body["prompt_cache_key"]).toBe("header-session");
+    expect(events.some((event) => event.type === "terminal")).toBe(true);
+  });
+
+  test("decodes a typeless streaming body without waiting for it to finish", async () => {
+    const encoder = new TextEncoder();
+    const frames = [
+      `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "hi" })}\n\n`,
+      `data: ${JSON.stringify({ type: "response.completed", response: { id: "r", status: "completed", usage: { input_tokens: 1, output_tokens: 1 } } })}\n\n`,
+    ];
+    let releaseSecond: () => void = () => undefined;
+    const second = Promise.withResolvers<void>();
+    releaseSecond = second.resolve;
+    const fetchImpl = (async () => {
+      let index = 0;
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            if (index === 1) await second.promise;
+            if (index >= frames.length) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(encoder.encode(frames[index]));
+            index += 1;
+          },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const adapter = createCodexAdapter({ provider_id: "codex", fetch: fetchImpl });
+    const iterator = adapter
+      .dispatch(
+        fakeCanonicalRequest({ stream: true }),
+        fakeProviderDispatchTarget(),
+        dispatchContext("codex", {
+          credential_kind: "oauth",
+          secret: new TextEncoder().encode("tok"),
+          account_id: "acc-1",
+        }),
+      )
+      [Symbol.asyncIterator]();
+    const first = await Promise.race([
+      iterator.next(),
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("first event waited for the rest of the body")), 200),
+      ),
+    ]);
+    expect(first.done).toBe(false);
+    releaseSecond();
+    const rest = [];
+    for await (const event of { [Symbol.asyncIterator]: () => iterator }) rest.push(event);
+    expect(rest.some((event) => event.type === "content_delta")).toBe(true);
+  });
+
   test("buildCodexIdentityHeaders never includes tenant identity", () => {
     const headers = buildCodexIdentityHeaders({
       credential: credential("oauth", "tok", "acc-1"),

@@ -135,9 +135,6 @@ export type ValidatedOutboundFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-/** Internal marker for gateway-initiated provider probes; never serialized upstream. */
-export const CARTETHYIA_PROBE_MARKER = "Cartethyia-Probe" as const;
-
 /** Context passed from routing to a provider adapter. */
 export interface ProviderDispatchContext {
   readonly credential: ResolvedCredential;
@@ -146,8 +143,6 @@ export interface ProviderDispatchContext {
   readonly outbound_fetch?: ValidatedOutboundFetch | undefined;
   /** Built-in API-key route-selected fallback User-Agent; custom providers leave this unset. */
   readonly user_agent?: string | undefined;
-  /** Internal origin marker for provider probes; adapters must not forward it. */
-  readonly probe_marker?: typeof CARTETHYIA_PROBE_MARKER;
   /** Original inbound headers needed only for provider-specific negotiation. */
   readonly request_headers?: Readonly<Record<string, string>> | undefined;
 }

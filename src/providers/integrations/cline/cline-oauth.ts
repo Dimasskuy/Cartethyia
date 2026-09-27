@@ -1,6 +1,6 @@
 import {
+  devicePollBackoff,
   expiryFromSeconds,
-  isDevicePollPending,
   nonEmptyTrimmedString,
   parseDeviceAuthStart,
   readJsonResponse,
@@ -155,8 +155,9 @@ export class ClineOAuthClient extends OAuthDeviceFlow {
     });
     const payload = await parseJsonAllowingError(response, "Cline WorkOS device polling");
     const error = nonEmptyTrimmedString(payload.error);
-    if (!response.ok && isDevicePollPending(error)) {
-      return { status: "pending" };
+    if (!response.ok) {
+      const verdict = devicePollBackoff(error, payload.interval);
+      if (verdict !== undefined) return verdict;
     }
     if (!response.ok) {
       this.#sessions.delete(deviceAuthId);

@@ -1474,6 +1474,45 @@ describe("handleProviderProxyRequest — lifecycle hardening", () => {
     expect(await settledInFlightCount()).toBe(0);
   });
 
+  test("releases the flight when the client disconnects without another pull", async () => {
+    // Regression: the release used to hang only off `pull()`/`cancel()`.
+    // A client that drops the connection while the stream is paused never
+    // triggers another `pull()`, so the routing reservation, pool slot, and
+    // in-flight count leaked for the life of the process. The abort listener
+    // makes the disconnect path symmetric.
+    resetInFlightForTests();
+    let releaseUpstream = () => {};
+    const upstreamPause = new Promise<void>((resolve) => {
+      releaseUpstream = resolve;
+    });
+    const adapter: ProviderAdapter = {
+      provider_id: parseProviderId("openai"),
+      dispatch: async function* () {
+        yield { type: "response_start", sequence_number: 1, model: "model-1" } satisfies CanonicalEvent;
+        await upstreamPause;
+        yield terminalUsage(2);
+      },
+    };
+    const { request, deps } = setup({
+      providerId: "openai",
+      accountId: "a1",
+      stream: true,
+      deps: { providerAdapters: new Map([["openai", adapter]]) },
+    });
+    const response = await handleProviderProxyRequest(request, deps);
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    // Read the primed prelude, then abandon the stream *without* cancelling —
+    // this is the client-disconnect shape that used to leak. The inbound
+    // signal bridge (`state.ts` `onAbort`) aborts the request controller with
+    // the client's `AbortError`, exactly as a dropped connection does.
+    await reader.read();
+    const state = deps.stateStore.get(request);
+    state?.abortController.abort(new DOMException("client disconnect", "AbortError"));
+    releaseUpstream();
+    expect(await settledInFlightCount()).toBe(0);
+  });
+
   test("rejects before streaming when the candidate fails on its first event", async () => {
     const { request, deps } = setup({
       providerId: "openai",

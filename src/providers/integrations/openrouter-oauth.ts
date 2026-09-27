@@ -62,6 +62,7 @@ export class OpenrouterOAuthClient extends OAuthClient {
     code: string,
     codeVerifier: string,
     _redirectUri: string,
+    _state?: string,
   ): Promise<OAuthExchangeResult> {
     const response = await this.fetchFn(OPENROUTER_KEY_EXCHANGE_URL, {
       method: "POST",

@@ -86,7 +86,6 @@ export const ANTIGRAVITY_MODELS: readonly ModelDefinition[] = [
   antigravityModel("gemini-3-flash", 1_048_576, 65_536, true),
   antigravityModel("gemini-3.1-flash-image", 200_000, 64_000, false),
   antigravityModel("gemini-3.1-pro", 1_048_576, 65_535, true),
-  antigravityModel("gemini-3.5-flash", 1_048_576, 65_536, true),
   antigravityModel("gemini-3.6-flash", 1_048_576, 65_536, true),
   antigravityModel("gemini-3.7-flash", 1_048_576, 65_536, true),
   antigravityModel("gemini-3.8-flash", 1_048_576, 65_536, true),
@@ -198,17 +197,24 @@ class AntigravityAdapter implements ProviderAdapter {
     // stale states never shadow the live one; the live key is kept.
     this.sessionStates.resetByPrefix(`${sessionIdentityDigest(routeIdentity)}:`, stateKey);
 
+    // Every outbound call goes through the context's fetch: a probe injects one
+    // that strips `User-Agent`, so the control-plane lookups below never
+    // announce a desktop client the probe is not, while real dispatch keeps the
+    // Antigravity identity the backend gates on.
+    const outboundFetch: typeof fetch =
+      (context.outbound_fetch as unknown as typeof fetch) ?? this.fetchFn;
+
     // Kick a background client-version discovery (best-effort; the pinned
     // fallback ships in the user-agent immediately). Not awaited: the
     // dispatch does not block on the update-manifest fetch.
-    void ensureAntigravityVersion(this.fetchFn);
+    void ensureAntigravityVersion(outboundFetch);
     // Best-effort project-id: CloudCode accepts requests without one for
     // free-tier accounts; enterprise/subscribed accounts need it. Cached
     // per access-token hash, so this is a single background call at first
     // use per token.
     const projectId = await loadAntigravityProject(accessToken, {
       baseUrl: this.baseUrl,
-      fetcher: this.fetchFn,
+      fetcher: outboundFetch,
       signal: context.abort_signal,
     });
 
@@ -221,13 +227,10 @@ class AntigravityAdapter implements ProviderAdapter {
       firstUserText(request),
     );
 
-    const outboundFetch: typeof fetch =
-      (context.outbound_fetch as unknown as typeof fetch) ?? this.fetchFn;
-
     const lifecycle = createUpstreamDeadlineLifecycle(context);
 
     try {
-      const headers = {
+      const headers: Record<string, string> = {
         "content-type": "application/json",
         accept: request.stream ? "text/event-stream" : "application/json",
         authorization: `Bearer ${accessToken}`,
@@ -611,7 +614,7 @@ function buildAntigravityEnvelope(
   if (profile) {
     generationConfig["maxOutputTokens"] = profile.maxOutputTokens;
   }
-  const budget = antigravityThinkingBudget(wireModelId);
+  const budget = antigravityThinkingBudget(logicalModelId);
   if (budget !== undefined) {
     generationConfig["thinkingConfig"] = { includeThoughts: true, thinkingBudget: budget };
   }

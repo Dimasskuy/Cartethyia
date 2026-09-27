@@ -94,7 +94,7 @@ export class DevinOAuthClient extends OAuthClient {
     return `${DEVIN_AUTHORIZE_URL}?${params.toString()}`;
   }
 
-  override async exchangeCode(code: string, codeVerifier: string): Promise<OAuthExchangeResult> {
+  override async exchangeCode(code: string, codeVerifier: string, _redirectUri?: string, _state?: string): Promise<OAuthExchangeResult> {
     const response = await this.fetchFn(DEVIN_TOKEN_URL, {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },

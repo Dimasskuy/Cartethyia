@@ -1,5 +1,5 @@
 import {
-  isDevicePollPending,
+  devicePollBackoff,
   parseDeviceAuthStart,
   readJsonResponse,
   record,
@@ -91,7 +91,8 @@ export abstract class OAuthDeviceFlow extends OAuthClient {
     const root = record(payload) ?? {};
     if (response.status === 400 || response.status === 428) {
       const err = typeof root.error === "string" ? root.error : "";
-      if (isDevicePollPending(err)) return { status: "pending" };
+      const verdict = devicePollBackoff(err, root.interval);
+      if (verdict !== undefined) return verdict;
       return { status: "failed", reason: err || `device polling failed (${response.status})` };
     }
     if (!response.ok || payload === undefined) {

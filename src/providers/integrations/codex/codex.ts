@@ -205,6 +205,37 @@ function authHeadersForCodex(
   return { authorization: `Bearer ${token}` };
 }
 
+/** Reads just enough of an untyped body to tell SSE from JSON, then replays it. */
+async function sniffSseBody(body: ReadableStream<Uint8Array> | null): Promise<{
+  readonly sse: boolean;
+  readonly body: ReadableStream<Uint8Array> | null;
+}> {
+  if (body === null) return { sse: false, body };
+  const reader = body.getReader();
+  const first = await reader.read();
+  if (first.done || first.value.byteLength === 0) return { sse: false, body: null };
+  const head = new TextDecoder().decode(first.value.subarray(0, 32)).trimStart();
+  const sse = head.startsWith("event:") || head.startsWith("data:") || head.startsWith(":");
+  const replay = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(first.value);
+    },
+    async pull(controller) {
+      const next = await reader.read();
+      if (next.done) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(next.value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return { sse, body: replay };
+}
+
+
 export function createCodexAdapter(
   config: CodexAdapterConfig,
 ): CodexCompactAdapter {
@@ -444,7 +475,7 @@ export function createCodexAdapter(
 
       const nonEmpty = (value: string | undefined): string | undefined =>
         value === undefined || value.length === 0 ? undefined : value;
-      let rawSessionId = nonEmpty(request.session_id) ?? resolvePromptCacheKey(request);
+      let rawSessionId = nonEmpty(request.session_id) ?? resolvePromptCacheKey(request, context);
       let rawThreadId = nonEmpty(request.thread_id);
       let rawWindowId = nonEmpty(request.window_id);
       let rawTurnId = nonEmpty(request.turn_id);
@@ -592,11 +623,13 @@ export function createCodexAdapter(
       captureSessionHeadersFromResponse(effectiveSessionId, res.headers);
 
       const contentType = res.headers.get("content-type") ?? "";
-      const bodyPreview =
-        contentType.includes("text/event-stream") ? "" : await res.clone().text();
-      const isSse =
-        contentType.includes("text/event-stream") ||
-        /^\s*(?:event|data):/m.test(bodyPreview);
+      // ChatGPT Codex omits content-type and always speaks SSE, including
+      // when the client asked for JSON. Reading the whole clone to sniff the
+      // type waits for the upstream to finish. Peek only the first frame.
+      const typedSse = contentType.toLowerCase().includes("text/event-stream");
+      const sniffed = typedSse || request.stream === true ? undefined : await sniffSseBody(res.body);
+      const body = sniffed?.body ?? res.body;
+      const isSse = typedSse || request.stream === true || sniffed?.sse === true;
       if (isSse) {
         const processor = new CodexStreamFrameProcessor(2);
         const respId = `codex_${Date.now()}`;
@@ -606,7 +639,7 @@ export function createCodexAdapter(
           event_id: respId,
           model: request.model,
         } as CanonicalEvent;
-        for await (const sse of decodeSseEvents(res.body, {
+        for await (const sse of decodeSseEvents(body, {
           signal: context.abort_signal,
         })) {
           const data = sse.data.trim();
@@ -647,7 +680,7 @@ export function createCodexAdapter(
         }
         yield processor.terminalEvent();
       } else {
-        const json = (await res.json()) as Record<string, unknown>;
+        const json = JSON.parse(await new Response(body).text()) as Record<string, unknown>;
         if (typeof json["headers"] === "object" && json["headers"] !== null) {
           captureSessionHeadersFromResponse(
             effectiveSessionId,

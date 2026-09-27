@@ -36,6 +36,7 @@ export class MimoStudioOAuthClient extends OAuthClient {
     code: string,
     _codeVerifier: string,
     _redirectUri: string,
+    _state?: string,
   ): Promise<OAuthExchangeResult> {
     const creds = parseMimoStudioCredential(code);
     const quota = await fetchMimoStudioQuota(encodeMimoStudioCredential(creds), this.fetchFn as typeof fetch);

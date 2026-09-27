@@ -133,6 +133,14 @@ function restoreOrigin(): void {
 
 describe("oauth.test.ts", () => {
   describe("Claude OAuth", () => {
+    test("advertises the localhost loopback redirect the Claude client registers", () => {
+      // Anthropic allowlists the exact redirect URI string; the registered host
+      // is `localhost`, not `127.0.0.1`. The two differ as URI strings, so the
+      // wrong spelling is rejected before consent even though both resolve to
+      // the same address.
+      expect(new ClaudeOAuthClient().browserRedirectUri).toBe("http://localhost:54545/callback");
+    });
+
     test("builds the Claude authorize URL", () => {
       process.env.CARTETHYIA_PUBLIC_ORIGIN = "https://example.test";
       try {
@@ -167,16 +175,23 @@ describe("oauth.test.ts", () => {
       });
       process.env.CARTETHYIA_PUBLIC_ORIGIN = "https://example.test";
       try {
-        const result = await client.exchangeCode("code", "verifier", "http://127.0.0.1:54545/callback");
+        const result = await client.exchangeCode(
+          "code#flow-state",
+          "verifier",
+          "http://localhost:54545/callback",
+          "ignored-when-fragment-present",
+        );
         expect(result.access).toBe("access");
         expect(result.accountLabel).toBe("user@example.test");
         const body = JSON.parse(String(calls[0]?.body)) as Record<string, string>;
         expect(body.grant_type).toBe("authorization_code");
+        expect(body.code).toBe("code");
+        expect(body.state).toBe("flow-state");
         expect(body.code_verifier).toBe("verifier");
         // Anthropic validates the redirect against the client's allowlist, so
         // the exchange must send the loopback URI the authorize step used —
         // not the gateway's console callback.
-        expect(body.redirect_uri).toBe("http://127.0.0.1:54545/callback");
+        expect(body.redirect_uri).toBe("http://localhost:54545/callback");
       } finally {
         restoreOrigin();
       }

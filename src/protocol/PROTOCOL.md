@@ -99,9 +99,9 @@ builders/parsers called directly by their adapters
   `include: ["reasoning.encrypted_content"]` when reasoning is present,
   `prompt_cache_key` derived from the caller's `cache_hint`, forced
   `stream:true, store:false`. The Codex adapter then overwrites that key with
-  the session id (`request.session_id ?? resolvePromptCacheKey(request)`), and
-  `resolvePromptCacheKey` is what unifies chat, responses, and messages caller
-  keys into one affinity, so switching wires does not miss the upstream cache.
+  the session id (`request.session_id ?? resolvePromptCacheKey(request, context)`), and
+  `resolvePromptCacheKey` unifies chat, responses, and messages caller
+  keys, then inbound session headers, into one affinity so switching wires does not miss the upstream cache.
   Client IP is never part of it. Lite shape strips image `detail`, sets
   `parallel_tool_calls:false`, hoists `tools` → leading `additional_tools`
   developer item, downgrades hosted `tool_choice`.

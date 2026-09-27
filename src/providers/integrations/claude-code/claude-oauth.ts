@@ -10,6 +10,14 @@ const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://api.anthropic.com/v1/oauth/token";
 const BOOTSTRAP_URL = "https://api.anthropic.com/api/claude_cli/bootstrap";
 const BOOTSTRAP_MODEL = "claude-opus-4-8";
+/**
+ * The loopback callback the Claude Code OAuth client registers. Anthropic
+ * validates `redirect_uri` against the client's allowlist exactly, and the
+ * registered host is `localhost` (not `127.0.0.1`): the two differ as URI
+ * strings even though they resolve to the same address, so the other spelling
+ * is answered with a redirect-URI rejection before consent.
+ */
+export const CLAUDE_REDIRECT_URI = "http://localhost:54545/callback" as const;
 const SCOPE =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
@@ -100,7 +108,7 @@ export class ClaudeOAuthClient extends OAuthClient {
    * gateway's own console callback is rejected; the dashboard dialog relays the
    * code back from this landing URL and the server performs the exchange.
    */
-  override readonly browserRedirectUri = "http://127.0.0.1:54545/callback" as const;
+  override readonly browserRedirectUri = CLAUDE_REDIRECT_URI;
 
   protected override extraAuthorizeParams(): Record<string, string> | undefined {
     return { code: "true" };
@@ -110,16 +118,24 @@ export class ClaudeOAuthClient extends OAuthClient {
     code: string,
     codeVerifier: string,
     redirectUri: string,
+    state?: string,
   ): Promise<OAuthExchangeResult> {
+    // Anthropic rejects a token body that omits `state` as "Invalid request
+    // format". The authorize callback may also return `code#state`; the
+    // fragment is the state the token endpoint expects.
+    const fragment = code.indexOf("#");
+    const exchangeCode = fragment >= 0 ? code.slice(0, fragment) : code;
+    const exchangeState = (fragment >= 0 ? code.slice(fragment + 1) : state) ?? "";
     const response = await this.fetchFn(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         grant_type: "authorization_code",
         client_id: CLIENT_ID,
-        code,
+        code: exchangeCode,
         code_verifier: codeVerifier,
         redirect_uri: redirectUri,
+        state: exchangeState,
       }),
       signal: AbortSignal.timeout(30_000),
     });

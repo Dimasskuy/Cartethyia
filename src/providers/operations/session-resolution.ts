@@ -32,11 +32,16 @@ export function resolveInboundSessionId(
  *
  * Chat stores the caller key at `extension:prompt_cache_key` and Responses at
  * `extension:responses.prompt_cache_key`; Messages has neither and carries
- * affinity in `metadata.user_id`. Reading only one of those makes the same
- * conversation miss the upstream cache the moment the client switches wires.
- * Client IP is deliberately absent: it is telemetry, not cache identity.
+ * affinity in `metadata.user_id`. Dispatch context then supplies inbound
+ * session headers (`x-session-id`, `session-id`, `prompt-cache-key`, …).
+ * Reading only one of those makes the same conversation miss the upstream
+ * cache the moment the client switches wires. Client IP is deliberately
+ * absent: it is telemetry, not cache identity.
  */
-export function resolvePromptCacheKey(request?: CanonicalRequest): string | undefined {
+export function resolvePromptCacheKey(
+  request?: CanonicalRequest,
+  context?: ProviderDispatchContext,
+): string | undefined {
   const controls = request?.generation_controls;
   for (const name of [
     "extension:prompt_cache_key",
@@ -46,5 +51,5 @@ export function resolvePromptCacheKey(request?: CanonicalRequest): string | unde
     const value = controls?.[name];
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
   }
-  return resolveInboundSessionId(undefined, request);
+  return resolveInboundSessionId(context, request);
 }

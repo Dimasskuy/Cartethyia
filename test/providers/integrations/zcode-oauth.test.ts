@@ -106,6 +106,18 @@ describe("Z.AI Coding Plan — authorize URL", () => {
 });
 
 describe("Z.AI Coding Plan — two-stage exchange", () => {
+  test("forwards the authorize state into the token body", async () => {
+    const { fetcher, calls } = zaiServer({});
+    await new ZcodeOAuthClient(fetcher).exchangeCode(
+      "code-1",
+      "",
+      ZCODE_REDIRECT_URI,
+      "state-1",
+    );
+    const first = calls[0]?.body ?? {};
+    expect(first["state"]).toBe("state-1");
+  });
+
   test("stores the minted durable key, never the OAuth access token", async () => {
     const { fetcher } = zaiServer({});
     const result = await new ZcodeOAuthClient(fetcher).exchangeCode("code-1", "", ZCODE_REDIRECT_URI);

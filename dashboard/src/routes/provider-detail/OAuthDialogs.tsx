@@ -292,6 +292,7 @@ export function DeviceCodeDialog({
     const startedAt = Date.now();
     const expiresInMs = Math.max(1, session.expiresInSeconds) * 1000;
     let pollInFlight = false;
+    let intervalMs = Math.max(1, session.intervalSeconds) * 1000;
     let timer = 0;
     const poll = () => {
       if (Date.now() - startedAt > expiresInMs) {
@@ -315,6 +316,18 @@ export function DeviceCodeDialog({
               window.clearInterval(timer);
               toast.error("Device login failed", result.reason);
               onClose();
+            } else if (result.status === "slow_down") {
+              // The provider (GitHub especially) enforces its own minimum
+              // cadence: ignoring it makes every later poll answer slow_down
+              // again and the login never completes. Honour the server's
+              // interval, or widen ours when it sends none.
+              const nextMs =
+                result.retryAfterSeconds !== undefined
+                  ? Math.max(1, result.retryAfterSeconds) * 1000
+                  : intervalMs + 5000;
+              intervalMs = nextMs;
+              window.clearInterval(timer);
+              timer = window.setInterval(poll, intervalMs);
             }
           },
           onError: () => {
@@ -324,7 +337,7 @@ export function DeviceCodeDialog({
       );
     };
     poll();
-    timer = window.setInterval(poll, Math.max(1, session.intervalSeconds) * 1000);
+    timer = window.setInterval(poll, intervalMs);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);

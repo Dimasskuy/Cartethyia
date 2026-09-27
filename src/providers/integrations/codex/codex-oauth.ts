@@ -172,6 +172,7 @@ export class CodexOAuthClient extends OAuthDeviceFlow {
     code: string,
     codeVerifier: string,
     redirectUri: string,
+    _state?: string,
   ): Promise<OAuthExchangeResult> {
     return exchangeCodeForToken(code, codeVerifier, redirectUri, this.fetchFn);
   }

@@ -432,9 +432,42 @@ export async function handleProviderProxyRequest(
           clientKeepaliveTimer = undefined;
         };
 
+        /**
+         * Fires when the request controller aborts for a *client disconnect*
+         * (bridged from the inbound signal as an `AbortError`). `pull()` is only
+         * invoked when the consumer asks for more, so a client that drops the
+         * connection while the stream is paused would never reach `pull()`'s
+         * release branch and the routing reservation, pool slot, and in-flight
+         * count would leak for the life of the process. Deadline/stall aborts
+         * are deliberately excluded: they only fire from inside `pull()`'s
+         * watchdog, which already releases and records the terminal outcome.
+         */
+        function onStreamAbort(): void {
+          const reason = state.abortController.signal.reason;
+          if (!(reason instanceof DOMException && reason.name === "AbortError")) return;
+          // Record the client-cancel outcome before the release finalizes
+          // telemetry: without it the fallback status would be "failed"/500,
+          // disagreeing with the `pull()` cancel path for the same event.
+          if (!state.outcome) {
+            state.outcome = { status: "cancelled", httpStatus: 499 };
+          }
+          void (async () => {
+            try {
+              await iterator.return?.();
+            } catch {
+              // Upstream iterator cleanup on abort is best-effort.
+            }
+            await releaseStreamResources();
+          })();
+        }
+        state.abortController.signal.addEventListener("abort", onStreamAbort, { once: true });
+        // The client may already be gone before the stream is even constructed.
+        if (state.abortController.signal.aborted) onStreamAbort();
+
         async function releaseStreamResources() {
           if (streamReleased) return;
           streamReleased = true;
+          state.abortController.signal.removeEventListener("abort", onStreamAbort);
           clearClientKeepaliveTimer();
           clearStallWatchdog();
           await releaseAttemptLeases(

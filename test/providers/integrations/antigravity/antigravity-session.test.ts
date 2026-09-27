@@ -250,4 +250,24 @@ describe("antigravity session helpers", () => {  test("signedAntigravitySessionI
     expect(antigravityThinkingBudget("gemini-3-flash-low")).toBe(1_000);
     expect(antigravityThinkingBudget("claude-sonnet-4-5")).toBe(10_000);
   });
+
+  test("thinking budget is resolved from the logical id, not the wire id", async () => {
+    // Regression: `gemini-3.1-pro` resolves to the wire id `gemini-pro-agent`,
+    // which contains no "gemini-3" substring. Deriving the budget from the
+    // wire id made `antigravityThinkingBudget` return undefined, so no
+    // `thinkingConfig` was ever sent and the model produced no thoughts at all.
+    const captured: Record<string, unknown>[] = [];
+    const adapter = new AntigravityAdapter({ fetch: mockFetch(captured) });
+    await collect(
+      adapter.dispatch(
+        request({ model: "gemini-3.1-pro" }),
+        { ...candidate(), model_id: "gemini-3.1-pro" } as ProviderDispatchTarget,
+        context(),
+      ),
+    );
+    const req = requestOf(envelopeOf(captured));
+    expect(envelopeOf(captured)["model"]).toBe("gemini-pro-agent");
+    const generationConfig = req["generationConfig"] as Record<string, unknown>;
+    expect(generationConfig["thinkingConfig"]).toEqual({ includeThoughts: true, thinkingBudget: 10_001 });
+  });
 });

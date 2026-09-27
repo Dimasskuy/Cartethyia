@@ -395,6 +395,12 @@ calls `retainLeases()` and hands ownership to the stream: `releaseStreamResource
 `resolveStreamStallTimeoutMs`). `createDispatchStreamEncoder()` wraps the surface encoders with per-surface error frames
 (chat/completion data frames, responses `response.error`, messages `error`).
 
+**Client-disconnect release.** `pull()` runs only when the consumer asks for more, so a client that drops the connection while
+the stream is paused never reaches `pull()`'s release branch. A `state.abortController` abort listener bridges that case: an
+`AbortError` (the inbound signal bridge's client-disconnect reason) runs the same release as `cancel()`, keeping the routing
+reservation, pool slot, and in-flight count symmetric. Deadline and stall aborts are deliberately excluded — those fire from
+inside `pull()`'s watchdog, which already records the terminal outcome and releases.
+
 **Error frames inside a 200 OK.** An explicit error envelope must surface as a typed failure, not a silent `failed`
 terminal. Chat, Responses, and Codex frames use `gatewayErrorFromStreamError`; Claude, Gemini, Command Code, Devin,
 Qoder, and compatible JSON errors use the same structured identifier/status classifier at their adapter boundary. Exact

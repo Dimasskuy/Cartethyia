@@ -44,6 +44,13 @@ export interface OAuthDeviceFlowContext {
 
 export type OAuthDevicePollResult =
   | { readonly status: "pending" }
+  /**
+   * The authorization server asked us to back off (`slow_down`, RFC 8628
+   * §3.5). GitHub enforces it hard: continuing at the original cadence makes
+   * every later poll answer `slow_down` again, so the flow never completes.
+   * `retryAfterSeconds` is the server's own minimum when it sends one.
+   */
+  | { readonly status: "slow_down"; readonly retryAfterSeconds?: number }
   | { readonly status: "complete"; readonly result: OAuthExchangeResult }
   | { readonly status: "failed"; readonly reason: string };
 
@@ -66,7 +73,12 @@ export interface OAuthLoginClient {
   readonly browserRedirectUri?: string;
   /** Browser-code clients only; device-only clients omit both. */
   buildAuthorizeUrl?(request: OAuthAuthorizeRequest): string;
-  exchangeCode?(code: string, codeVerifier: string, redirectUri: string): Promise<OAuthExchangeResult>;
+  exchangeCode?(
+    code: string,
+    codeVerifier: string,
+    redirectUri: string,
+    state?: string,
+  ): Promise<OAuthExchangeResult>;
   startDeviceAuth?(context?: OAuthDeviceFlowContext): Promise<OAuthDeviceStartResult>;
   pollDeviceAuth?(
     deviceAuthId: string,
@@ -135,7 +147,30 @@ function positiveSeconds(value: unknown, fallbackSeconds: number): number {
  * approved yet, or the client is polling faster than the server allows.
  */
 export function isDevicePollPending(error: string | undefined): boolean {
-  return error === "authorization_pending" || error === "slow_down";
+  return error === "authorization_pending";
+}
+
+/** RFC 8628 `slow_down`: the client must widen its polling interval. */
+export function isDevicePollSlowDown(error: string | undefined): boolean {
+  return error === "slow_down";
+}
+
+/**
+ * Classifies a device-token poll error into a poll verdict, or `undefined`
+ * when the error is not a recognized device-flow state (the caller then
+ * reports it as a failure with the upstream's reason).
+ */
+export function devicePollBackoff(
+  error: string | undefined,
+  interval: unknown,
+): { status: "pending" } | { status: "slow_down"; retryAfterSeconds?: number } | undefined {
+  if (isDevicePollPending(error)) return { status: "pending" };
+  if (isDevicePollSlowDown(error)) {
+    const seconds =
+      typeof interval === "number" && Number.isFinite(interval) && interval > 0 ? interval : undefined;
+    return { status: "slow_down", ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }) };
+  }
+  return undefined;
 }
 
 /** Trimmed non-empty string, or `undefined` for anything else. */

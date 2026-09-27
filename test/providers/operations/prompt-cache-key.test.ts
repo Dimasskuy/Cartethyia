@@ -80,6 +80,19 @@ describe("prompt cache identity", () => {
     });
     expect(resolvePromptCacheKey(keyed)).toBe("explicit");
   });
+
+  test("uses an inbound session header when the body has no cache key", () => {
+    const bare = request();
+    expect(resolvePromptCacheKey(bare, context({ "x-session-id": "header-session" }))).toBe(
+      "header-session",
+    );
+    expect(
+      resolvePromptCacheKey(
+        request({ generation_controls: { "extension:prompt_cache_key": "body-key" } }),
+        context({ "x-session-id": "header-session" }),
+      ),
+    ).toBe("body-key");
+  });
 });
 
 describe("inbound session id header precedence", () => {

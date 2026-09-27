@@ -61,7 +61,6 @@ const app = boot
   : createGatewayShell();
 export { app };
 
-
 function shutdown(signal: "SIGINT" | "SIGTERM"): void {
   if (!boot) return;
   log.info(`[shutdown] ${signal} received, draining...`);

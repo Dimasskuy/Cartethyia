@@ -227,7 +227,7 @@ export async function completeLogin(
     return { ok: false, message: "provider does not support browser authorization" };
   }
   try {
-    const result = await client.exchangeCode(code, flow.codeVerifier, flow.redirectUri);
+    const result = await client.exchangeCode(code, flow.codeVerifier, flow.redirectUri, state);
     const tokenCheck = await validateIssuedAccessToken(
       result.access,
       providerJwtVerification(providerId),
@@ -465,6 +465,14 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
             : { providerState: correlation.providerState }),
         });
         if (polled.status === "pending") return { status: "pending" };
+        if (polled.status === "slow_down") {
+          return {
+            status: "slow_down",
+            ...(polled.retryAfterSeconds === undefined
+              ? {}
+              : { retryAfterSeconds: polled.retryAfterSeconds }),
+          };
+        }
         if (polled.status === "failed") {
           await config.oauthFlowStore.deleteDevice(deviceAuthId);
           return { status: "failed", reason: polled.reason };

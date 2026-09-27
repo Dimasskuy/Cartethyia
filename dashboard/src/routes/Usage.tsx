@@ -1247,11 +1247,7 @@ export default function Usage(): ReactNode {
           // The figure is always an estimate, never an invoice. When completed
           // rows exist without a persisted price the estimate is a floor, and
           // the caption says so in plain words instead of naming the flag.
-          detail={
-            summary?.partial
-              ? "Estimated, not billing · some usage lacks pricing"
-              : "Estimated, not billing"
-          }
+          detail="Estimated not billing"
           tone="orange"
           icon={<DollarSign size={13} />}
         />

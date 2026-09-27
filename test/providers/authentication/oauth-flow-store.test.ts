@@ -341,6 +341,7 @@ describe("refresh-service.test.ts", () => {
 import {
   buildPkceAuthorizeUrl,
   composeAbortSignal,
+  devicePollBackoff,
   expiryFromSeconds,
   isDevicePollPending,
   nonEmptyTrimmedString,
@@ -377,11 +378,25 @@ describe("device-flow helpers", () => {
     expect(fallback?.expiresInSeconds).toBe(70);
   });
 
-  test("isDevicePollPending matches only the two pending codes", () => {
+  test("isDevicePollPending matches only authorization_pending", () => {
     expect(isDevicePollPending("authorization_pending")).toBe(true);
-    expect(isDevicePollPending("slow_down")).toBe(true);
+    // slow_down is its own verdict: it must widen the cadence, not poll again
+    // at the same interval.
+    expect(isDevicePollPending("slow_down")).toBe(false);
     expect(isDevicePollPending("expired_token")).toBe(false);
     expect(isDevicePollPending(undefined)).toBe(false);
+  });
+
+  test("devicePollBackoff classifies pending, slow_down, and unknown errors", () => {
+    expect(devicePollBackoff("authorization_pending", undefined)).toEqual({ status: "pending" });
+    expect(devicePollBackoff("slow_down", 145)).toEqual({
+      status: "slow_down",
+      retryAfterSeconds: 145,
+    });
+    // No server interval: the dashboard widens by its own step.
+    expect(devicePollBackoff("slow_down", undefined)).toEqual({ status: "slow_down" });
+    expect(devicePollBackoff("expired_token", undefined)).toBeUndefined();
+    expect(devicePollBackoff(undefined, undefined)).toBeUndefined();
   });
 
   test("nonEmptyTrimmedString trims and rejects empties", () => {

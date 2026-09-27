@@ -43,7 +43,6 @@ import {
 } from "./probe-phases";
 import { createDefaultProviderRegistry } from "../default-registry";
 import { createProbeFetch } from "../operations/probe-fetch";
-import { CARTETHYIA_PROBE_MARKER } from "../provider-registry";
 import { authHeaders } from "../compatible-adapter";
 import {
   byokAuthHeaderShape,
@@ -282,7 +281,6 @@ export class ProviderProbingService {
             deadline: startedAt + 30_000,
             abort_signal: probeSignal,
             outbound_fetch: probeFetch,
-            probe_marker: CARTETHYIA_PROBE_MARKER,
           })) {
             if (ttfbMs === undefined) ttfbMs = Date.now() - startedAt;
             events.push(event);
@@ -361,7 +359,6 @@ export class ProviderProbingService {
       sourceSurface,
       requestedModel: modelId,
       endpoint: endpointPath,
-      userAgent: CARTETHYIA_PROBE_MARKER,
       providerId,
       ...(accountId ? { accountId } : {}),
       ...(networkPoolId ? { networkPoolId } : {}),

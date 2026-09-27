@@ -14,7 +14,7 @@
  * would otherwise force a fresh device authorization every time.
  */
 import {
-  isDevicePollPending,
+  devicePollBackoff,
   nonEmptyTrimmedString,
   readJsonResponse,
   record,
@@ -294,9 +294,11 @@ export class GithubOAuthClient extends OAuthDeviceFlow {
     const githubToken = nonEmptyTrimmedString(body?.access_token);
     if (githubToken === undefined) {
       const error = nonEmptyTrimmedString(body?.error) ?? "";
-      // GitHub answers 200 with an `error` field for the pending state rather
-      // than an HTTP status, so the field is what decides.
-      if (isDevicePollPending(error)) return { status: "pending" };
+      // GitHub answers 200 with an `error` field for both the pending state
+      // and `slow_down`; `slow_down` must widen the cadence or every later
+      // poll is rejected the same way and the flow never completes.
+      const verdict = devicePollBackoff(error, body?.interval);
+      if (verdict !== undefined) return verdict;
       if (error === "expired_token") {
         return { status: "failed", reason: "GitHub device authorization expired" };
       }

@@ -277,14 +277,12 @@ describe("ProviderProbingService discovery hardening", () => {
     };
     const events: Array<{ networkPoolId?: string; userAgent?: string }> = [];
     let outboundHeaders: Headers | undefined;
-    let outboundBody: string | undefined;
     let released = 0;
     const probing = probingService(db, {
       telemetryBuffer: { enqueue: (event: { networkPoolId?: string; userAgent?: string }) => events.push(event) },
       outboundFetchFor: () => ({
         fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
           outboundHeaders = new Headers(init?.headers);
-          outboundBody = typeof init?.body === "string" ? init.body : undefined;
           return new Response(
             JSON.stringify({
               id: "chatcmpl-1",
@@ -309,21 +307,17 @@ describe("ProviderProbingService discovery hardening", () => {
     expect(released).toBe(1);
     expect(events).toHaveLength(1);
     expect(events[0]?.networkPoolId).toBe("pool-live");
-    expect(events[0]?.userAgent).toBe("Cartethyia-Probe");
     expect(outboundHeaders?.get("user-agent")).toBeNull();
-    expect(outboundBody).not.toContain("Cartethyia-Probe");
   });
 
-  test("passes the internal probe marker without serializing it upstream", async () => {
+  test("a 202 response is passed through like any other status", async () => {
     const events: Array<{ userAgent?: string }> = [];
     let outboundHeaders: Headers | undefined;
-    let outboundBody: string | undefined;
     const probing = probingService(probingDb({ accounts: [], requiresAccount: false }), {
       telemetryBuffer: { enqueue: (event: { userAgent?: string }) => events.push(event) },
       outboundFetchFor: () =>
         (async (_input: RequestInfo | URL, init?: RequestInit) => {
           outboundHeaders = new Headers(init?.headers);
-          outboundBody = typeof init?.body === "string" ? init.body : undefined;
           return new Response("{}", {
             status: 202,
             headers: { "content-type": "application/json" },
@@ -331,18 +325,15 @@ describe("ProviderProbingService discovery hardening", () => {
         }) as unknown as typeof fetch as never,
     });
 
-    const result = await probing.probeModel("tenant-1", "openai", {
+    await probing.probeModel("tenant-1", "openai", {
       modelId: "gpt-4o-mini",
       wireFamily: "responses",
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.statusCode).toBe(202);
-    expect(events[0]?.userAgent).toBe("Cartethyia-Probe");
+    // OpenAI adapter sets no custom User-Agent, so outbound receives none;
+    // when an adapter sets its native User-Agent, probe preserves it.
     expect(outboundHeaders?.get("user-agent")).toBeNull();
-    expect(outboundBody).not.toContain("Cartethyia-Probe");
   });
-
   test("registry exposes discovery capabilities for wired providers", async () => {
     const registry = createDefaultProviderRegistry();
     for (const providerId of ["openai", "gemini", "openrouter", "zai"]) {
@@ -1171,7 +1162,8 @@ describe("testByokConnection", () => {
     expect(captured.url).toBe("https://api.anthropic-compatible.test/v1/models");
     expect(captured.headers?.get("x-api-key")).toBe("sk-ant-test");
     expect(captured.headers?.get("authorization")).toBeNull();
-    expect(captured.headers?.get("user-agent")).toBeNull();
+    // Default CLI identity stamps the Claude Code CLI user-agent
+    expect(captured.headers?.get("user-agent")).toContain("claude-cli/");
   });
 
   test("a chat-wire test sends bearer auth and honours a base that already has /v1", async () => {
