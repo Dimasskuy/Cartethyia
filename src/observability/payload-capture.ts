@@ -142,7 +142,10 @@ export class TelemetryPayloadCapture {
       deleted += batch;
       if (batch < batchSize) break;
     }
-    deleted += await prunePayloadFrames(now);
+    // Every frame expires `payloadRetentionMs()` after it is written, so a file
+    // last written before that window closed cannot still hold a live frame.
+    // That bound is what makes a damaged, unparsable file reclaimable at all.
+    deleted += await prunePayloadFrames(now, new Date(now.getTime() - payloadRetentionMs()));
     return { deleted };
   }
 }

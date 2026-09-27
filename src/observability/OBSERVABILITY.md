@@ -158,9 +158,14 @@ Opt-in, redacted, bounded, TTL'd request/response capture for debugging:
   1 MB max frame, `CARTETHYIA_TELEMETRY_PAYLOAD_FILE_MAX_BYTES` 64 MB max file
   with rotation, serialized writers); the DB
   row holds only a file reference. `cleanupExpired` (every 15 min via
-  `telemetry-payload-cleanup`) deletes expired rows in batches and compacts
-  the files. The file-store settings remain active because this backing store
-  is still live.
+  `telemetry-payload-cleanup`) deletes expired rows in batches and then reclaims
+  whole files that hold no live frame. Files are **never rewritten**: a row
+  addresses its body by file + offset + length, so compacting in place would
+  shift the frames behind it and leave current rows reading the wrong bytes.
+  A file whose contents cannot be fully parsed is kept until its last write is
+  older than the retention window, when nothing it holds can still be live, and
+  one damaged file never aborts the pass over the rest. The file-store settings
+  remain active because this backing store is still live.
 
 ## Rules / invariants
 

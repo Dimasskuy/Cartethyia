@@ -1,4 +1,4 @@
-import { mkdir, open, readdir, readFile, stat, truncate, unlink } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -142,33 +142,98 @@ export async function readPayloadFrame(reference: PayloadFileReference): Promise
   return parsed.version === 1 ? parsed.payload : undefined;
 }
 
-export async function prunePayloadFrames(before: Date): Promise<number> {
+/**
+ * What a whole file's parseable frames say about reclaiming it.
+ *
+ * `live` — at least one frame is still inside its retention window.
+ * `none` — every frame was read and every one has expired.
+ * `unknown` — parsing stopped on a torn tail or a corrupt frame, so the rest
+ *   of the file is unreadable and cannot be assumed empty of live frames.
+ */
+type FrameLiveness = "live" | "none" | "unknown";
+
+function frameLiveness(data: Buffer, before: Date): FrameLiveness {
+  let offset = 0;
+  while (offset + FRAME_HEADER_BYTES <= data.byteLength) {
+    const length = data.readUInt32BE(offset);
+    const end = offset + FRAME_HEADER_BYTES + length;
+    // A length that runs past the file is a half-written tail, not a frame.
+    if (length <= 0 || end > data.byteLength) return "unknown";
+    let frame: PayloadFrame;
+    try {
+      frame = JSON.parse(data.subarray(offset + FRAME_HEADER_BYTES, end).toString("utf8")) as PayloadFrame;
+    } catch {
+      return "unknown";
+    }
+    if (new Date(frame.expiresAt).getTime() >= before.getTime()) return "live";
+    offset = end;
+  }
+  // Bytes left over that are too short to hold a header are an unreadable tail.
+  return offset === data.byteLength ? "none" : "unknown";
+}
+
+/**
+ * Reclaims frame files that no longer hold a live payload.
+ *
+ * Frames are append-only and this pass never rewrites a file. That is a
+ * correctness requirement, not an optimization: a `telemetry_payloads` row
+ * addresses its body by file + offset + length, so compacting a file in place
+ * would shift every later frame and leave live rows pointing at the wrong
+ * bytes — the drawer then reads `undefined` and the payload silently vanishes
+ * while its row is still current. A file is dropped whole, and only once
+ * nothing in it is still live.
+ *
+ * `unparseableWrittenBefore` bounds the damaged-file case. A region that
+ * cannot be parsed cannot prove it holds no live frame, so such a file is kept
+ * until its last write is older than that instant — every frame it could hold
+ * was written before then and has therefore expired. A caller that cannot
+ * supply that bound leaves the default, which keeps damaged files rather than
+ * risk dropping a frame a row still addresses.
+ *
+ * One damaged file must not abort the pass. A single corrupt frame used to
+ * throw straight out of the loop, so every other expired file stayed on disk
+ * forever and the volume only grew — and because a container restart is the
+ * usual way a half-written tail appears, the failure looked Docker-specific.
+ */
+export async function prunePayloadFrames(
+  before: Date,
+  unparseableWrittenBefore: Date = new Date(0),
+): Promise<number> {
   const directory = payloadDirectory();
   const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
   let deleted = 0;
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonb")) continue;
     const path = join(directory, entry.name);
-    const data = await readFile(path).catch(() => undefined);
-    if (!data || data.byteLength < FRAME_HEADER_BYTES) continue;
-    let offset = 0;
-    let retained = Buffer.alloc(0);
-    while (offset + FRAME_HEADER_BYTES <= data.byteLength) {
-      const length = data.readUInt32BE(offset);
-      const end = offset + FRAME_HEADER_BYTES + length;
-      if (length <= 0 || end > data.byteLength) break;
-      const frame = JSON.parse(data.subarray(offset + FRAME_HEADER_BYTES, end).toString("utf8")) as PayloadFrame;
-      if (new Date(frame.expiresAt).getTime() >= before.getTime()) retained = Buffer.concat([retained, data.subarray(offset, end)]);
-      offset = end;
-    }
-    if (retained.byteLength === 0) {
-      await unlink(path).catch(() => undefined);
-      deleted += 1;
-    } else if (retained.byteLength !== data.byteLength) {
-      await truncate(path, 0);
-      const handle = await open(path, "a");
-      try { await handle.write(retained); } finally { await handle.close(); }
+    try {
+      if (await fileReclaimable(path, before, unparseableWrittenBefore)) {
+        await unlink(path);
+        deleted += 1;
+      }
+    } catch {
+      // Stat, read, or unlink failed on this one file. Leave it for the next
+      // pass rather than abandoning every remaining file's reclaim.
     }
   }
   return deleted;
+}
+
+/**
+ * True when the file can be deleted without losing a frame a row still
+ * addresses. A readable file is reclaimable once every frame has expired; a
+ * damaged one only once `unparseableWrittenBefore` rules out a live frame in
+ * the part that could not be parsed.
+ */
+async function fileReclaimable(
+  path: string,
+  before: Date,
+  unparseableWrittenBefore: Date,
+): Promise<boolean> {
+  const data = await readFile(path);
+  if (data.byteLength < FRAME_HEADER_BYTES) return true;
+  const liveness = frameLiveness(data, before);
+  if (liveness === "live") return false;
+  if (liveness === "none") return true;
+  const written = await stat(path).then((value) => value.mtimeMs);
+  return written <= unparseableWrittenBefore.getTime();
 }
