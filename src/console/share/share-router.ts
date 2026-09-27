@@ -14,9 +14,8 @@ import { API_CONTENT_SECURITY_POLICY, X_FRAME_OPTIONS } from "../../security/out
 import { generateApiKeySecret } from "../domains/api-keys/contracts";
 import {
   hashShareToken,
-  type ShareHandoffRow,
+  type ShareLinkPolicy,
   type ShareLinkStore,
-  type ShareApiKeyRow,
 } from "../../persistence/share-store";
 
 /** Minimum accepted token length; generated tokens are 43 base64url chars. */
@@ -62,7 +61,7 @@ function modelPrefixAllows(
 }
 
 /** Resolves the models a share recipient may use. */
-async function modelsForShare(db: CartethyiaDatabase, row: ShareApiKeyRow): Promise<string[]> {
+async function modelsForShare(db: CartethyiaDatabase, row: ShareLinkPolicy): Promise<string[]> {
   const snapshot: ApiKeyAuthorizationSnapshot = {
     api_key_id: row.id,
     tenant_id: row.tenantId,
@@ -105,66 +104,37 @@ export function createShareRouter(options: ShareRouterOptions): Elysia {
 
   return new Elysia()
     /**
-     * Handoff link for a personal key: reveals the key itself, never a child.
-     * The link's authority is the same as the enrollment link's — possession of
-     * the token — so a dead or revoked link resolves to nothing.
+     * Resolves a link to its policy and, for a handoff link, the key it
+     * reveals.
+     *
+     * One endpoint serves both kinds because a token is exactly one of them. A
+     * page that had to guess the kind sent a personal key's handoff link to the
+     * enrollment lookup, which answered 404 for a link that was live — the
+     * recipient saw "link unavailable" for a URL the console had just handed
+     * out.
      */
-    .get("/share/:token/handoff", async ({ params }) => {
-      if (typeof params.token !== "string") return notFound();
-      const token = params.token;
-      if (token.length < MIN_TOKEN_LENGTH) return notFound();
-      const row: ShareHandoffRow | null = await shareStore.getHandoffByShareToken(
-        hashShareToken(token),
-      );
-      if (row === null) return notFound();
-      let key: string | null = null;
-      if (row.keyEncrypted !== null) {
-        try {
-          key = decryptCredentialToString(row.keyEncrypted);
-        } catch {
-          key = null;
-        }
-      }
-      void shareStore.touchView(hashShareToken(token)).catch(() => undefined);
-      return json({
-        kind: "handoff",
-        name: row.name,
-        keyPrefix: row.keyPrefix,
-        key,
-        requestsPerMinute: row.requestsPerMinute,
-        maxConcurrentRequests: row.maxConcurrentRequests,
-        dailyLimit: row.dailyTokenLimit,
-        monthlyLimit: row.monthlyTokenLimit,
-        oneTimeLimit: row.lifetimeTokenBudget,
-        modelAllowlist: row.modelAllowlist,
-        notes: {
-          title: row.notesTitle,
-          subtitle: row.notesSubtitle,
-          body: row.notesBody,
-        },
-        expiresAt: row.expiresAt,
-      });
-    })
     .get("/share/:token/data", async ({ params, request }) => {
       if (typeof params.token !== "string") return notFound();
       const token = params.token;
       if (token.length < MIN_TOKEN_LENGTH) return notFound();
       const tokenHash = hashShareToken(token);
-      const row = await shareStore.getApiKeyByShareToken(tokenHash);
-      if (row === null) return notFound();
-
+      const resolved = await shareStore.resolveShareLink(tokenHash);
+      if (resolved === null) return notFound();
+      const row = resolved.key;
       const clientIp = options.resolveClientIp(request);
       const clientIpKey = clientIp === null ? undefined : canonicalClientIpKey(clientIp);
       const [modelAllowlist, alreadyIssued] = await Promise.all([
         modelsForShare(db, row),
-        clientIpKey === undefined ? false : shareStore.hasActiveSharedKeyForIp(clientIpKey),
+        // Only an enrollment link hands out keys, so only it can be exhausted
+        // by the one-active-key-per-IP rule.
+        resolved.kind === "enroll" && clientIpKey !== undefined
+          ? shareStore.hasActiveSharedKeyForIp(clientIpKey)
+          : Promise.resolve(false),
       ]);
       void shareStore.touchView(tokenHash).catch(() => undefined);
-      return json({
+      const policy = {
         name: row.name,
         keyPrefix: row.keyPrefix,
-        canIssue: clientIpKey !== undefined && !alreadyIssued,
-        alreadyIssued,
         dailyLimit: row.dailyTokenLimit,
         monthlyLimit: row.monthlyTokenLimit,
         oneTimeLimit: row.lifetimeTokenBudget,
@@ -179,6 +149,27 @@ export function createShareRouter(options: ShareRouterOptions): Elysia {
           body: row.notesBody,
         },
         expiresAt: row.expiresAt,
+      };
+      if (resolved.kind === "handoff") {
+        // The link exists and is authorized; only its retained ciphertext can
+        // be missing, which happens for a row written before token retention or
+        // under a rotated encryption key. That is a page with nothing to
+        // reveal, not a link the recipient mistyped.
+        let key: string | null = null;
+        if (resolved.key.keyEncrypted !== null) {
+          try {
+            key = decryptCredentialToString(resolved.key.keyEncrypted);
+          } catch {
+            key = null;
+          }
+        }
+        return json({ kind: "handoff", key, ...policy });
+      }
+      return json({
+        kind: "enroll",
+        canIssue: clientIpKey !== undefined && !alreadyIssued,
+        alreadyIssued,
+        ...policy,
       });
     })
     .post("/share/:token/issue", async ({ params, request, set }) => {
@@ -193,8 +184,10 @@ export function createShareRouter(options: ShareRouterOptions): Elysia {
         return json({ error: { code: "client_ip_invalid", message: "Client IP could not be normalized" } }, 400);
 
       const tokenHash = hashShareToken(token);
-      const template = await shareStore.getApiKeyByShareToken(tokenHash);
-      if (template === null) return notFound();
+      const resolved = await shareStore.resolveShareLink(tokenHash);
+      // A handoff link reveals an existing key; it never mints one.
+      if (resolved === null || resolved.kind !== "enroll") return notFound();
+      const template = resolved.key;
       const generated = generateApiKeySecret(template.keyPrefix ?? undefined);
       const issued = await shareStore.issueSharedApiKey(tokenHash, {
         keyHash: generated.hash,

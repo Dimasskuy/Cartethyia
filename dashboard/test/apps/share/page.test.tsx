@@ -1,14 +1,14 @@
 import { describe, expect, mock, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ShareEnrollmentData } from "../../../src/lib/hooks/share-data";
+import type { ShareEnrollmentData, ShareHandoffData, ShareLinkData } from "../../../src/lib/hooks/share-data";
 
 (globalThis as { window?: unknown }).window = {
   location: { pathname: "/share/public-token", origin: "https://gateway.example" },
   localStorage: { getItem: () => null, setItem: () => undefined },
 };
 
-interface ShareState { data: ShareEnrollmentData | null; error: string | null; loading: boolean }
+interface ShareState { data: ShareLinkData | null; error: string | null; loading: boolean }
 let shareState: ShareState = { data: null, error: null, loading: true };
 mock.module("../../../src/lib/hooks/share-data", () => ({ useShareData: (): ShareState => shareState }));
 // Load after mock.module so the page captures the mocked data hook.
@@ -16,9 +16,18 @@ const { SharePage, tokenFromPathname } = await import("../../../src/apps/share/p
 function render(): string { return renderToStaticMarkup(createElement(SharePage)); }
 
 const data: ShareEnrollmentData = {
+  kind: "enroll",
   name: "Team Access", keyPrefix: "ctk", canIssue: true, alreadyIssued: false,
   dailyLimit: 50_000, monthlyLimit: null, oneTimeLimit: null, requestsPerMinute: 20, maxConcurrentRequests: 3,
   modelAllowlist: ["gpt-5"], modelDenylist: null, modelPrefix: "gpt-", notes: { title: null, subtitle: "Shared access", body: "Use responsibly" },
+  expiresAt: null,
+};
+
+const handoff: ShareHandoffData = {
+  kind: "handoff",
+  name: "Personal key", keyPrefix: "rk_", key: "rk_handed_over_secret",
+  dailyLimit: null, monthlyLimit: null, oneTimeLimit: null, requestsPerMinute: null, maxConcurrentRequests: null,
+  modelAllowlist: ["gpt-5"], modelDenylist: null, modelPrefix: null, notes: { title: null, subtitle: null, body: null },
   expiresAt: null,
 };
 
@@ -77,6 +86,25 @@ describe("public share enrollment page", () => {
     const markup = render();
     expect(markup).toContain("An active key has already been issued from this IP.");
     expect(markup).toContain("Already enrolled");
+    expect(markup).not.toContain("Generate API Key");
+  });
+
+  test("reveals the key a handoff link carries, with no issuance action", () => {
+    shareState = { data: handoff, error: null, loading: false };
+    const markup = render();
+    // A personal key's link exists to reveal that key, so the page shows it
+    // rather than offering to mint one.
+    expect(markup).toContain("rk_handed_over_secret");
+    expect(markup).toContain("SHARED ACCESS / KEY");
+    expect(markup).not.toContain("Generate API Key");
+    expect(markup).not.toContain("An active key has already been issued from this IP.");
+    expect(markup).toContain("https://gateway.example/v1");
+  });
+
+  test("says a handoff link cannot reveal a key when its ciphertext is gone", () => {
+    shareState = { data: { ...handoff, key: null }, error: null, loading: false };
+    const markup = render();
+    expect(markup).toContain("This link can no longer reveal its key.");
     expect(markup).not.toContain("Generate API Key");
   });
 

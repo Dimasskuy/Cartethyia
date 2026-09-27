@@ -1,11 +1,10 @@
 import { shareCodeMessage } from "../helpers";
 import { useEffect, useState } from "react";
 
-export interface ShareEnrollmentData {
+/** Policy every share link carries, whichever kind it is. */
+export interface ShareLinkPolicyData {
   readonly name: string;
   readonly keyPrefix: string | null;
-  readonly canIssue: boolean;
-  readonly alreadyIssued: boolean;
   readonly dailyLimit: number | null;
   readonly monthlyLimit: number | null;
   readonly oneTimeLimit: number | null;
@@ -17,6 +16,22 @@ export interface ShareEnrollmentData {
   readonly notes: { readonly title: string | null; readonly subtitle: string | null; readonly body: string | null };
   readonly expiresAt: string | null;
 }
+
+/** An enrollment link, which hands the recipient a key it can mint itself. */
+export interface ShareEnrollmentData extends ShareLinkPolicyData {
+  readonly kind: "enroll";
+  readonly canIssue: boolean;
+  readonly alreadyIssued: boolean;
+}
+
+/** A handoff link, which reveals the personal key it was created for. */
+export interface ShareHandoffData extends ShareLinkPolicyData {
+  readonly kind: "handoff";
+  /** Null when the stored ciphertext cannot be read; the link reveals nothing. */
+  readonly key: string | null;
+}
+
+export type ShareLinkData = ShareEnrollmentData | ShareHandoffData;
 
 interface ShareDataState<TData> {
   readonly data: TData | null;

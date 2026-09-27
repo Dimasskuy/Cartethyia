@@ -6,7 +6,7 @@ import { EmptyState, ErrorState, LoadingState } from "../../components/ui/state"
 import { ClipboardButton } from "../../components/patterns/clipboard-button";
 import { GithubBadge } from "../../components/patterns/github-badge";
 import { readConsoleTheme, applyConsoleTheme } from "../../lib/theme";
-import { useShareData, type ShareEnrollmentData } from "../../lib/hooks/share-data";
+import { useShareData, type ShareLinkData } from "../../lib/hooks/share-data";
 import {
   deleteStoredShareKey,
   readStoredShareKey,
@@ -30,13 +30,13 @@ export function SharePage(): ReactElement {
   const path = typeof window === "undefined" ? "/share" : window.location.pathname.replace(/\/$/, "");
   const dataPath = `${path}/data`;
   const issuePath = `${path}/issue`;
-  const enrollmentToken = typeof window === "undefined" ? "" : tokenFromPathname(path);
+  const linkToken = typeof window === "undefined" ? "" : tokenFromPathname(path);
   // The gateway cannot know the origin a share page is reached by — a tunnel, a
   // reverse proxy, or the operator's own public origin can all differ from the
   // request's view. The browser is the only party that knows for certain, so
   // the endpoint the recipient is told to call is derived here.
   const baseUrl = typeof window === "undefined" ? "" : window.location.origin;
-  const state = useShareData<ShareEnrollmentData>(dataPath);
+  const state = useShareData<ShareLinkData>(dataPath);
   const [secret, setSecret] = useState<IssueResult | null>(null);
   const [restoredSecret, setRestoredSecret] = useState<StoredShareKey | null>(null);
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
@@ -51,19 +51,22 @@ export function SharePage(): ReactElement {
     // in `index.html` resolves the same key before the bundle loads.
     applyConsoleTheme(readConsoleTheme());
   }, []);
+  const enrollment = state.data?.kind === "enroll" ? state.data : null;
   useEffect(() => {
     let active = true;
     setSecret(null);
     setRestoredSecret(null);
     setStorageWarning(null);
-    if (!enrollmentToken) return;
-    if (state.loading || state.error || !state.data) {
+    // Only an enrollment link mints a key worth remembering: a handoff link is
+    // re-read from the gateway on every visit, so a local copy would only go
+    // stale, and an endpoint that rejects the link must not leave one behind.
+    if (!linkToken || !enrollment) {
       if (state.error) {
-        void deleteStoredShareKey(enrollmentToken).catch(() => undefined);
+        void deleteStoredShareKey(linkToken).catch(() => undefined);
       }
       return;
     }
-    void readStoredShareKey(enrollmentToken)
+    void readStoredShareKey(linkToken)
       .then((stored) => {
         if (active && stored) {
           setRestoredSecret(stored);
@@ -76,7 +79,7 @@ export function SharePage(): ReactElement {
         }
       });
     return () => { active = false; };
-  }, [enrollmentToken, state.loading, state.error, state.data]);
+  }, [linkToken, enrollment, state.error]);
   const issue = async () => {
     setIssueBusy(true);
     setIssueError(null);
@@ -92,9 +95,9 @@ export function SharePage(): ReactElement {
       const issued = payload as IssueResult;
       setRestoredSecret(null);
       setSecret(issued);
-      if (!enrollmentToken) return;
+      if (!linkToken) return;
       try {
-        await writeStoredShareKey(enrollmentToken, {
+        await writeStoredShareKey(linkToken, {
           key: issued.key,
           keyId: issued.keyId,
           keyPrefix: issued.keyPrefix,
@@ -116,16 +119,19 @@ export function SharePage(): ReactElement {
   };
   const visibleSecret = restoredSecret ?? secret;
   const data = state.data;
-  const canIssue = Boolean(data?.canIssue) && !data?.alreadyIssued && !issueConflict && !visibleSecret;
+  // Only an enrollment link can mint; a handoff link already carries its key.
+  const canIssue =
+    Boolean(enrollment?.canIssue) && !enrollment?.alreadyIssued && !issueConflict && !visibleSecret;
+  const handoffKey = data?.kind === "handoff" ? data.key : null;
   // The page states a problem, not a healthy-but-idle status: "ready to enroll"
   // is the ordinary state and says nothing, while an unavailable link and an
   // already-claimed IP both change what the recipient can do.
   let statusLabel: string | null = null;
   let statusClass = "share-status-closed";
-  if (visibleSecret) {
+  if (visibleSecret || handoffKey) {
     statusLabel = "Key ready";
     statusClass = "share-status-ready";
-  } else if (data?.alreadyIssued || issueConflict) {
+  } else if (enrollment?.alreadyIssued || issueConflict) {
     statusLabel = "Already enrolled";
   }
   const modelGroups = new Map<string, string[]>();
@@ -174,10 +180,14 @@ export function SharePage(): ReactElement {
         ) : data ? (
           <>
             <Card className="share-hud-card share-hero">
-              <p className="share-eyebrow">SHARED ACCESS / ENROLLMENT</p>
+              <p className="share-eyebrow">
+                {data.kind === "handoff" ? "SHARED ACCESS / KEY" : "SHARED ACCESS / ENROLLMENT"}
+              </p>
               <h1>{data.name || "Shared API access"}</h1>
               <p className="share-hero-description">
-                A personal API key for this gateway, subject to the limits below.
+                {data.kind === "handoff"
+                  ? "The API key for this gateway, provided through a share link. It is subject to the limits below."
+                  : "A personal API key for this gateway, subject to the limits below."}
               </p>
               <div className="share-hero-meta">
                 {statusLabel ? (
@@ -212,7 +222,32 @@ export function SharePage(): ReactElement {
               </Card>
               <Card className="share-hud-card share-key-panel">
                 <h2 className="share-eyebrow">YOUR API KEY</h2>
-                {visibleSecret ? (
+                {data.kind === "handoff" ? (
+                  handoffKey ? (
+                    <div className="share-issued-secret" role="status">
+                      <p className="share-once-notice">REVEALED BY THE LINK OWNER</p>
+                      <code>{handoffKey}</code>
+                      <div className="share-secret-actions">
+                        <ClipboardButton
+                          value={handoffKey}
+                          size="sm"
+                          variant="primary"
+                          label="Copy key"
+                          copiedLabel="Copied"
+                        />
+                        <span>Prefix {data.keyPrefix ?? "—"}</span>
+                      </div>
+                      <p>
+                        This link reveals the key itself, so anyone holding the URL can read it.
+                        Keep the URL private; the link owner regenerates it to replace this key.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="share-key-placeholder">
+                      This link can no longer reveal its key. Ask the link owner to regenerate it.
+                    </p>
+                  )
+                ) : visibleSecret ? (
                   <div className="share-issued-secret" role="status">
                     <p className="share-once-notice">GENERATED ONCE · COPY AND KEEP IT</p>
                     <code>{visibleSecret.key}</code>
@@ -252,9 +287,9 @@ export function SharePage(): ReactElement {
                     ) : null}
                   </>
                 )}
-                {!canIssue && !visibleSecret ? (
+                {data.kind === "enroll" && !canIssue && !visibleSecret ? (
                   <p role="status" className="share-warning">
-                    {data.alreadyIssued || issueConflict
+                    {enrollment?.alreadyIssued || issueConflict
                       ? "An active key has already been issued from this IP."
                       : issueError ?? "This enrollment link is not currently accepting key requests."}
                   </p>

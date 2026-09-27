@@ -87,10 +87,7 @@ function fakeShareStore() {
         expiresAt: input.expiresAt,
       };
     },
-    async getApiKeyByShareToken() {
-      return null;
-    },
-    async getHandoffByShareToken() {
+    async resolveShareLink() {
       return null;
     },
     async findTokenForApiKey(apiKeyId) {

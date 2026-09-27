@@ -3,19 +3,40 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { DrizzleApiKeyStore, type ApiKeyRecord } from "../../src/persistence/api-key-store";
 import { getDb, type CartethyiaDatabase } from "../../src/persistence/postgres";
-import { DrizzleShareLinkStore, hashShareToken } from "../../src/persistence/share-store";
+import {
+  DrizzleShareLinkStore,
+  hashShareToken,
+  type ShareApiKeyRow,
+  type ShareHandoffRow,
+  type ShareLinkResolution,
+} from "../../src/persistence/share-store";
 import { apiKeys, shareLinks, tenants } from "../../src/persistence/schema";
 import { dbDescribe } from "../helpers/db-gate";
+
+/** Narrows a resolution for the assertions, naming the wrong kind when it is. */
+function expectEnroll(resolved: ShareLinkResolution | null): ShareApiKeyRow {
+  if (resolved === null || resolved.kind !== "enroll") {
+    throw new Error(`expected an enrollment resolution, got ${resolved?.kind ?? "null"}`);
+  }
+  return resolved.key;
+}
+
+function expectHandoff(resolved: ShareLinkResolution | null): ShareHandoffRow {
+  if (resolved === null || resolved.kind !== "handoff") {
+    throw new Error(`expected a handoff resolution, got ${resolved?.kind ?? "null"}`);
+  }
+  return resolved.key;
+}
 
 /**
  * Lookup predicates for public share links.
  *
- * `getApiKeyByShareToken` and `getHandoffByShareToken` are the only reads that
- * turn a URL token into a credential, and each carries a set of conditions that
- * decide whether the link still resolves: the link must be active, unexpired,
- * of the right kind, and its key must be unrevoked and of the expected mode.
- * Every one of those is a way a dead link could otherwise keep handing out a
- * credential, so each is exercised by breaking exactly one condition.
+ * `resolveShareLink` is the only read that turns a URL token into a credential,
+ * and it carries the conditions that decide whether the link still resolves:
+ * the link must be active, unexpired, and paired with an unrevoked top-level
+ * key whose mode matches the link's kind. Every one of those is a way a dead
+ * link could otherwise keep handing out a credential, so each is exercised by
+ * breaking exactly one condition.
  *
  * Runs against the shared isolated database; cleanup removes only this suite's
  * tenants, and the cascade takes their keys and links with them.
@@ -124,49 +145,45 @@ dbDescribe("share link lookups", () => {
   });
 
   test("an active enrollment link resolves to its parent share key", async () => {
-    const row = await shares.getApiKeyByShareToken(hashShareToken(enrollToken));
-    expect(row).not.toBeNull();
-    expect(row!.id).toBe(enrollKeyId);
-    expect(row!.tenantId).toBe(tenantId);
-    expect(row!.name).toBe("enroll-template");
-    expect(row!.active).toBe(true);
-    expect(row!.keyPrefix).toBe("rk_");
+    const row = expectEnroll(await shares.resolveShareLink(hashShareToken(enrollToken)));
+    expect(row.id).toBe(enrollKeyId);
+    expect(row.tenantId).toBe(tenantId);
+    expect(row.name).toBe("enroll-template");
+    expect(row.active).toBe(true);
+    expect(row.keyPrefix).toBe("rk_");
   });
 
   test("an unknown token resolves to nothing", async () => {
-    expect(await shares.getApiKeyByShareToken(hashShareToken("never-issued"))).toBeNull();
+    expect(await shares.resolveShareLink(hashShareToken("never-issued"))).toBeNull();
   });
 
   test("a revoked parent key makes its enrollment link dead", async () => {
-    expect(await shares.getApiKeyByShareToken(hashShareToken(revokedToken))).toBeNull();
+    expect(await shares.resolveShareLink(hashShareToken(revokedToken))).toBeNull();
   });
 
   test("an expired link does not resolve", async () => {
-    expect(await shares.getApiKeyByShareToken(hashShareToken(expiredToken))).toBeNull();
+    expect(await shares.resolveShareLink(hashShareToken(expiredToken))).toBeNull();
   });
 
   test("a deactivated link does not resolve", async () => {
-    expect(await shares.getApiKeyByShareToken(hashShareToken(inactiveToken))).toBeNull();
+    expect(await shares.resolveShareLink(hashShareToken(inactiveToken))).toBeNull();
   });
 
-  test("a handoff link is not accepted as an enrollment link", async () => {
+  test("resolution reports the link's own kind, so the page never guesses", async () => {
     // The kinds are separate capabilities: an enrollment token mints a child
-    // key, a handoff token reveals an existing personal key. Accepting one as
-    // the other would let a handoff URL mint credentials.
-    expect(await shares.getApiKeyByShareToken(hashShareToken(handoffToken))).toBeNull();
+    // key, a handoff token reveals an existing personal key. One resolver has to
+    // distinguish them, because the page renders whichever one it is and the
+    // issue route refuses anything that is not enrollment.
+    expect((await shares.resolveShareLink(hashShareToken(handoffToken)))?.kind).toBe("handoff");
+    expect((await shares.resolveShareLink(hashShareToken(enrollToken)))?.kind).toBe("enroll");
   });
 
   test("a handoff link resolves to its personal key and carries its limits", async () => {
-    const row = await shares.getHandoffByShareToken(hashShareToken(handoffToken));
-    expect(row).not.toBeNull();
-    expect(row!.id).toBe(handoffKeyId);
-    expect(row!.name).toBe("handoff-key");
-    expect(row!.keyPrefix).toBe("rk_");
-    expect(row!.expiresAt).toBeNull();
-  });
-
-  test("an enrollment link is not accepted as a handoff link", async () => {
-    expect(await shares.getHandoffByShareToken(hashShareToken(enrollToken))).toBeNull();
+    const row = expectHandoff(await shares.resolveShareLink(hashShareToken(handoffToken)));
+    expect(row.id).toBe(handoffKeyId);
+    expect(row.name).toBe("handoff-key");
+    expect(row.keyPrefix).toBe("rk_");
+    expect(row.expiresAt).toBeNull();
   });
 
   test("findTokenForApiKey returns the live link, never a token for a dead one", async () => {
@@ -191,8 +208,8 @@ dbDescribe("share link lookups", () => {
     });
     expect(record.apiKeyId).toBe(enrollKeyId);
     // The original token still resolves; the replacement never took effect.
-    expect(await shares.getApiKeyByShareToken(hashShareToken(enrollToken))).not.toBeNull();
-    expect(await shares.getApiKeyByShareToken(hashShareToken(replacement))).toBeNull();
+    expect(await shares.resolveShareLink(hashShareToken(enrollToken))).not.toBeNull();
+    expect(await shares.resolveShareLink(hashShareToken(replacement))).toBeNull();
   });
 
   test("create with rotate=true replaces the token so the old URL dies", async () => {
@@ -207,8 +224,8 @@ dbDescribe("share link lookups", () => {
     });
     expect(record.id).toBeDefined();
     // One active link per key: the old token stops resolving, the new one works.
-    expect(await shares.getApiKeyByShareToken(hashShareToken(enrollToken))).toBeNull();
-    expect(await shares.getApiKeyByShareToken(hashShareToken(replacement))).not.toBeNull();
+    expect(await shares.resolveShareLink(hashShareToken(enrollToken))).toBeNull();
+    expect(await shares.resolveShareLink(hashShareToken(replacement))).not.toBeNull();
   });
 
   test("touchView stamps lastViewedAt on the live link only", async () => {

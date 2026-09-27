@@ -45,13 +45,16 @@ export interface ShareLinkToken {
   readonly tokenEncrypted: Buffer | null;
 }
 
-/** Public template fields authorized for a valid enrollment-link lookup. */
-export interface ShareApiKeyRow {
+/**
+ * Policy fields a share recipient sees, whichever kind of link carried them.
+ * Both resolutions project the same columns, so the public payload and the
+ * model filter read one shape instead of two near-identical ones.
+ */
+export interface ShareLinkPolicy {
   readonly id: string;
   readonly tenantId: string;
   readonly name: string;
   readonly keyPrefix: string | null;
-  readonly active: boolean;
   readonly requestsPerMinute: number | null;
   readonly dailyTokenLimit: number | null;
   readonly monthlyTokenLimit: number | null;
@@ -63,28 +66,29 @@ export interface ShareApiKeyRow {
   readonly notesTitle: string | null;
   readonly notesSubtitle: string | null;
   readonly notesBody: string | null;
-  readonly createdAt: string;
   readonly expiresAt: string | null;
 }
 
+/** Public template fields authorized for a valid enrollment-link lookup. */
+export interface ShareApiKeyRow extends ShareLinkPolicy {
+  readonly active: boolean;
+  readonly createdAt: string;
+}
+
 /** A personal key revealed by its handoff link. */
-export interface ShareHandoffRow {
-  readonly id: string;
-  readonly name: string;
-  readonly keyPrefix: string | null;
+export interface ShareHandoffRow extends ShareLinkPolicy {
   /** Encrypted personal credential; null when the row predates secret storage. */
   readonly keyEncrypted: Buffer | null;
-  readonly requestsPerMinute: number | null;
-  readonly dailyTokenLimit: number | null;
-  readonly monthlyTokenLimit: number | null;
-  readonly lifetimeTokenBudget: number | null;
-  readonly maxConcurrentRequests: number | null;
-  readonly modelAllowlist: readonly string[] | null;
-  readonly notesTitle: string | null;
-  readonly notesSubtitle: string | null;
-  readonly notesBody: string | null;
-  readonly expiresAt: string | null;
 }
+
+/**
+ * What one bearer token resolves to. A link is exactly one of these, so a
+ * public lookup answers with a discriminated result instead of the caller
+ * guessing which endpoint to try.
+ */
+export type ShareLinkResolution =
+  | { readonly kind: "enroll"; readonly key: ShareApiKeyRow }
+  | { readonly kind: "handoff"; readonly key: ShareHandoffRow };
 
 export interface SharedApiKeyMaterial {
   readonly keyHash: string;
@@ -132,6 +136,28 @@ function mapShareRow(key: ApiKeyRow, link: ShareLinkRow): ShareApiKeyRow {
   };
 }
 
+function mapHandoffRow(key: ApiKeyRow, link: ShareLinkRow): ShareHandoffRow {
+  return {
+    id: key.id,
+    tenantId: key.tenantId,
+    name: key.label,
+    keyPrefix: key.keyPrefix,
+    keyEncrypted: key.keyEncrypted,
+    requestsPerMinute: key.requestsPerMinute,
+    dailyTokenLimit: key.dailyTokenLimit,
+    monthlyTokenLimit: key.monthlyTokenLimit,
+    lifetimeTokenBudget: key.lifetimeTokenBudget,
+    maxConcurrentRequests: key.maxConcurrentRequests,
+    modelAllowlist: key.modelAllowlist as readonly string[] | null,
+    modelDenylist: key.modelDenylist as readonly string[] | null,
+    modelPrefix: key.modelPrefix,
+    notesTitle: key.notesTitle,
+    notesSubtitle: key.notesSubtitle,
+    notesBody: key.notesBody,
+    expiresAt: link.expiresAt?.toISOString() ?? null,
+  };
+}
+
 function uniqueConstraint(error: unknown): string | undefined {
   let current: unknown = error;
   for (let depth = 0; depth < 3; depth += 1) {
@@ -165,9 +191,15 @@ export interface ShareLinkStore {
     expiresAt: Date | null;
     rotate: boolean;
   }): Promise<ShareLinkRecord>;
-  getApiKeyByShareToken(tokenHash: string): Promise<ShareApiKeyRow | null>;
-  /** The personal key a handoff link reveals, or null when the link is dead. */
-  getHandoffByShareToken(tokenHash: string): Promise<ShareHandoffRow | null>;
+  /**
+   * Resolves a bearer token to the link it names, in one lookup.
+   *
+   * Serving enrollment and handoff through separate methods let the browser
+   * page and the router disagree about which one a given URL is: a personal
+   * key's handoff link resolved on one endpoint and 404'd on the other. One
+   * resolver cannot drift from itself.
+   */
+  resolveShareLink(tokenHash: string): Promise<ShareLinkResolution | null>;
   /** The key's active link with its retained token, for console re-display. */
   findTokenForApiKey(apiKeyId: string): Promise<ShareLinkToken | null>;
   hasActiveSharedKeyForIp(clientIpKey: string): Promise<boolean>;
@@ -255,7 +287,7 @@ export class DrizzleShareLinkStore implements ShareLinkStore {
     });
   }
 
-  async getApiKeyByShareToken(tokenHash: string): Promise<ShareApiKeyRow | null> {
+  async resolveShareLink(tokenHash: string): Promise<ShareLinkResolution | null> {
     const rows = await this.db
       .select({ key: apiKeys, link: shareLinks })
       .from(shareLinks)
@@ -263,17 +295,27 @@ export class DrizzleShareLinkStore implements ShareLinkStore {
       .where(
         and(
           eq(shareLinks.tokenHash, tokenHash),
-          eq(shareLinks.kind, "enroll"),
           eq(shareLinks.active, true),
           sql`(${shareLinks.expiresAt} IS NULL OR ${shareLinks.expiresAt} > now())`,
           isNull(apiKeys.revokedAt),
-          eq(apiKeys.keyMode, "share"),
           isNull(apiKeys.parentKeyId),
         ),
       )
       .limit(1);
     const row = rows[0];
-    return row ? mapShareRow(row.key, row.link) : null;
+    if (!row) return null;
+    // The link's kind and the key's mode must agree: an enrollment link hands
+    // out child keys from a share template, which has no credential of its own
+    // to reveal, while a handoff link reveals a personal key. A row where the
+    // two disagree is a mismatched pair, not a link to serve.
+    if (row.link.kind === "enroll") {
+      return row.key.keyMode === "share"
+        ? { kind: "enroll", key: mapShareRow(row.key, row.link) }
+        : null;
+    }
+    return row.key.keyMode === "personal"
+      ? { kind: "handoff", key: mapHandoffRow(row.key, row.link) }
+      : null;
   }
 
   async findTokenForApiKey(apiKeyId: string): Promise<ShareLinkToken | null> {
@@ -311,43 +353,6 @@ export class DrizzleShareLinkStore implements ShareLinkStore {
       )
       .limit(1);
     return rows.length > 0;
-  }
-
-  async getHandoffByShareToken(tokenHash: string): Promise<ShareHandoffRow | null> {
-    const rows = await this.db
-      .select({ key: apiKeys, link: shareLinks })
-      .from(shareLinks)
-      .innerJoin(apiKeys, eq(shareLinks.apiKeyId, apiKeys.id))
-      .where(
-        and(
-          eq(shareLinks.tokenHash, tokenHash),
-          eq(shareLinks.kind, "handoff"),
-          eq(shareLinks.active, true),
-          sql`(${shareLinks.expiresAt} IS NULL OR ${shareLinks.expiresAt} > now())`,
-          isNull(apiKeys.revokedAt),
-          eq(apiKeys.keyMode, "personal"),
-          isNull(apiKeys.parentKeyId),
-        ),
-      )
-      .limit(1);
-    const row = rows[0];
-    if (!row) return null;
-    return {
-      id: row.key.id,
-      name: row.key.label,
-      keyPrefix: row.key.keyPrefix,
-      keyEncrypted: row.key.keyEncrypted,
-      requestsPerMinute: row.key.requestsPerMinute,
-      dailyTokenLimit: row.key.dailyTokenLimit,
-      monthlyTokenLimit: row.key.monthlyTokenLimit,
-      lifetimeTokenBudget: row.key.lifetimeTokenBudget,
-      maxConcurrentRequests: row.key.maxConcurrentRequests,
-      modelAllowlist: row.key.modelAllowlist as readonly string[] | null,
-      notesTitle: row.key.notesTitle,
-      notesSubtitle: row.key.notesSubtitle,
-      notesBody: row.key.notesBody,
-      expiresAt: row.link.expiresAt?.toISOString() ?? null,
-    };
   }
 
   async issueSharedApiKey(
