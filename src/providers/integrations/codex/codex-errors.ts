@@ -4,8 +4,14 @@
  * usage/rate-limit error codes, `retry-after`, and canonical
  * upstream-request IDs into structured details the router honors.
  */
-import { GatewayError, type GatewayErrorCode } from "../../../transport/gateway-error";
-import { parseRetryAfter, extractUpstreamMessage, statusToGatewayErrorCode, upstreamRequestId } from "../../../transport/failure-policy";
+import { GatewayError } from "../../../transport/gateway-error";
+import {
+  classifyUpstreamError,
+  parseRetryAfter,
+  extractUpstreamMessage,
+  upstreamErrorIdentifier,
+  upstreamRequestId,
+} from "../../../transport/failure-policy";
 import { tryParseJsonObject } from "../../../protocol/primitives";
 
 function toNumberOrUndefined(value: string | null): number | undefined {
@@ -88,19 +94,14 @@ export async function mapCodexErrorResponse(res: Response): Promise<never> {
       }
     : undefined;
 
-  let errorCode: string | undefined;
-  let friendlyMessage: string | undefined;
   const parsedBody = tryParseJsonObject(text);
+  const errorCode = upstreamErrorIdentifier(parsedBody);
+  let friendlyMessage: string | undefined;
   if (parsedBody !== undefined) {
     const err =
       (parsedBody["error"] as Record<string, unknown> | undefined) ??
       (parsedBody as Record<string, unknown>);
     if (err !== null && typeof err === "object") {
-      const codeRaw =
-        (err as Record<string, unknown>)["code"] ??
-        (err as Record<string, unknown>)["type"];
-      if (typeof codeRaw === "string" && codeRaw.length > 0)
-        errorCode = codeRaw;
       const messageRaw = (err as Record<string, unknown>)["message"];
       const resetsAt =
         ((err as Record<string, unknown>)["resets_at"] as number | undefined) ??
@@ -136,7 +137,10 @@ export async function mapCodexErrorResponse(res: Response): Promise<never> {
     }
   }
 
+  const status = res.status >= 400 && res.status < 600 ? res.status : 502;
+  const classification = classifyUpstreamError(status, errorCode);
   const details: Record<string, unknown> = {};
+  details["providerStatus"] = status;
   const requestId = upstreamRequestId(res.headers);
   if (requestId) details["upstreamRequestId"] = requestId;
   // Retry-after parsing delegates to the account-health kernel (24h clamp
@@ -160,20 +164,11 @@ export async function mapCodexErrorResponse(res: Response): Promise<never> {
     details["x_codex_secondary_reset_at"] = secondaryReset;
   if (text.length > 0 && text.length <= 500) details["raw"] = text;
 
-  const status = res.status >= 400 && res.status < 600 ? res.status : 502;
-  // Delegates to the one canonical table. Codex used to pin every non-auth /
-  // rate / proxy status — 5xx included — to `invalid_request`, so a Codex
-  // upstream 500 reached the client as "your request was invalid" and telemetry
-  // recorded a client fault for an upstream outage.
-  const code: GatewayErrorCode = statusToGatewayErrorCode(status);
-  if (status === 401 || status === 403) details["credentialEvidence"] = true;
-  if (status === 429) details["rateLimitScope"] = "provider";
-  const origin = status === 407 ? "network" : "upstream";
   throw new GatewayError(
-    code,
-    status,
+    classification.code,
+    classification.status,
     friendlyMessage ?? sanitized,
     details,
-    origin,
+    classification.origin,
   );
 }

@@ -1,6 +1,6 @@
 import type { WireFamily } from "../transport/canonical-model";
 
-/** OpenAI-compatible wire overrides persisted for bundled and BYOK providers. */
+/** [OI]-compatible wire overrides persisted for bundled and BYOK providers. */
 export interface CompatibilityProfile {
   readonly extra_headers?: Readonly<Record<string, string>>;
   readonly extra_query_params?: Readonly<Record<string, string>>;
@@ -11,8 +11,7 @@ export interface CompatibilityProfile {
     readonly pattern: string;
     readonly wire_family: WireFamily;
   }>;
-  readonly credentialUrl?: string;
-  /** Whether requests to OpenAI/Anthropic-compatible upstream should send official CLI headers. Defaults to true. */
+  /** Whether requests to [OI]/Anthropic-compatible upstream should send official CLI headers. Defaults to true. */
   readonly cli_identity?: boolean;
   /**
    * Opts this provider into the gateway identity (`user-agent:
@@ -26,17 +25,51 @@ export interface CompatibilityProfile {
 
 /** Identity and routing defaults for every builtin provider. */
 const RAW_BUNDLED_PROVIDER_METADATA = [
-  { id: "openai", displayName: "OpenAI", baseUrl: "https://api.openai.com" },
-  { id: "anthropic", displayName: "Anthropic", baseUrl: "https://api.anthropic.com", wireFamilyDefault: "messages" },
-  { id: "claude", displayName: "Claude Code", baseUrl: "https://api.anthropic.com", wireFamilyDefault: "messages" },
-  { id: "codex", displayName: "Codex ChatGPT", baseUrl: "https://chatgpt.com", wireFamilyDefault: "responses" },
+  { id: "openai", displayName: "[OI]", baseUrl: "https://api.openai.com", credentialUrl: "https://platform.openai.com/api-keys" },
+  { id: "anthropic", displayName: "Anthropic", baseUrl: "https://api.anthropic.com", wireFamilyDefault: "messages", credentialUrl: "https://console.anthropic.com/settings/keys" },
+  {
+    id: "claude",
+    displayName: "[CC]",
+    baseUrl: "https://api.anthropic.com",
+    wireFamilyDefault: "messages",
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://claude.ai",
+    credentialHint: "Signed in with a Claude subscription account; there is no key to paste.",
+  },
+  {
+    id: "codex",
+    displayName: "Codex ChatGPT",
+    baseUrl: "https://chatgpt.com",
+    wireFamilyDefault: "responses",
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://chatgpt.com",
+    credentialHint: "Signed in with a ChatGPT account; there is no key to paste.",
+  },
   {
     id: "grok",
     displayName: "Grok Build",
     baseUrl: "https://cli-chat-proxy.grok.com",
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://x.ai",
+    credentialHint: "Signed in with an xAI account; the CLI uses subscription credits rather than a key.",
     // Published by xAI at https://auth.x.ai/.well-known/openid-configuration;
     // access tokens that are JWTs are verified against these before an account
     // is persisted. Opaque tokens pass through and are validated by the issuer.
+    jwtVerification: {
+      issuer: "https://auth.x.ai",
+      jwksUrl: "https://auth.x.ai/.well-known/jwks.json",
+    },
+  },
+  {
+    // The paid xAI API reached with a SuperGrok / X Premium+ subscription token.
+    // Distinct from `grok`, which is the Grok Build free CLI surface: different
+    // base URL, different header set, different model roster. Same issuer and
+    // therefore the same JWKS.
+    id: "xai",
+    displayName: "xAI Grok Subscription",
+    baseUrl: "https://api.x.ai/v1",
+    wireFamilyDefault: "responses",
+    credentialUrl: "https://console.x.ai/account/api-keys",
     jwtVerification: {
       issuer: "https://auth.x.ai",
       jwksUrl: "https://auth.x.ai/.well-known/jwks.json",
@@ -51,6 +84,8 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     displayName: "Cursor",
     baseUrl: "https://api2.cursor.sh",
     bespokeWire: true,
+    credentialUrl: "https://cursor.com",
+    credentialHint: "Signed in with a Cursor account; there is no key to paste.",
   },
   {
     // Devin frames its own gRPC chat protocol; same reasoning as Cursor.
@@ -58,40 +93,86 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     displayName: "Devin",
     baseUrl: "https://server.codeium.com",
     bespokeWire: true,
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://devin.ai",
+    credentialHint: "Signed in with a Devin account; there is no key to paste.",
   },
-  { id: "antigravity", displayName: "Antigravity", baseUrl: "https://daily-cloudcode-pa.googleapis.com" },
+  {
+    id: "antigravity",
+    displayName: "Antigravity",
+    baseUrl: "https://daily-cloudcode-pa.googleapis.com",
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://antigravity.google",
+    credentialHint: "Signed in with a Google account through the Antigravity login flow.",
+  },
   { id: "muse", displayName: "Muse Code", baseUrl: "https://api.meta.ai" },
-  { id: "kimi", displayName: "Kimi Code", baseUrl: "https://api.kimi.com/coding" },
-  { id: "opencodeft", displayName: "OpenCode Free", baseUrl: "https://opencode.ai", requiresAccount: false },
-  { id: "opencodezen", displayName: "OpenCode Zen", baseUrl: "https://opencode.ai" },
-  { id: "opencodego", displayName: "OpenCode Go", baseUrl: "https://opencode.ai" },
-  { id: "cerebras", displayName: "Cerebras", baseUrl: "https://api.cerebras.ai/v1" },
+  { id: "kimi", displayName: "Kimi Code", baseUrl: "https://api.kimi.com/coding", credentialUrl: "https://platform.moonshot.ai/console/api-keys" },
+  { id: "opencodeft", displayName: "OpenCode Free", baseUrl: "https://opencode.ai", requiresAccount: false, hasAdapterUserAgent: true },
+  { id: "opencodezen", displayName: "OpenCode Zen", baseUrl: "https://opencode.ai", hasAdapterUserAgent: true, credentialUrl: "https://opencode.ai/auth" },
+  { id: "opencodego", displayName: "OpenCode Go", baseUrl: "https://opencode.ai", credentialUrl: "https://opencode.ai/auth" },
+  { id: "cerebras", displayName: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", credentialUrl: "https://cloud.cerebras.ai/platform" },
   { id: "groq", displayName: "Groq", baseUrl: "https://api.groq.com/openai/v1", credentialUrl: "https://console.groq.com/keys" },
-  { id: "openrouter", displayName: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
-  { id: "mistral", displayName: "Mistral AI", baseUrl: "https://api.mistral.ai/v1" },
-  { id: "siliconflow", displayName: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1" },
-  { id: "fireworks", displayName: "Fireworks AI", baseUrl: "https://api.fireworks.ai/inference/v1" },
-  { id: "nvidia", displayName: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1" },
-  { id: "gmi", displayName: "GMI Cloud", baseUrl: "https://api.gmi-serving.com/v1" },
-  { id: "zai", displayName: "Z.AI", baseUrl: "https://api.z.ai/api/paas/v4" },
-  { id: "hermes", displayName: "Nous Research", baseUrl: "https://inference-api.nousresearch.com/v1" },
-  { id: "bai", displayName: "B.AI", baseUrl: "https://api.b.ai/v1" },
-  { id: "inferhub", displayName: "InferHub", baseUrl: "https://api.inferhub.dev/v1", defaultBypassProxy: true },
-  { id: "aihubmix", displayName: "AiHubMix", baseUrl: "https://aihubmix.com/v1" },
-  { id: "tokenharbor", displayName: "TokenHarbor", baseUrl: "https://tokenharbor.ai/v1" },
-  { id: "agentrouter", displayName: "AgentRouter", baseUrl: "https://agentrouter.org" },
-  { id: "cline", displayName: "Cline", baseUrl: "https://api.cline.bot/api/v1" },
-  { id: "cb", displayName: "CodeBuddy", baseUrl: "https://www.codebuddy.ai/v2" },
-  { id: "cbcn", displayName: "CodeBuddy CN", baseUrl: "https://copilot.tencent.com/v2" },
-  { id: "workbuddy", displayName: "WorkBuddy", baseUrl: "https://www.workbuddy.ai" },
-  { id: "cloudflare", displayName: "Cloudflare Workers AI", baseUrl: "https://api.cloudflare.com/client/v4/accounts" },
-  { id: "commandcode", displayName: "Command Code", baseUrl: "https://api.commandcode.ai/alpha/generate" },
-  { id: "qoder", displayName: "Qoder", baseUrl: "https://api2.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1" },
-  { id: "ollamacloud", displayName: "Ollama Cloud", baseUrl: "https://ollama.com/v1" },
-  { id: "gemini", displayName: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta" },
-  { id: "xiaomipg", displayName: "Xiaomi MiMo (PAYG)", baseUrl: "https://api.xiaomimimo.com/v1" },
-  { id: "xiaomitp", displayName: "Xiaomi MiMo (Token Plan)", baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1" },
-  { id: "perplexity", displayName: "Perplexity", baseUrl: "https://api.perplexity.ai" },
+  { id: "openrouter", displayName: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", credentialUrl: "https://openrouter.ai/settings/keys" },
+  { id: "mistral", displayName: "Mistral AI", baseUrl: "https://api.mistral.ai/v1", credentialUrl: "https://console.mistral.ai/api-keys" },
+  { id: "sifo", displayName: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1", credentialUrl: "https://cloud.siliconflow.cn/account/ak" },
+  { id: "fireworks", displayName: "Fireworks AI", baseUrl: "https://api.fireworks.ai/inference/v1", credentialUrl: "https://fireworks.ai/account/api-keys" },
+  { id: "nvidia", displayName: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1", credentialUrl: "https://build.nvidia.com/settings/api-keys" },
+  { id: "deepseek", displayName: "DeepSeek", baseUrl: "https://api.deepseek.com", credentialUrl: "https://platform.deepseek.com/api_keys" },
+  // The base URL carries `/v1`: the Hugging Face router serves `/v1/models` and
+  // `/v1/chat/completions`, and the bare host answers 404 on both.
+  { id: "huggingface", displayName: "Hugging Face", baseUrl: "https://router.huggingface.co/v1", credentialUrl: "https://huggingface.co/settings/tokens" },
+  { id: "gmi", displayName: "GMI Cloud", baseUrl: "https://api.gmi-serving.com/v1", credentialUrl: "https://console.gmicloud.ai" },
+  { id: "zai", displayName: "Z.AI", baseUrl: "https://api.z.ai/api/paas/v4", credentialUrl: "https://z.ai/manage-apikey/apikey-list" },
+  {
+    // The Z.AI Coding Plan subscription endpoint, distinct from the `zai`
+    // pay-as-you-go host above: different base path, a durable key minted by
+    // the sign-in flow, and a different catalog.
+    id: "zcode",
+    displayName: "Z.AI Coding Plan",
+    baseUrl: "https://api.z.ai/api/coding/paas/v4",
+    credentialUrl: "https://chat.z.ai",
+  },
+  { id: "hermes", displayName: "Nous Research", baseUrl: "https://inference-api.nousresearch.com/v1", credentialUrl: "https://portal.nousresearch.com" },
+  { id: "bai", displayName: "B.AI", baseUrl: "https://api.b.ai/v1", credentialUrl: "https://b.ai" },
+  { id: "inferhub", displayName: "InferHub", baseUrl: "https://api.inferhub.dev/v1", defaultBypassProxy: true, hasAdapterUserAgent: true },
+  { id: "aihubmix", displayName: "AiHubMix", baseUrl: "https://aihubmix.com/v1", credentialUrl: "https://aihubmix.com/token" },
+  { id: "tokenharbor", displayName: "TokenHarbor", baseUrl: "https://tokenharbor.ai/v1", credentialUrl: "https://tokenharbor.ai" },
+  { id: "agentrouter", displayName: "AgentRouter", baseUrl: "https://agentrouter.org", hasAdapterUserAgent: true, credentialUrl: "https://agentrouter.org" },
+  { id: "cline", displayName: "Cline", baseUrl: "https://api.cline.bot/api/v1", hasAdapterUserAgent: true, credentialUrl: "https://app.cline.bot" },
+  { id: "cb", displayName: "CodeBuddy", baseUrl: "https://www.codebuddy.ai/v2", hasAdapterUserAgent: true, credentialUrl: "https://www.codebuddy.ai", credentialHint: "Sign in with the same CodeBuddy account you use in the desktop app." },
+  { id: "cbcn", displayName: "CodeBuddy CN", baseUrl: "https://copilot.tencent.com/v2", hasAdapterUserAgent: true, credentialUrl: "https://copilot.tencent.com", credentialHint: "Sign in with the same CodeBuddy China account you use in the desktop app." },
+  { id: "workbuddy", displayName: "WorkBuddy", baseUrl: "https://www.workbuddy.ai", hasAdapterUserAgent: true, credentialUrl: "https://www.workbuddy.ai", credentialHint: "Sign in with the same WorkBuddy account you use in the desktop app." },
+  {
+    // Kilo Code resells the OpenRouter catalog. The base URL carries the API's
+    // path prefix (`/api/openrouter`) and every model row carries only the wire
+    // suffix, matching how Cline's `/api/v1` base is declared — the alternative
+    // (origin base, absolute path on each row) would put the same path in two
+    // declarations that can drift.
+    id: "kilo",
+    displayName: "Kilo Code",
+    baseUrl: "https://api.kilo.ai/api/openrouter",
+    credentialUrl: "https://app.kilo.ai/device-auth",
+  },
+  { id: "commandcode", displayName: "Command Code", baseUrl: "https://api.commandcode.ai/alpha/generate", credentialUrl: "https://commandcode.ai/studio", credentialHint: "Use the API key from the Command Code CLI, or create one in the studio." },
+  { id: "qoder", displayName: "Qoder", baseUrl: "https://api2.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1", hasAdapterUserAgent: true, credentialUrl: "https://qoder.com", credentialHint: "Signed in with a Qoder account; there is no key to paste." },
+  { id: "ollamacloud", displayName: "Ollama Cloud", baseUrl: "https://ollama.com/v1", credentialUrl: "https://ollama.com/settings/keys" },
+  { id: "gemini", displayName: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", credentialUrl: "https://aistudio.google.com/app/apikey" },
+  { id: "xiaomipg", displayName: "Xiaomi MiMo (PAYG)", baseUrl: "https://api.xiaomimimo.com/v1", credentialUrl: "https://platform.xiaomimimo.com" },
+  { id: "xiaomitp", displayName: "Xiaomi MiMo (Token Plan)", baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1", credentialUrl: "https://platform.xiaomimimo.com" },
+  { id: "mimodesktop", displayName: "MiMo Desktop", baseUrl: "https://api.xiaomimimo.com/v1", credentialUrl: "https://platform.xiaomimimo.com" },
+  { id: "mimostudio", displayName: "MiMo Studio", baseUrl: "https://aistudio.xiaomimimo.com", credentialUrl: "https://aistudio.xiaomimimo.com", credentialHint: "Paste the browser cookies exported from a signed-in MiMo Studio session." },
+  {
+    // GitHub Copilot. The registered base URL is the Individual API host and is
+    // only a fallback: the account's real host is read out of the Copilot
+    // token's `proxy-ep` claim at dispatch, because an enterprise account is
+    // served from a different host than an Individual one.
+    id: "github",
+    displayName: "GitHub Copilot",
+    baseUrl: "https://api.individual.githubcopilot.com",
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://github.com/settings/copilot",
+  },
+  { id: "perplexity", displayName: "Perplexity", baseUrl: "https://api.perplexity.ai", credentialUrl: "https://www.perplexity.ai/settings/api" },
 ] as const;
 
 export type BundledProviderId = (typeof RAW_BUNDLED_PROVIDER_METADATA)[number]["id"];
@@ -126,7 +207,18 @@ export interface BundledProviderMetadata {
   readonly id: BundledProviderId;
   readonly displayName: string;
   readonly baseUrl: string;
+  /**
+   * Where an operator obtains or authorizes this provider's credential.
+   * Presentation-only: the dashboard renders it as an outbound link, and no
+   * dispatch path reads it.
+   */
   readonly credentialUrl?: string;
+  /**
+   * One line of guidance shown beside {@link credentialUrl} when the provider's
+   * sign-in is not a plain paste-a-key flow. Omitted where the link alone is
+   * self-explanatory.
+   */
+  readonly credentialHint?: string;
   readonly wireFamilyDefault: WireFamily;
   readonly requiresAccount: boolean;
   readonly defaultBypassProxy: boolean;
@@ -139,6 +231,8 @@ export interface BundledProviderMetadata {
    * encoded, and generation controls reach them raw.
    */
   readonly bespokeWire: boolean;
+  /** True when the provider adapter builds its own User-Agent header. */
+  readonly hasAdapterUserAgent: boolean;
 }
 
 /** Normalizes optional identity defaults once before any provider lookup. */
@@ -149,6 +243,7 @@ export const BUNDLED_PROVIDER_METADATA: readonly BundledProviderMetadata[] = RAW
   const jwtVerification: ProviderJwtVerification =
     "jwtVerification" in definition ? definition.jwtVerification : {};
   const bespokeWire = Boolean("bespokeWire" in definition && definition.bespokeWire);
+  const hasAdapterUserAgent = "hasAdapterUserAgent" in definition && definition.hasAdapterUserAgent === true;
   return {
     ...definition,
     wireFamilyDefault,
@@ -156,8 +251,35 @@ export const BUNDLED_PROVIDER_METADATA: readonly BundledProviderMetadata[] = RAW
     defaultBypassProxy,
     jwtVerification,
     bespokeWire,
+    hasAdapterUserAgent,
   };
 });
+
+const ADAPTER_USER_AGENT_PROVIDER_IDS: ReadonlySet<string> = new Set(
+  BUNDLED_PROVIDER_METADATA.filter((provider) => provider.hasAdapterUserAgent).map((provider) => provider.id),
+);
+
+/** Whether the bundled adapter provides its own upstream User-Agent. */
+export function providerHasAdapterUserAgent(providerId: string): boolean {
+  return ADAPTER_USER_AGENT_PROVIDER_IDS.has(providerId);
+}
+
+/**
+ * Where an operator obtains this provider's credential, or `undefined` when the
+ * provider publishes no such page (a BYOK provider, or one whose credential is
+ * minted inside a device/browser flow with no dedicated key page).
+ */
+export function providerCredentialUrl(providerId: string): string | undefined {
+  return BUNDLED_PROVIDER_METADATA.find((candidate) => candidate.id === providerId)?.credentialUrl;
+}
+
+/**
+ * Short guidance for a provider whose sign-in is not a plain paste-a-key flow.
+ * `undefined` where the link alone is self-explanatory.
+ */
+export function providerCredentialHint(providerId: string): string | undefined {
+  return BUNDLED_PROVIDER_METADATA.find((candidate) => candidate.id === providerId)?.credentialHint;
+}
 
 /** Canonical builtin display name; falls back to the provider id for unknowns. */
 export function providerDisplayName(providerId: string): string {

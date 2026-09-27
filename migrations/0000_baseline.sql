@@ -196,7 +196,6 @@ CREATE TABLE "api_keys" (
   "lifetime_token_budget" bigint,
   "lifetime_tokens_consumed" bigint DEFAULT 0 NOT NULL,
   "max_concurrent_requests" integer,
-  "provider_allowlist" jsonb,
   "model_allowlist" jsonb,
   "model_denylist" jsonb,
   "client_router_denylist" jsonb,

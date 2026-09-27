@@ -70,8 +70,7 @@ deadline overrun still proceeds), then closes pools.
 `bootstrap()` supplies the hooks: `flushTelemetry` is
 `deps.telemetryBuffer.flush`, and `closePools` stops the server, stops
 scheduled tasks, stops the telemetry buffer with a final flush, then settles
-`closeDb()`, `closeRedis()`, and `poolAgentResolver.closeAll()` before
-closing the network binding factory. `app.ts` wires
+`closeDb()`, `closeRedis()`, and `poolAgentResolver.closeAll()`. `app.ts` wires
 `setAbortInflight(() => requestStateStore.abortAll())` so the bounded drain
 observes cancellation and finalizers run before the flush. `main.ts` adds
 SIGINT/SIGTERM handlers with a 10s forced-exit backstop.

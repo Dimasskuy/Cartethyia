@@ -138,6 +138,17 @@ export const PROVIDER_CAPABILITIES = {
       return models.filter((model) => advertised.has(model.modelId.toLowerCase()));
     },
   },
+  xai: {
+    endpointPathsByWireFamily: { responses: "/responses" },
+    loadAdapter: async () => (await import("./integrations/xai/xai")).xaiAdapter,
+    loadModels: async () => (await import("./integrations/xai/xai")).XAI_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/xai/xai-oauth"), "xaiOAuthClient", { withRefresher: true }),
+    loadModelDiscovery: async () => async ({ credential, fetcher }) =>
+      (await import("./integrations/xai/xai-discovery")).discoverXaiModels({
+        credential,
+        ...(fetcher === undefined ? {} : { fetcher }),
+      }),
+  },
   cursor: {
     loadAdapter: async () => (await import("./integrations/cursor/cursor")).cursorAdapter,
     loadModels: async () => (await import("./integrations/cursor/catalog")).CURSOR_MODELS,
@@ -181,9 +192,29 @@ export const PROVIDER_CAPABILITIES = {
   },
   groq: configuredProvider("groq"),
   mistral: configuredProvider("mistral"),
-  siliconflow: configuredProvider("siliconflow"),
+  sifo: configuredProvider("sifo"),
   fireworks: configuredProvider("fireworks"),
   nvidia: configuredProvider("nvidia"),
+  deepseek: {
+    ...configuredProvider("deepseek"),
+    // The host serves a standard `/v1/models`, verified live, so the shared
+    // fetcher reads it as-is and the base catalog supplies limits and pricing
+    // for the ids it already files under `deepseek`.
+    loadModelDiscovery: openAIModelDiscovery("deepseek", {
+      headers: (credential) => ({ authorization: `Bearer ${credential}` }),
+    }),
+  },
+  huggingface: {
+    endpointPathsByWireFamily: { chat: "/chat/completions" },
+    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/huggingface")).HUGGINGFACE_SPEC),
+    // The router listing nests limits and capability under `providers[]`, so it
+    // cannot go through the shared OpenAI `/models` fetcher.
+    loadModelDiscovery: async () => async ({ credential, fetcher }) =>
+      (await import("./integrations/huggingface")).discoverHuggingfaceModels({
+        credential,
+        ...(fetcher === undefined ? {} : { fetcher }),
+      }),
+  },
   gmi: configuredProvider("gmi"),
   opencodeft: {
     // Only the two families this provider's catalog actually serves. The
@@ -239,10 +270,6 @@ export const PROVIDER_CAPABILITIES = {
     loadModels: async () => (await import("./integrations/gemini")).GEMINI_MODELS,
     loadModelDiscovery: async () => async ({ credential }) => (await import("./integrations/gemini")).discoverGeminiModels({ credential }),
   },
-  cloudflare: {
-    loadAdapter: async () => (await import("./integrations/cloudflare")).createCloudflareAdapter(),
-    loadModelDiscovery: async () => async ({ credential }) => (await import("./integrations/cloudflare")).discoverCloudflareModels({ credential }),
-  },
   aihubmix: {
     loadAdapter: async () => createApiKeyAdapter((await import("./integrations/aihubmix")).AIHUBMIX_SPEC),
     loadModels: async () => (await import("./integrations/aihubmix")).AIHUBMIX_FALLBACK_MODELS,
@@ -276,20 +303,37 @@ export const PROVIDER_CAPABILITIES = {
   cb: {
     loadAdapter: async () => (await import("./integrations/buddy/codebuddy")).createCodeBuddyAdapter(),
     loadModels: async () => (await import("./integrations/buddy/codebuddy")).CODEBUDDY_MODELS,
+    loadModelDiscovery: async () => async ({ credential, fetcher }) => (await import("./integrations/buddy/codebuddy")).discoverCodeBuddyModels({ credential, ...(fetcher === undefined ? {} : { fetcher }) }),
     loadAuthentication: oauthCapability(() => import("./integrations/buddy/codebuddy-oauth"), "codeBuddyOAuthClient", { withRefresher: true }),
     loadQuotaCollector: quotaCapability(() => import("./integrations/buddy/codebuddy-quota"), "fetchCodeBuddyIntlQuota"),
   },
   cbcn: {
     loadAdapter: async () => (await import("./integrations/buddy/codebuddy-cn")).createCodeBuddyCnAdapter(),
     loadModels: async () => (await import("./integrations/buddy/codebuddy-cn")).CODEBUDDY_CN_MODELS,
+    loadModelDiscovery: async () => async ({ credential, fetcher }) => (await import("./integrations/buddy/codebuddy-cn")).discoverCodeBuddyCnModels({ credential, ...(fetcher === undefined ? {} : { fetcher }) }),
     loadAuthentication: oauthCapability(() => import("./integrations/buddy/codebuddy-oauth"), "codeBuddyCnOAuthClient", { withRefresher: true }),
     loadQuotaCollector: quotaCapability(() => import("./integrations/buddy/codebuddy-quota"), "fetchCodeBuddyCnQuota"),
   },
   workbuddy: {
     loadAdapter: async () => (await import("./integrations/buddy/workbuddy")).createWorkBuddyAdapter(),
     loadModels: async () => (await import("./integrations/buddy/workbuddy")).WORKBUDDY_MODELS,
+    loadModelDiscovery: async () => async ({ credential, fetcher }) => (await import("./integrations/buddy/workbuddy")).discoverWorkBuddyModels({ credential, ...(fetcher === undefined ? {} : { fetcher }) }),
     loadAuthentication: oauthCapability(() => import("./integrations/buddy/workbuddy-oauth"), "workBuddyOAuthClient", { withRefresher: true }),
     loadQuotaCollector: quotaCapability(() => import("./integrations/buddy/workbuddy-quota"), "fetchWorkBuddyQuota"),
+  },
+  kilo: {
+    loadAdapter: async () => (await import("./integrations/kilo/kilo")).kiloAdapter,
+    loadModels: async () => (await import("./integrations/kilo/kilo")).KILO_MODELS,
+    // No `withRefresher`: Kilo Code has no refresh grant, so this client
+    // declares no refresher and the stored token is used exactly as issued.
+    // Registering one would make the 401 retry path call a method that always
+    // throws, turning a recoverable auth failure into a permanent one.
+    loadAuthentication: oauthCapability(() => import("./integrations/kilo/kilo-oauth"), "kiloOAuthClient"),
+    loadModelDiscovery: async () => async ({ credential, fetcher }) =>
+      (await import("./integrations/kilo/kilo-discovery")).discoverKiloModels({
+        credential,
+        ...(fetcher === undefined ? {} : { fetcher }),
+      }),
   },
   commandcode: {
     loadAdapter: async () => (await import("./integrations/commandcode")).createCommandCodeAdapter(),
@@ -311,23 +355,72 @@ export const PROVIDER_CAPABILITIES = {
   openrouter: {
     loadAdapter: async () => createApiKeyAdapter((await import("./integrations/openrouter")).OPENROUTER_SPEC),
     loadModelDiscovery: async () => async ({ credential }) => (await import("./integrations/openrouter")).discoverOpenrouterModels({ credential }),
+    // No `withRefresher`: the PKCE exchange returns a durable API key rather
+    // than an access token, so there is no refresh grant to register. The key
+    // is stored as an ordinary credential and forwarded as the bearer, which is
+    // why the same adapter serves the pasted-key and signed-in cases.
+    loadAuthentication: oauthCapability(() => import("./integrations/openrouter-oauth"), "openrouterOAuthClient"),
   },
   xiaomipg: {
-    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/xiaomi")).XIAOMIPG_SPEC),
-    loadModels: async () => (await import("./integrations/xiaomi")).XIAOMI_MODELS,
+    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/xiaomi-mimo/xiaomi")).XIAOMIPG_SPEC),
+    loadModels: async () => (await import("./integrations/xiaomi-mimo/xiaomi")).XIAOMI_MODELS,
   },
   xiaomitp: {
-    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/xiaomi")).XIAOMITP_SPEC),
-    loadModels: async () => (await import("./integrations/xiaomi")).XIAOMI_MODELS,
+    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/xiaomi-mimo/xiaomi")).XIAOMITP_SPEC),
+    loadModels: async () => (await import("./integrations/xiaomi-mimo/xiaomi")).XIAOMI_MODELS,
+  },
+  mimodesktop: {
+    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/xiaomi-mimo/mimodesktop")).MIMODESKTOP_SPEC),
+    loadModels: async () => (await import("./integrations/xiaomi-mimo/mimodesktop")).MIMODESKTOP_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/xiaomi-mimo/mimodesktop-oauth"), "mimoDesktopOAuthClient", { withRefresher: true }),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/xiaomi-mimo/mimodesktop-quota"), "fetchMimoDesktopQuota"),
+  },
+  mimostudio: {
+    loadAdapter: async () => (await import("./integrations/xiaomi-mimo/mimostudio")).createMimoStudioAdapter(),
+    loadModels: async () => (await import("./integrations/xiaomi-mimo/mimostudio")).MIMOSTUDIO_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/xiaomi-mimo/mimostudio-oauth"), "mimoStudioOAuthClient", { withRefresher: true }),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/xiaomi-mimo/mimostudio-quota"), "fetchMimoStudioQuota"),
   },
   zai: {
     loadAdapter: async () => createApiKeyAdapter((await import("./integrations/zai/spec")).ZAI_SPEC),
     loadQuotaCollector: quotaCapability(() => import("./integrations/zai/zai-quota"), "fetchZaiQuota"),
     loadModelDiscovery: async () => async ({ credential }) => (await import("./integrations/zai/spec")).discoverZaiModels({ credential }),
   },
+  zcode: {
+    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/zcode")).ZCODE_SPEC),
+    loadModels: async () => (await import("./integrations/zcode")).ZCODE_MODELS,
+    loadModelDiscovery: async () => async ({ credential, fetcher }) =>
+      (await import("./integrations/zcode")).discoverZcodeModels({
+        credential,
+        ...(fetcher === undefined ? {} : { fetcher }),
+      }),
+    // No `withRefresher`: the sign-in flow ends by minting a durable API key,
+    // and Z.AI publishes no refresh grant for it (`refresh "none"` upstream).
+    loadAuthentication: oauthCapability(() => import("./integrations/zcode-oauth"), "zcodeOAuthClient"),
+  },
   perplexity: {
     loadAdapter: async () => (await import("./integrations/perplexity")).createPerplexityAdapter(),
     loadModels: async () => (await import("./integrations/perplexity")).PERPLEXITY_MODELS,
+  },
+  "github": {
+    // Chat only. Copilot also serves some SKUs on `/responses`, but those arrive
+    // through discovery, which carries its own endpoint path with the wire
+    // family it read from `supported_endpoints` — this map is the static floor,
+    // and the static catalog is all chat.
+    endpointPathsByWireFamily: { chat: "/chat/completions" },
+    loadAdapter: async () => (await import("./integrations/github/github")).githubAdapter,
+    loadModels: async () => (await import("./integrations/github/github")).GITHUB_MODELS,
+    // The Copilot token is short-lived and re-minted from the GitHub token the
+    // device flow issued, so this provider registers a real refresher.
+    loadAuthentication: oauthCapability(() => import("./integrations/github/github-oauth"), "githubOAuthClient", { withRefresher: true }),
+    // The account's own `/models` is authoritative: it names the SKUs the
+    // subscription may use and the surface each answers on.
+    loadModelDiscovery: async () => async ({ credential, fetcher }) =>
+      (await import("./integrations/github/github-discovery")).discoverGithubModels({
+        credential,
+        ...(fetcher === undefined ? {} : { fetcher }),
+      }),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/github/github-quota"), "fetchGithubQuota"),
   },
   ollamacloud: {
     // Only the two families this provider's catalog actually serves. The

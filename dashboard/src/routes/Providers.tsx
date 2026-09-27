@@ -7,6 +7,7 @@ import {
   type HeaderPair,
 } from "../components/HeaderPairsEditor";
 import { ProviderIcon } from "../components/ProviderIcon";
+import { modelCoolingCount } from "../components/AccountCooldown";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardBody } from "../components/ui/card";
@@ -17,7 +18,11 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui/state";
 import { Switch } from "../components/ui/switch";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
-import type { CreateProviderRequest, ProviderResponse } from "../lib/contracts";
+import type {
+  CreateProviderRequest,
+  ProviderAccountResponse,
+  ProviderResponse,
+} from "../lib/contracts";
 import {
   useCreateProvider,
   useCreateProviderAccount,
@@ -343,10 +348,7 @@ function CustomProviderCard({ customProvider }: { customProvider: ProviderRespon
   const modelCount = modelsQuery.data?.length ?? 0;
   const accountsQuery = useProviderAccounts(customProvider.providerId);
   const accounts = accountsQuery.data ?? [];
-  const activeConnections = accounts.filter((a) => a.status === "active").length;
-  const cooldownCount = accounts.filter((a) => a.status === "cooldown").length;
-  const disabledCount = accounts.filter((a) => a.status === "disabled").length;
-  const exhaustedCount = accounts.filter((a) => a.lastErrorCategory === "quota_exhausted").length;
+  const counts = summarizeAccounts(accounts);
   // Any non-active account is a connection of some state: the neutral badge
   // only shows when every account is active and healthy.
   return (
@@ -354,6 +356,8 @@ function CustomProviderCard({ customProvider }: { customProvider: ProviderRespon
       style={{
         position: "relative",
         overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
         border: "1px solid var(--inner-border)",
         borderRadius: "12px",
         transition:
@@ -365,7 +369,10 @@ function CustomProviderCard({ customProvider }: { customProvider: ProviderRespon
         style={{
           textDecoration: "none",
           color: "inherit",
+          // See the builtin card: `flex: 1` keeps the clickable area as tall as
+          // the stretched card instead of only as tall as the content.
           display: "block",
+          flex: 1,
           padding: "12px",
           paddingRight: "40px",
           minHeight: "76px",
@@ -390,28 +397,33 @@ function CustomProviderCard({ customProvider }: { customProvider: ProviderRespon
               {customProvider.label || customProvider.providerId}
             </div>
             <div style={{ marginTop: "3px", display: "flex", flexWrap: "wrap", gap: "4px" }}>
-              {activeConnections > 0 ? (
+              {counts.active > 0 ? (
                 <Badge tone="ok" dot>
-                  {activeConnections} Connected
+                  {counts.active} Connected
                 </Badge>
-              ) : cooldownCount + disabledCount + exhaustedCount > 0 ? (
+              ) : counts.unhealthy + counts.cooling > 0 ? (
                 <Badge tone="warn" dot>
-                  {cooldownCount + disabledCount + exhaustedCount} Unhealthy
+                  {counts.unhealthy + counts.cooling} Unhealthy
                 </Badge>
               ) : (
                 <Badge>No connections</Badge>
               )}
-              {cooldownCount > 0 ? (
+              {counts.cooldown > 0 ? (
                 <Badge tone="warn" dot>
-                  {cooldownCount} Cooldown
+                  {counts.cooldown} Cooldown
                 </Badge>
               ) : null}
-              {disabledCount > 0 ? (
+              {counts.cooling > 0 ? (
+                <Badge tone="warn" dot>
+                  {counts.cooling} Cooling
+                </Badge>
+              ) : null}
+              {counts.disabled > 0 ? (
                 <Badge>Disabled</Badge>
               ) : null}
-              {exhaustedCount > 0 ? (
+              {counts.exhausted > 0 ? (
                 <Badge tone="warn" dot>
-                  {exhaustedCount} Exhausted
+                  {counts.exhausted} Exhausted
                 </Badge>
               ) : null}
             </div>
@@ -645,14 +657,14 @@ const FOUNDING_IDS = new Set(["inferhub"]);
 /** Free tiers that are metered (a few requests per day) rather than a standing
  * free allowance. They are listed in {@link FREE_AVAILABLE_IDS} too, but get
  * their own section instead of the general free-available one. */
-const FREE_LIMITED_IDS = new Set(["siliconflow", "cerebras", "groq", "opencodeft", "opencodezen", "opencodego", "bai", "tokenharbor"]);
+const FREE_LIMITED_IDS = new Set(["sifo", "cerebras", "groq", "opencodeft", "opencodezen", "opencodego", "bai", "tokenharbor"]);
 const FREE_AVAILABLE_IDS = new Set([
   "qoder",
   "agentrouter",
   "mistral",
   "gemini",
   "openrouter",
-  "siliconflow",
+  "sifo",
   "cb",
   "cbcn",
   "groq",
@@ -665,8 +677,39 @@ const FREE_AVAILABLE_IDS = new Set([
   "bai",
   "gmi",
   "aihubmix",
-  "cloudflare",
 ]);
+
+/**
+ * Connection counts for one provider's card.
+ *
+ * Computed once here because both card variants render the same badges from the
+ * same accounts, and keeping two copies is what let the per-model case go
+ * missing from the list: an account throttled for one model keeps
+ * `status: "active"` (see `account-health-service.ts`), so a rollup built from
+ * `status === "cooldown"` alone reported it as a healthy connection while its
+ * own detail page said "1 model cooling".
+ *
+ * `active` and `cooling` are therefore separate counts over the same account,
+ * and both are meant to show at once: a cooling account IS connected and
+ * routable for its other models, it is just not being routed to for the models
+ * named in `modelCooldowns`. `unhealthy` excludes `cooling` for the same
+ * reason — that badge is the fallback for when nothing is connected at all.
+ */
+function summarizeAccounts(accounts: readonly ProviderAccountResponse[]): {
+  active: number;
+  cooldown: number;
+  disabled: number;
+  exhausted: number;
+  cooling: number;
+  unhealthy: number;
+} {
+  const active = accounts.filter((a) => a.status === "active").length;
+  const cooldown = accounts.filter((a) => a.status === "cooldown").length;
+  const disabled = accounts.filter((a) => a.status === "disabled").length;
+  const exhausted = accounts.filter((a) => a.lastErrorCategory === "quota_exhausted").length;
+  const cooling = modelCoolingCount(accounts);
+  return { active, cooldown, disabled, exhausted, cooling, unhealthy: cooldown + disabled + exhausted };
+}
 
 const ProviderCard = memo(function ProviderCard({
   provider,
@@ -679,15 +722,15 @@ const ProviderCard = memo(function ProviderCard({
   const modelCount = modelsQuery.data?.length ?? 0;
   const accountsQuery = useProviderAccounts(provider.providerId);
   const accounts = accountsQuery.data ?? [];
-  const activeConnections = accounts.filter((a) => a.status === "active").length;
-  const cooldownCount = accounts.filter((a) => a.status === "cooldown").length;
-  const exhaustedCount = accounts.filter((a) => a.lastErrorCategory === "quota_exhausted").length;
+  const counts = summarizeAccounts(accounts);
 
   return (
     <Card
       style={{
         position: "relative",
         overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
         border: "1px solid var(--inner-border)",
         borderRadius: "12px",
         transition: "transform var(--dur-micro) var(--ease-spring), border-color var(--dur-micro) var(--ease-spring), box-shadow var(--dur-micro) var(--ease-spring)",
@@ -719,7 +762,12 @@ const ProviderCard = memo(function ProviderCard({
         style={{
           textDecoration: "none",
           color: "inherit",
+          // `flex: 1` is what makes the whole card clickable. Grid rows stretch
+          // every card to the tallest one, so a card whose content is shorter
+          // than its row left a dead strip below the link — a click there hit
+          // the card, not the link, and did nothing.
           display: "block",
+          flex: 1,
           padding: "12px",
         }}
       >
@@ -738,25 +786,33 @@ const ProviderCard = memo(function ProviderCard({
               {displayName}
             </div>
             <div style={{ marginTop: "3px", display: "flex", flexWrap: "wrap", gap: "4px" }}>
-              {activeConnections > 0 ? (
+              {counts.active > 0 ? (
                 <Badge tone="ok" dot>
-                  {activeConnections} Connected
+                  {counts.active} Connected
                 </Badge>
-              ) : cooldownCount + exhaustedCount > 0 ? (
+              ) : counts.unhealthy + counts.cooling > 0 ? (
                 <Badge tone="warn" dot>
-                  {cooldownCount + exhaustedCount} Unhealthy
+                  {counts.unhealthy + counts.cooling} Unhealthy
                 </Badge>
               ) : (
                 <Badge>No connections</Badge>
               )}
-              {cooldownCount > 0 ? (
+              {counts.cooldown > 0 ? (
                 <Badge tone="warn" dot>
-                  {cooldownCount} Cooldown
+                  {counts.cooldown} Cooldown
                 </Badge>
               ) : null}
-              {exhaustedCount > 0 ? (
+              {/* A per-model throttle keeps the account `active`, so it needs
+                  its own badge: without it the card read as healthy while the
+                  account's detail page reported models cooling. */}
+              {counts.cooling > 0 ? (
                 <Badge tone="warn" dot>
-                  {exhaustedCount} Exhausted
+                  {counts.cooling} Cooling
+                </Badge>
+              ) : null}
+              {counts.exhausted > 0 ? (
+                <Badge tone="warn" dot>
+                  {counts.exhausted} Exhausted
                 </Badge>
               ) : null}
             </div>

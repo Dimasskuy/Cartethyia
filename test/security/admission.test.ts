@@ -21,7 +21,6 @@ function snapshot(opts: Partial<Parameters<typeof createAuthorizationSnapshot>[0
     lifetime_token_budget: null,
     lifetime_tokens_consumed: null,
     max_concurrent: null,
-    provider_allowlist: null,
     model_allowlist: null,
     model_denylist: null,
     ...opts,
@@ -273,16 +272,14 @@ describe("ApiKeyAdmissionService", () => {
     expect(await store.getConcurrent("key-1")).toBe(0);
   });
 
-  test("provider and model allowlist/denylist with denylist-over-allowlist precedence", async () => {
+  test("model allowlist/denylist with denylist-over-allowlist precedence", async () => {
     const store = new InMemoryAdmissionCounterStore();
     const svc = new ApiKeyAdmissionService(store);
     const snap = snapshot({
-      provider_allowlist: ["openai", "anthropic"],
       model_allowlist: ["gpt-4", "gpt-4o", "claude-3"],
       model_denylist: ["gpt-4o"],
     });
 
-    // allowed
     const ok = await svc.admit({
       authorization: snap,
       targetProvider: "openai",
@@ -290,34 +287,24 @@ describe("ApiKeyAdmissionService", () => {
     });
     expect(ok.reservationId).toBeDefined();
     await ok.release();
+    const crossProvider = await svc.admit({
+      authorization: snap,
+      targetProvider: "anthropic",
+      targetModel: "gpt-4",
+    });
+    await crossProvider.release();
 
-    // provider not allowed
-    await expect(
-      svc.admit({ authorization: snap, targetProvider: "cerebras", targetModel: "gpt-4" }),
-    ).rejects.toMatchObject({
-      code: "model_not_found",
-    } as unknown as GatewayError);
-
-    // model not in allowlist — allowlist miss, not a denylist hit
     await expect(
       svc.admit({ authorization: snap, targetProvider: "openai", targetModel: "unknown" }),
     ).rejects.toMatchObject({
       code: "model_not_found",
       details: { reason: "model-not-allowed" },
     } as unknown as GatewayError);
-
-    // model in both allowlist and denylist — denylist wins
     await expect(
       svc.admit({ authorization: snap, targetProvider: "openai", targetModel: "gpt-4o" }),
     ).rejects.toMatchObject({
       code: "model_not_found",
       details: { reason: "model-denied" },
-    } as unknown as GatewayError);
-    // ensure denylist-over-allowlist precedence deterministic even when allowlist overlaps
-    await expect(
-      svc.admit({ authorization: snap, targetProvider: "anthropic", targetModel: "gpt-4o" }),
-    ).rejects.toMatchObject({
-      code: "model_not_found",
     } as unknown as GatewayError);
   });
 
@@ -364,7 +351,7 @@ describe("ApiKeyAdmissionService", () => {
   test("never contacts provider/network before admission check — zero dispatches on rejection", async () => {
     const store = new InMemoryAdmissionCounterStore();
     const svc = new ApiKeyAdmissionService(store);
-    const snap = snapshot({ provider_allowlist: ["openai"], max_concurrent: 0 });
+    const snap = snapshot({ max_concurrent: 0 });
 
     let dispatchCount = 0;
     const mockProviderDispatch = async () => {
@@ -389,7 +376,7 @@ describe("ApiKeyAdmissionService", () => {
     expect(dispatchCount).toBe(0);
 
     // successful case does dispatch
-    const snap2 = snapshot({ provider_allowlist: ["openai"] });
+    const snap2 = snapshot();
     const svc2 = new ApiKeyAdmissionService(new InMemoryAdmissionCounterStore());
     const lease = await svc2.admit({
       authorization: snap2,

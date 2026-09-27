@@ -9,7 +9,9 @@ import {
 } from "./providers/detail/routes";
 import {
   createOAuthLoginRoutes,
+  completeLogin,
   DrizzleOAuthAccountStore,
+  type OAuthLoginConfig,
 } from "./providers/oauth/routes";
 import {
   DrizzleProviderCatalogStore,
@@ -35,6 +37,7 @@ import { BackupService } from "./backup/service";
 import type { ConsoleCredentialService } from "./auth/service";
 
 import { OAuthFlowStore } from "../providers/authentication/oauth-flow-store";
+import { OAuthCallbackListener } from "./providers/oauth/callback-listener";
 import { createAccountSecretResolver } from "../providers/operations/provider-credential-service";
 import { syncByokProvider } from "../providers/operations/provider-catalog-service";
 import { DrizzleApiKeyStore } from "../persistence/api-key-store";
@@ -266,5 +269,23 @@ export function registerConsoleDomains(
     providerRegistry: ctx.providerRegistry,
     resolveCredential,
   }));
-  console.use(createOAuthLoginRoutes({ providerRegistry: ctx.providerRegistry, oauthFlowStore: new OAuthFlowStore(ctx.redis), accountStore: new DrizzleOAuthAccountStore(ctx.db), accessResolver: ctx.accessResolver, snapshotInvalidator: ctx.routeSnapshotService }));
+  // The listener binds the loopback port a browser redirect names, so the
+  // callback delivers itself instead of waiting for a manual paste. One
+  // instance per console: a port is shared by every flow registered on it, and
+  // it is released when the last of those flows settles.
+  const oauthCallbackListener = new OAuthCallbackListener({
+    completer: {
+      complete: (providerId, code, state) =>
+        completeLogin(oauthConfig, providerId, code, state),
+    },
+  });
+  const oauthConfig: OAuthLoginConfig = {
+    providerRegistry: ctx.providerRegistry,
+    oauthFlowStore: new OAuthFlowStore(ctx.redis),
+    accountStore: new DrizzleOAuthAccountStore(ctx.db),
+    accessResolver: ctx.accessResolver,
+    snapshotInvalidator: ctx.routeSnapshotService,
+    callbackListener: oauthCallbackListener,
+  };
+  console.use(createOAuthLoginRoutes(oauthConfig));
 }

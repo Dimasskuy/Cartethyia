@@ -4,7 +4,7 @@ import { ConsoleDomainError } from "../../shared/errors";
 import { parseCustomProviderId, isBundledProviderId, type ModelDefinition, type ProviderRegistry } from "../../../providers/provider-registry";
 import { globalOrOwnedBy, ownedByOnly } from "../../../persistence/tenant-scope";
 import type { CartethyiaDatabase } from "../../../persistence/postgres";
-import { models, providerAccounts, providers, telemetryEvents, telemetryUsageTotals, tenantDisabledModels } from "../../../persistence/schema";
+import { models, providerAccounts, providerOauthStates, providers, telemetryEvents, telemetryUsageTotals, tenantDisabledModels } from "../../../persistence/schema";
 import type { WireFamily } from "../../../transport/canonical-model";
 import { listAccountHealthEvents, recoverAccount, type AccountHealthEventRecord } from "../../../providers/operations/account-health-service";
 import { encryptCredential, hashSecret } from "../../../security/crypto";
@@ -705,24 +705,60 @@ export class DrizzleProviderCatalogStore implements ProviderCatalogStore {
         ? undefined
         : hashSecret(request.secret);
     try {
-      const rows = await this.db
-        .insert(providerAccounts)
-        .values({
-          providerId,
-          tenantId,
-          label: request.label ?? `${providerId} account`,
-          credentialCiphertext: encryptCredential(request.secret),
-          ...(credentialFingerprint ? { credentialFingerprint } : {}),
-          credentialKind: request.credentialKind,
-          maxInflight: null,
-          status: "active",
-        })
-        .returning();
-      const row = rows[0];
-      if (!row) throw new Error("failed to create provider account");
-      const [account] = await this.accountsWithUsage(tenantId, [row]);
-      if (!account) throw new Error("created provider account could not be mapped");
-      return account;
+      return await this.db.transaction(async (tx) => {
+        let effectiveSecret = request.secret;
+        let oauthRefreshCiphertext: Buffer | undefined;
+        let oauthExpiresAt: Date | undefined;
+
+        if (request.credentialKind === "oauth" && request.secret.trim().length > 0) {
+          const trimmed = request.secret.trim();
+          if (providerId === "mimodesktop") {
+            const { parseMimoCredential, encodeMimoCredential } = await import(
+              "../../../providers/integrations/xiaomi-mimo/mimodesktop-oauth"
+            );
+            const creds = parseMimoCredential(trimmed);
+            oauthRefreshCiphertext = encryptCredential(creds.passToken);
+            oauthExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+            effectiveSecret = encodeMimoCredential(creds);
+          } else if (providerId === "mimostudio") {
+            const { parseMimoStudioCredential, encodeMimoStudioCredential } = await import(
+              "../../../providers/integrations/xiaomi-mimo/mimostudio-auth"
+            );
+            const creds = parseMimoStudioCredential(trimmed);
+            oauthRefreshCiphertext = encryptCredential(encodeMimoStudioCredential(creds));
+            oauthExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+            effectiveSecret = encodeMimoStudioCredential(creds);
+          }
+        }
+
+        const rows = await tx
+          .insert(providerAccounts)
+          .values({
+            providerId,
+            tenantId,
+            label: request.label ?? `${providerId} account`,
+            credentialCiphertext: encryptCredential(effectiveSecret),
+            ...(credentialFingerprint ? { credentialFingerprint } : {}),
+            credentialKind: request.credentialKind,
+            maxInflight: null,
+            status: "active",
+          })
+          .returning();
+        const row = rows[0];
+        if (!row) throw new Error("failed to create provider account");
+
+        if (oauthRefreshCiphertext && oauthExpiresAt) {
+          await tx.insert(providerOauthStates).values({
+            providerAccountId: row.id,
+            refreshCiphertext: oauthRefreshCiphertext,
+            expiresAt: oauthExpiresAt,
+          });
+        }
+
+        const [account] = await this.accountsWithUsage(tenantId, [row]);
+        if (!account) throw new Error("created provider account could not be mapped");
+        return account;
+      });
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConsoleDomainError(

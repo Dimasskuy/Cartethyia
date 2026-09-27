@@ -34,24 +34,49 @@ describe("gatewayErrorFromStreamError", () => {
     }
   });
 
-  test("classifies an overload identifier as an upstream outage", () => {
-    for (const type of ["overloaded_error", "server_error", "model_at_capacity", "server_is_overloaded"]) {
-      expect(classify({ type })).toMatchObject({ code: "platform_unavailable", status: 502, origin: "upstream" });
+  test("separates upstream capacity errors from general platform failures", () => {
+    for (const type of ["overloaded_error", "capacity_exhausted", "model_at_capacity", "server_is_overloaded"]) {
+      expect(classify({ type })).toMatchObject({
+        code: "capacity_exhausted",
+        status: 529,
+        origin: "upstream",
+      });
+    }
+    for (const type of ["server_error", "internal_error", "api_error"]) {
+      expect(classify({ type })).toMatchObject({
+        code: "platform_unavailable",
+        status: 502,
+        origin: "upstream",
+      });
     }
   });
 
-  test("classifies an auth identifier with credential evidence", () => {
-    const error = classify({ type: "authentication_error", message: "bad key" });
-    expect(error).toMatchObject({ code: "authentication_failed", status: 401, origin: "upstream" });
-    expect(error.details["credentialEvidence"]).toBe(true);
+  test("keeps the provider overload type while preserving its explicit status", () => {
+    const error = classify({ type: "overloaded_error", status: 503 });
+    expect(error).toMatchObject({
+      code: "capacity_exhausted",
+      status: 503,
+      origin: "upstream",
+    });
+    expect(error.details["providerStatus"]).toBe(503);
   });
 
-  test("an explicit status on the frame outranks the identifier", () => {
-    // A frame that states its own status is describing the upstream response
-    // it came from, so the status table is the authority.
-    const error = classify({ type: "overloaded_error", status: 503 });
-    expect(error).toMatchObject({ code: "platform_unavailable", status: 503 });
-    expect(error.details["providerStatus"]).toBe(503);
+  test("does not mistake a proxy authentication response for an upstream type", () => {
+    expect(classify({ type: "overloaded_error", status: 407 })).toMatchObject({
+      code: "proxy_auth_required",
+      status: 407,
+      origin: "network",
+    });
+  });
+
+  test("keeps a structured policy rejection distinct from authentication", () => {
+    const error = classify({ code: "11140", status: 403, message: "request illegal" });
+    expect(error).toMatchObject({
+      code: "policy_rejected",
+      status: 403,
+      origin: "upstream",
+    });
+    expect(error.details["credentialEvidence"]).toBeUndefined();
   });
 
   test("names a context overflow even inside a 200 OK", () => {

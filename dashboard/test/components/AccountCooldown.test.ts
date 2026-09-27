@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   activeModelCooldowns,
   lastModelCooldownAt,
+  modelCoolingCount,
 } from "../../src/components/AccountCooldown";
 
 /**
@@ -65,5 +66,24 @@ describe("per-model cooldown display", () => {
       lastModelCooldownAt({ modelCooldowns: { broken: "not-a-date", ok: inMinutes(3) } }),
     ).toBeGreaterThan(Date.now());
     expect(lastModelCooldownAt({ modelCooldowns: { broken: "not-a-date" } })).toBeNull();
+  });
+
+  test("counts the accounts that are cooling, not the backoffs they carry", () => {
+    // A list-level badge says how many rows need attention. One account cooling
+    // three models is one row, and counting entries would report it as three.
+    expect(
+      modelCoolingCount([
+        { modelCooldowns: { a: inMinutes(5), b: inMinutes(9), c: inMinutes(20) } },
+        { modelCooldowns: {} },
+        { modelCooldowns: { gone: new Date(Date.now() - 1).toISOString() } },
+        { modelCooldowns: { only: inMinutes(2) } },
+        {},
+      ]),
+    ).toBe(2);
+  });
+
+  test("reports no cooling accounts when the list is empty or all healthy", () => {
+    expect(modelCoolingCount([])).toBe(0);
+    expect(modelCoolingCount([{}, { modelCooldowns: {} }])).toBe(0);
   });
 });

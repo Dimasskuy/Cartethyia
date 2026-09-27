@@ -1,6 +1,6 @@
 import { isBundledProviderId } from "../../providers/provider-registry";
 import type { ProviderId, ProviderAdapter } from "../../providers/provider-registry";
-import { GatewayError, explainGatewayError, publicGatewayErrorDetails } from "../gateway-error";
+import { GatewayError, explainGatewayError, labelGatewayMessage, publicGatewayErrorDetails } from "../gateway-error";
 import { classifyTerminalCategory } from "../failure-policy";
 import type { CanonicalEvent, UsageRecord } from "../canonical-model";
 import { resolveCredentialForAccount } from "../../providers/operations/provider-credential-service";
@@ -245,9 +245,8 @@ export async function handleProviderProxyRequest(
         let firstContentDeltaAtMs: number | undefined;
         let lastEventAtMs: number | undefined;
         // Any upstream event (even surface-invisible) proves liveness for
-        // watchdog bound selection. Throttle for the socket keepalive below.
+        // watchdog bound selection.
         let sawUpstreamActivity = false;
-        let lastKeepaliveAtMs = 0;
         // Canonical events streamed to the client; captured as the response
         // body for telemetry so streaming tool calls/text are traceable.
         const streamedEvents: CanonicalEvent[] = [];
@@ -258,6 +257,7 @@ export async function handleProviderProxyRequest(
         // SSE comment frame: valid framing on every streamed surface,
         // ignored by EventSource clients. Never part of content/telemetry.
         const KEEPALIVE_COMMENT_BYTES = new TextEncoder().encode(": keepalive\n\n");
+        const CLIENT_SSE_KEEPALIVE_INTERVAL_MS = 15_000;
         // One decoder per stream: `new TextDecoder()` per chunk would allocate
         // on every upstream event for the telemetry transcript copy.
         const clientResponseDecoder = new TextDecoder();
@@ -367,7 +367,6 @@ export async function handleProviderProxyRequest(
           usage = undefined;
           lastEventAtMs = undefined;
           sawUpstreamActivity = false;
-          lastKeepaliveAtMs = 0;
           iterable = createUpstreamIterable();
           iterator = iterable[Symbol.asyncIterator]();
           state.upstreamDispatchStartedAtMs = Date.now();
@@ -405,8 +404,11 @@ export async function handleProviderProxyRequest(
               ? streamFirstChunkTimeoutMs
               : streamStallTimeoutMs;
           stallTimer = setTimeout(() => {
+            // The bound that expired is silence *from the upstream*, so the
+            // origin is the upstream's: labelling it `cartethyia` reported a
+            // provider that stopped sending as a gateway defect.
             state.abortController.abort(
-              new GatewayError("deadline_exceeded", 504, "upstream stream stalled"),
+              new GatewayError("deadline_exceeded", 504, "upstream stream stalled", {}, "upstream"),
             );
           }, timeoutMs);
         };
@@ -424,10 +426,16 @@ export async function handleProviderProxyRequest(
         // second resource release) for one request.
         let streamSettled = false;
         let streamReleased = false;
+        let clientKeepaliveTimer: ReturnType<typeof setInterval> | undefined;
+        const clearClientKeepaliveTimer = () => {
+          if (clientKeepaliveTimer !== undefined) clearInterval(clientKeepaliveTimer);
+          clientKeepaliveTimer = undefined;
+        };
 
         async function releaseStreamResources() {
           if (streamReleased) return;
           streamReleased = true;
+          clearClientKeepaliveTimer();
           clearStallWatchdog();
           await releaseAttemptLeases(
             {
@@ -449,13 +457,30 @@ export async function handleProviderProxyRequest(
 
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
+            clientKeepaliveTimer = setInterval(() => {
+              if (streamSettled || streamReleased || state.abortController.signal.aborted) {
+                clearClientKeepaliveTimer();
+                return;
+              }
+              // Do not accumulate comments when the consumer is applying
+              // backpressure; the next pull will resume normal streaming.
+              if (controller.desiredSize !== null && controller.desiredSize > 0)
+                controller.enqueue(KEEPALIVE_COMMENT_BYTES);
+            }, CLIENT_SSE_KEEPALIVE_INTERVAL_MS);
             if (!first.done) enqueueEvent(first.value, controller);
           },
           async pull(controller) {
             if (state.abortController.signal.aborted) {
               const reason = state.abortController.signal.reason;
               if (reason instanceof GatewayError && reason.code === "deadline_exceeded") {
-                await emitStreamErrorAndClose(reason, controller);
+                // The stall watchdog fires with no client action at all, so
+                // this branch is reached by an ordinary provider timeout — it
+                // needs the same release guarantee as the catch below.
+                try {
+                  await emitStreamErrorAndClose(reason, controller);
+                } finally {
+                  void releaseStreamResources();
+                }
               } else {
                 try {
                   await iterator.return?.();
@@ -495,20 +520,19 @@ export async function handleProviderProxyRequest(
                 }
                 sawUpstreamActivity = true;
                 if (enqueueEvent(result.value, controller)) return;
-                // Surface-invisible event (e.g. xAI encrypted reasoning on a
-                // Chat client): without client bytes the socket idles toward
-                // LB timeout. SSE comments are framing, not content — safe on
-                // every streamed surface, excluded from the telemetry
-                // transcript and TTFB accounting, throttled to 15s.
-                const now = Date.now();
-                if (now - lastKeepaliveAtMs > 15000) {
-                  lastKeepaliveAtMs = now;
-                  controller.enqueue(KEEPALIVE_COMMENT_BYTES);
-                }
               }
             } catch (err) {
               clearStallWatchdog();
-              await emitStreamErrorAndClose(err, controller);
+              try {
+                await emitStreamErrorAndClose(err, controller);
+              } finally {
+                // The release must not depend on the error path completing:
+                // anything that throws above it (a bookkeeping call, a dead
+                // controller) would otherwise skip it, and `afterResponse`
+                // cannot rescue a request whose `state.streaming` is set. The
+                // `streamReleased` guard makes this safe to reach twice.
+                void releaseStreamResources();
+              }
             }
           },
           async cancel() {
@@ -549,6 +573,8 @@ export async function handleProviderProxyRequest(
                   "transport_unavailable",
                   502,
                   "upstream stream ended before terminal event",
+                  {},
+                  "upstream",
                 )
               : undefined;
             finishEncoders(controller);
@@ -666,7 +692,7 @@ export async function handleProviderProxyRequest(
             const origin = gatewayError?.origin ?? "network";
             const message = gatewayError
               ? explainGatewayError(gatewayError)
-              : "Cartethyia Error: Upstream stream failed";
+              : labelGatewayMessage(origin, "Upstream stream failed");
             const details = gatewayError ? publicGatewayErrorDetails(gatewayError) : {};
             for (const bytes of streamEncoder.encodeError({ origin, code, message, details })) {
               controller.enqueue(bytes);

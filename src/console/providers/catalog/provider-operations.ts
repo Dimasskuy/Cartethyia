@@ -18,7 +18,12 @@ import {
 } from "../../shared/errors";
 import type { AccessDecision } from "../../../security/access-control";
 import { isBundledProviderId, type ProviderRegistry } from "../../../providers/provider-registry";
-import type { CompatibilityProfile } from "../../../providers/provider-metadata";
+import {
+  providerCredentialHint,
+  providerCredentialUrl,
+  providerHasAdapterUserAgent,
+  type CompatibilityProfile,
+} from "../../../providers/provider-metadata";
 import type { AccountHealthEventRecord } from "../../../providers/operations/account-health-service";
 import { PROVIDER_READ_SCOPES, PROVIDER_WRITE_SCOPES } from "./contracts";
 import {
@@ -48,12 +53,20 @@ export function sanitizeProviderResponse(
     if (p[field] !== undefined && typeof p[field] !== "boolean")
       throw new ConsoleDomainError("invalid_provider", 400, `Provider ${field} must be a boolean`);
   }
+  // Both are derived from bundled metadata rather than the persisted record, so
+  // a BYOK provider (or a stale row for a provider that gained a page later)
+  // always reports the current canonical values.
+  const credentialUrl = providerCredentialUrl(p.providerId);
+  const credentialHint = providerCredentialHint(p.providerId);
   const response: ProviderResponse = {
     providerId: p.providerId,
     ...(typeof p.label === "string" && p.label.length > 0 ? { label: p.label } : {}),
     enabled: (p.enabled as boolean | undefined) ?? true,
     isBuiltIn: (p.isBuiltIn as boolean | undefined) ?? false,
     requiresAccount: (p.requiresAccount as boolean | undefined) ?? true,
+    hasAdapterUserAgent: providerHasAdapterUserAgent(p.providerId),
+    ...(credentialUrl === undefined ? {} : { credentialUrl }),
+    ...(credentialHint === undefined ? {} : { credentialHint }),
     supportsModelDiscovery: (p.supportsModelDiscovery as boolean | undefined) ?? !p.isBuiltIn,
     ...(typeof p.createdAt === "string" ? { createdAt: p.createdAt } : {}),
     ...(typeof p.updatedAt === "string" ? { updatedAt: p.updatedAt } : {}),

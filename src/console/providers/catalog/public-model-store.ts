@@ -2,8 +2,8 @@
  * Public model catalog: the read-only `/v1/models` surface an API key sees.
  *
  * Answers "which models may this key use, and what are they?" by intersecting
- * the enabled catalog with the key's provider/model allow- and denylists, then
- * applying the key's `model_prefix`. Kept separate from the operator-facing
+ * the enabled catalog with the key's model allow/deny lists, then applying the
+ * key's `model_prefix`. Kept separate from the operator-facing
  * `DrizzleProviderCatalogStore` because the two have different trust levels:
  * this one is driven entirely by untrusted caller input plus one frozen
  * authorization snapshot.
@@ -11,7 +11,7 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../../persistence/postgres";
 import { modelAliases, modelCombos, models, providerAccounts, providers } from "../../../persistence/schema";
-import { isModelAllowed, isProviderAllowed, listIncludes, type ApiKeyAuthorizationSnapshot } from "../../../security/api-key-auth";
+import { isModelAllowed, listIncludes, type ApiKeyAuthorizationSnapshot } from "../../../security/api-key-auth";
 
 export interface AllowedModelEntry {
   id: string;
@@ -247,7 +247,6 @@ export class PublicModelCatalogStore {
         if (tenantId === null) return false;
         return activeProviderIds.has(row.providerId);
       })
-      .filter((row) => isProviderAllowed(snapshot, row.providerId))
       .filter((row) =>
         matchesModelPrefix(modelPrefix, row.modelId, `${row.providerId}/${row.modelId}`) ||
         isModelAllowed(snapshot, row.modelId) ||
@@ -410,7 +409,6 @@ export class PublicModelCatalogStore {
         (matchesModelPrefix(modelPrefix, row.modelId, `${row.providerId}/${row.modelId}`) ||
           isModelAllowed(snapshot, row.modelId) ||
           isModelAllowed(snapshot, `${row.providerId}/${row.modelId}`)) &&
-        isProviderAllowed(snapshot, row.providerId) &&
         (isModelAllowed(snapshot, row.modelId) ||
           isModelAllowed(snapshot, `${row.providerId}/${row.modelId}`))
       ) {

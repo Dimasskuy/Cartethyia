@@ -34,7 +34,6 @@ export interface CreateApiKeyRequest {
   lifetimeTokenBudget?: number | null;
   maxConcurrentRequests?: number | null;
   modelPrefix?: string;
-  providerAllowlist?: readonly string[];
   modelAllowlist?: readonly string[];
   modelDenylist?: readonly string[];
   /** Client-router ids this key refuses; see `client-router-fingerprint.ts`. */
@@ -57,7 +56,6 @@ export interface ApiKeyResponse {
   readonly monthlyTokenLimit?: number;
   readonly lifetimeTokenBudget?: number;
   readonly modelPrefix?: string;
-  readonly providerAllowlist?: readonly string[];
   readonly modelAllowlist?: readonly string[];
   readonly modelDenylist?: readonly string[];
   readonly clientRouterDenylist?: readonly string[];
@@ -228,7 +226,6 @@ export function sanitizeApiKeyResponse(record: ApiKeyRecord): ApiKeyResponse {
     ...(record.lifetimeTokenBudget === undefined ? {} : { lifetimeTokenBudget: record.lifetimeTokenBudget }),
     ...(record.maxConcurrentRequests === undefined ? {} : { maxConcurrentRequests: record.maxConcurrentRequests }),
     ...(record.modelPrefix === undefined ? {} : { modelPrefix: record.modelPrefix }),
-    ...(record.providerAllowlist === undefined ? {} : { providerAllowlist: record.providerAllowlist }),
     ...(record.modelAllowlist === undefined ? {} : { modelAllowlist: record.modelAllowlist }),
     ...(record.modelDenylist === undefined ? {} : { modelDenylist: record.modelDenylist }),
     ...(record.clientRouterDenylist === undefined

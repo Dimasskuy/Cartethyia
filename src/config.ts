@@ -167,6 +167,13 @@ export const CONFIG_SPEC = {
    * default includes the `/v1` segment the bundled provider metadata implies.
    */
   CARTETHYIA_KIMI_QUOTA_BASE_URL: { kind: "text", default: DEFAULT_KIMI_QUOTA_BASE_URL },
+  /**
+   * GitHub Enterprise domain for the Copilot device login, e.g.
+   * `company.ghe.com`. Empty (the default) means github.com. GitHub Enterprise
+   * serves the device flow and the token-mint endpoint from its own domain, so
+   * an operator on one has no other way to point the login at it.
+   */
+  CARTETHYIA_GITHUB_ENTERPRISE_DOMAIN: { kind: "text", default: "" },
 } as const satisfies Readonly<Record<string, ConfigEntry>>;
 
 /** Every variable declared in {@link CONFIG_SPEC}, for documentation checks. */
@@ -275,8 +282,25 @@ export function resolveElysiaPrecompile(): boolean {
 
 // ─── Network policy (trusted proxy + SSRF) ──────────────────────────────────
 
-/** Runtime network policy resolved from process environment. */
-export type TrustedProxyMode = "disabled" | "trusted";
+/**
+ * How much of the inbound forwarding chain is trusted.
+ *
+ * - `disabled` — the raw TCP peer is the client; forwarded headers are ignored.
+ * - `trusted` — the peer must match `allowlist` before its headers are read.
+ * - `platform` — a PaaS edge that cannot be allowlisted. The edge terminates
+ *   TLS and the container has no public address of its own, so every request
+ *   arrives through it and the peer carries no information about the client.
+ *   Opt-in only: a self-hosted deployment that exposes its own port must not
+ *   select this, because then a direct caller could forge the headers.
+ */
+export type TrustedProxyMode = "disabled" | "trusted" | "platform";
+
+/**
+ * The one `TRUSTED_PROXY_CIDRS` value that selects `platform` mode instead of
+ * naming CIDRs. It cannot be mistaken for an address, so the list form stays
+ * unambiguous.
+ */
+export const TRUSTED_PROXY_PLATFORM_TOKEN = "platform";
 
 /** Trusted reverse-proxy boundary used for forwarded client addresses. */
 export interface TrustedProxyBoundary {
@@ -294,7 +318,14 @@ export interface SsrfPolicy {
 /** Resolves the trusted reverse-proxy allowlist without performing I/O. */
 export function resolveTrustedProxyBoundary(): TrustedProxyBoundary {
   const allowlist = readList("TRUSTED_PROXY_CIDRS", CONFIG_SPEC.TRUSTED_PROXY_CIDRS);
-  return allowlist ? { mode: "trusted", allowlist } : { mode: "disabled" };
+  if (!allowlist) return { mode: "disabled" };
+  // The platform token is checked case-insensitively and only when it is the
+  // whole value: a list that also names CIDRs is a real allowlist, and reading
+  // it as "trust everything" would silently widen the boundary.
+  if (allowlist.length === 1 && allowlist[0]?.toLowerCase() === TRUSTED_PROXY_PLATFORM_TOKEN) {
+    return { mode: "platform" };
+  }
+  return { mode: "trusted", allowlist };
 }
 
 /** Resolves one explicit outbound SSRF policy without performing I/O. */
@@ -545,6 +576,27 @@ export function resolveKimiQuotaBaseUrl(): string {
     "CARTETHYIA_KIMI_QUOTA_BASE_URL",
     CONFIG_SPEC.CARTETHYIA_KIMI_QUOTA_BASE_URL,
   );
+}
+
+/**
+ * GitHub Enterprise domain for the Copilot device login, or `""` for github.com.
+ *
+ * Normalized to a bare hostname: an operator may reasonably paste a URL, and
+ * every call site interpolates this into `https://<domain>/...`, so a scheme or
+ * trailing slash left in place would produce an unreachable URL.
+ */
+export function resolveGithubEnterpriseDomain(): string {
+  const raw = readText(
+    "CARTETHYIA_GITHUB_ENTERPRISE_DOMAIN",
+    CONFIG_SPEC.CARTETHYIA_GITHUB_ENTERPRISE_DOMAIN,
+  ).trim();
+  if (raw.length === 0) return "";
+  try {
+    const url = raw.includes("://") ? new URL(raw) : new URL(`https://${raw}`);
+    return url.hostname;
+  } catch {
+    return "";
+  }
 }
 
 /** Metadata-only telemetry retention window; payload frames have their own short TTL. */

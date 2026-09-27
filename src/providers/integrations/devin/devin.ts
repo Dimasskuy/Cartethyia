@@ -44,6 +44,7 @@ import {
   StopReason,
 } from "./generated/exa/codeium_common_pb/codeium_common_pb";
 import { GatewayError } from "../../../transport/gateway-error";
+import { classifyUpstreamError, mapUpstreamHttpError } from "../../../transport/failure-policy";
 import { joinTextParts, toolResultParts } from "../../../transport/canonical-model";
 import type { CanonicalEvent, CanonicalMessage, CanonicalRequest, ToolDefinition, UsageRecord } from "../../../transport/canonical-model";
 import type {
@@ -557,25 +558,23 @@ function readTrailerError(text: string): { code: string; message: string } | nul
 }
 
 function throwTrailerError(code: string, message: string, status: number): never {
+  const classification = classifyUpstreamError(status, code || undefined);
   const formatted = `Devin stream error${code ? ` ${code}` : ""}: ${message}`;
-  if (/\b(?:message|account) rate limit\b|\brate limit\b[\s\S]{0,80}\b(?:this model|resets? in|try again later)\b/i.test(message)) {
-    throw new GatewayError("capacity_exhausted", 429, formatted, {
+  throw new GatewayError(
+    classification.code,
+    classification.status,
+    formatted,
+    {
       providerId: DEVIN_PROVIDER_ID,
-    }, "upstream");
-  }
-  if (/\b(?:quota|usage limit|credits?)\b[\s\S]{0,80}\b(?:exhausted|exceeded|depleted|reached)\b|\b(?:exhausted|exceeded|depleted|reached)\b[\s\S]{0,80}\b(?:quota|usage limit|credits?)\b/i.test(message)) {
-    throw new GatewayError("quota_exceeded", 429, formatted, {
-      providerId: DEVIN_PROVIDER_ID,
-    }, "upstream");
-  }
-  if (["permission_denied", "unauthenticated", "permissiondenied"].includes(code)) {
-    throw new GatewayError("authentication_failed", 403, formatted, {
-      providerId: DEVIN_PROVIDER_ID,
-    }, "upstream");
-  }
-  throw new GatewayError("platform_unavailable", status, formatted, {
-    providerId: DEVIN_PROVIDER_ID,
-  }, "upstream");
+      providerStatus: status,
+      ...(code ? { providerCode: code } : {}),
+      ...(classification.credentialEvidence ? { credentialEvidence: true } : {}),
+      ...(classification.rateLimitScope
+        ? { rateLimitScope: classification.rateLimitScope }
+        : {}),
+    },
+    classification.origin,
+  );
 }
 
 // Adapter
@@ -725,23 +724,7 @@ class DevinAdapter implements ProviderAdapter {
         "network",
       );
     }
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      const message = `Devin API error ${response.status}: ${text.slice(0, 500)}`;
-      if (response.status === 401 || response.status === 403) {
-        throw new GatewayError("authentication_failed", response.status, message, {
-          providerId: DEVIN_PROVIDER_ID,
-        }, "upstream");
-      }
-      if (response.status === 429) {
-        throw new GatewayError("capacity_exhausted", response.status, message, {
-          providerId: DEVIN_PROVIDER_ID,
-        }, "upstream");
-      }
-      throw new GatewayError("platform_unavailable", response.status, message, {
-        providerId: DEVIN_PROVIDER_ID,
-      }, "upstream");
-    }
+    if (!response.ok) throw await mapUpstreamHttpError(response, DEVIN_PROVIDER_ID);
     if (!response.body) {
       throw new GatewayError("platform_unavailable", 502, "Devin API error: empty body", {
         providerId: DEVIN_PROVIDER_ID,

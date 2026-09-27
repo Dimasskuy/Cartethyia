@@ -2,11 +2,10 @@ import { GatewayError } from "../transport/gateway-error";
 import type { UsageRecord } from "../transport/canonical-model";
 import { redisEvalNumber, type RedisClient } from "../persistence/redis";
 import {
+  getAdmissionIdentity,
+  modelRejectionReason,
   type ApiKeyAuthorizationSnapshot,
   type ModelRejectionReason,
-  getAdmissionIdentity,
-  isProviderAllowed,
-  modelRejectionReason,
 } from "./api-key-auth";
 import { metrics } from "../observability/metrics";
 import { log } from "../observability/logger";
@@ -18,7 +17,6 @@ export type AdmissionRejectionReason =
   | "lifetime-token-budget"
   | "concurrency-limit"
   | "tenant-capacity-exhausted"
-  | "provider-not-allowed"
   | "admission-unavailable"
   | ModelRejectionReason;
 
@@ -172,20 +170,14 @@ const REASON_META: Record<
     status: 429,
     metricLabel: "tenant_capacity",
   },
-  "provider-not-allowed": {
-    message: "model or provider not allowed",
-    code: "model_not_found",
-    status: 404,
-    metricLabel: "provider_not_allowed",
-  },
   "model-not-allowed": {
-    message: "model or provider not allowed",
+    message: "model not allowed",
     code: "model_not_found",
     status: 404,
     metricLabel: "model_not_allowed",
   },
   "model-denied": {
-    message: "model or provider not allowed",
+    message: "model not allowed",
     code: "model_not_found",
     status: 404,
     metricLabel: "model_not_allowed",
@@ -551,9 +543,6 @@ export class ApiKeyAdmissionService {
     const apiKeyId = getAdmissionIdentity(snapshot);
     if (!apiKeyId || !snapshot.tenant_id) {
       reject("admission-unavailable", { reason: "missing_snapshot" });
-    }
-    if (!isProviderAllowed(snapshot, input.targetProvider)) {
-      reject("provider-not-allowed", { provider: input.targetProvider });
     }
     const rejected = modelRejectionReason(
       snapshot,

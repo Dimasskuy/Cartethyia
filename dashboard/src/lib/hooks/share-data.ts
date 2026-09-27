@@ -11,7 +11,6 @@ export interface ShareEnrollmentData {
   readonly oneTimeLimit: number | null;
   readonly requestsPerMinute: number | null;
   readonly maxConcurrentRequests: number | null;
-  readonly providerAllowlist: string[] | null;
   readonly modelAllowlist: string[];
   readonly modelDenylist: string[] | null;
   readonly modelPrefix: string | null;

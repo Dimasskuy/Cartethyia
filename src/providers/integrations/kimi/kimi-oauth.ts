@@ -119,6 +119,7 @@ interface DeviceTokenResponse {
   refresh_token?: unknown;
   expires_in?: unknown;
   error?: unknown;
+  error_description?: unknown;
   user_id?: unknown;
   sub?: unknown;
 }
@@ -192,7 +193,17 @@ export class KimiCodeOAuthClient extends OAuthDeviceFlow {
       return { status: "failed", reason: `device polling failed (${response.status})` };
     }
     const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
-    if (!accessToken) return { status: "pending" };
+    // A 2xx without a token is a failed authorization, not a pending one.
+    // Reporting `pending` here polled until the flow expired and showed the
+    // operator nothing actionable, because a `pending` verdict carries no
+    // reason to display.
+    if (!accessToken) {
+      const detail =
+        (typeof payload.error_description === "string" && payload.error_description.trim()) ||
+        (typeof payload.error === "string" && payload.error.trim()) ||
+        "Kimi Code token response omitted access_token";
+      return { status: "failed", reason: detail };
+    }
     const refreshToken = typeof payload.refresh_token === "string" ? payload.refresh_token.trim() : "";
     if (!refreshToken) {
       return { status: "failed", reason: "Kimi Code token response omitted refresh_token" };

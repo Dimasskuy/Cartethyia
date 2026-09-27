@@ -8,8 +8,20 @@ describe("provider User-Agent setting visibility", () => {
         isBuiltIn: true,
         requiresAccount: true,
         oauthFlows: undefined,
+        hasAdapterUserAgent: false,
       }),
     ).toBe(true);
+  });
+
+  test("hides the setting when the adapter declares its own User-Agent", () => {
+    expect(
+      providerCanConfigureUserAgent({
+        isBuiltIn: true,
+        requiresAccount: true,
+        oauthFlows: undefined,
+        hasAdapterUserAgent: true,
+      }),
+    ).toBe(false);
   });
 
   test("hides the setting for OAuth and custom providers", () => {
@@ -18,6 +30,7 @@ describe("provider User-Agent setting visibility", () => {
         isBuiltIn: true,
         requiresAccount: true,
         oauthFlows: { browser: false, device: true },
+        hasAdapterUserAgent: false,
       }),
     ).toBe(false);
     expect(
@@ -25,6 +38,7 @@ describe("provider User-Agent setting visibility", () => {
         isBuiltIn: false,
         requiresAccount: true,
         oauthFlows: undefined,
+        hasAdapterUserAgent: false,
       }),
     ).toBe(false);
   });
@@ -35,6 +49,7 @@ describe("provider User-Agent setting visibility", () => {
         isBuiltIn: true,
         requiresAccount: false,
         oauthFlows: undefined,
+        hasAdapterUserAgent: false,
       }),
     ).toBe(false);
   });

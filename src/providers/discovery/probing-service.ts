@@ -511,6 +511,8 @@ export class ProviderProbingService {
             "transport_unavailable",
             502,
             `Model discovery failed for ${providerId}: ${error instanceof Error ? error.message : "unknown error"}`,
+            {},
+            "upstream",
           );
         }
         if (!discovered) {
@@ -518,6 +520,8 @@ export class ProviderProbingService {
             "transport_unavailable",
             502,
             `Model discovery failed for ${providerId}: endpoint returned no usable models`,
+            {},
+            "upstream",
           );
         }
         const ctx = wireContextFrom(providerRow);
@@ -562,6 +566,8 @@ export class ProviderProbingService {
               "transport_unavailable",
               502,
               `Model discovery failed for ${providerId}: ${error instanceof Error ? error.message : "unknown error"}`,
+              {},
+              "upstream",
             );
           }
           if (discovered && discovered.length > 0) {

@@ -57,7 +57,6 @@ export interface ShareApiKeyRow {
   readonly monthlyTokenLimit: number | null;
   readonly lifetimeTokenBudget: number | null;
   readonly maxConcurrentRequests: number | null;
-  readonly providerAllowlist: readonly string[] | null;
   readonly modelAllowlist: readonly string[] | null;
   readonly modelDenylist: readonly string[] | null;
   readonly modelPrefix: string | null;
@@ -122,7 +121,6 @@ function mapShareRow(key: ApiKeyRow, link: ShareLinkRow): ShareApiKeyRow {
     monthlyTokenLimit: key.monthlyTokenLimit,
     lifetimeTokenBudget: key.lifetimeTokenBudget,
     maxConcurrentRequests: key.maxConcurrentRequests,
-    providerAllowlist: key.providerAllowlist as readonly string[] | null,
     modelAllowlist: key.modelAllowlist as readonly string[] | null,
     modelDenylist: key.modelDenylist as readonly string[] | null,
     modelPrefix: key.modelPrefix,
@@ -428,7 +426,6 @@ export class DrizzleShareLinkStore implements ShareLinkStore {
             lifetimeTokenBudget: parent.lifetimeTokenBudget,
             maxConcurrentRequests: parent.maxConcurrentRequests,
             modelPrefix: parent.modelPrefix,
-            providerAllowlist: parent.providerAllowlist,
             modelAllowlist: parent.modelAllowlist,
             modelDenylist: parent.modelDenylist,
             lifetimeTokensConsumed: 0,

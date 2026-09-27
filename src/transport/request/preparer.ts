@@ -5,7 +5,7 @@ import type { RouteCandidate as RouteCandidate, InMemoryRouteSnapshotService, Ro
 import { resolveAliasTarget, type RoutingEngine } from "../routing/router";
 import { deriveRequiredCapabilities, projectForRoute, routeCapabilitiesFor } from "../translation/capabilities";
 import type { RequiredCapability } from "../translation/capabilities";
-import { isModelAllowed, isProviderAllowed, type ResolvedApiKey } from "../../security/api-key-auth";
+import { isModelAllowed, type ResolvedApiKey } from "../../security/api-key-auth";
 import { dropIncompleteToolRounds, repairRequestToolCalls } from "../translation/tool-repair";
 import { sanitizeRequestToolIds } from "../translation/tool-id";
 import { log } from "../../observability/logger";
@@ -507,15 +507,6 @@ export class ProxyRequestPreparer {
         404,
         "model does not match the key's required prefix",
         { model: input.model, required_prefix: input.authorization.modelPrefix },
-      );
-    // Responses compaction runs exclusively on Codex, so a key whose provider
-    // policy excludes Codex can never be served. Reject before planning: the
-    if (!isProviderAllowed(input.authorization.snapshot, "codex"))
-      throw new GatewayError(
-        "invalid_request",
-        403,
-        "Responses compact requires a key that allows the Codex provider",
-        { provider: "codex" },
       );
     const plan = await this.deps.routingEngine.plan(
       input.model,

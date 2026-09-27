@@ -70,6 +70,26 @@ describe("decodeGeminiStreamEvent", () => {
     expect((caught as GatewayError).origin).toBe("upstream");
     expect((caught as GatewayError).message).toBe("quota exceeded");
   });
+  test("classifies structured Gemini status names instead of flattening them", () => {
+    let caught: unknown;
+    try {
+      decodeGeminiStreamEvent(
+        JSON.stringify({
+          error: { status: "RESOURCE_EXHAUSTED", message: "quota exhausted" },
+        }),
+        "Gemini stream error",
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(GatewayError);
+    expect(caught).toMatchObject({
+      code: "quota_exceeded",
+      status: 429,
+      origin: "upstream",
+      details: { providerCode: "RESOURCE_EXHAUSTED" },
+    });
+  });
 
   test("falls back to the caller's label when the error envelope carries no message", () => {
     // This is the one real divergence the two callers kept: an operator reading

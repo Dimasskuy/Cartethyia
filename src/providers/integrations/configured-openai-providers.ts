@@ -13,11 +13,13 @@ import { BARE_ROOT_ENDPOINTS } from "../../protocol/primitives";
 export const GENERIC_API_KEY_PROVIDER_IDS = [
   "groq",
   "mistral",
-  "siliconflow",
+  "sifo",
   "fireworks",
   "nvidia",
   "gmi",
   "ollamacloud",
+  // Bare root: the `/v1`-prefixed paths stay pinned.
+  "deepseek",
 ] as const;
 
 type GenericApiKeyProviderId = (typeof GENERIC_API_KEY_PROVIDER_IDS)[number];
@@ -36,9 +38,10 @@ function genericApiKeySpec(providerId: GenericApiKeyProviderId): ApiKeyProviderS
 export const GENERIC_API_KEY_SPECS = {
   groq: genericApiKeySpec("groq"),
   mistral: genericApiKeySpec("mistral"),
-  siliconflow: genericApiKeySpec("siliconflow"),
+  sifo: genericApiKeySpec("sifo"),
   fireworks: genericApiKeySpec("fireworks"),
   nvidia: genericApiKeySpec("nvidia"),
   gmi: genericApiKeySpec("gmi"),
   ollamacloud: genericApiKeySpec("ollamacloud"),
+  deepseek: genericApiKeySpec("deepseek"),
 } satisfies Readonly<Record<GenericApiKeyProviderId, ApiKeyProviderSpec>>;

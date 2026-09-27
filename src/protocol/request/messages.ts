@@ -21,6 +21,7 @@ import {
   type ClaudeWireObject,
   isRecord,
   resolveImageSource,
+  splitDataUrl,
 } from "../primitives";
 import { log } from "../../observability/logger";
 import { clampReasoningEffort, resolveSupportedReasoningEfforts } from "../../transport/translation/thinking";
@@ -74,19 +75,6 @@ function normalizeAnthropicImageMediaType(mediaType: string): string {
 }
 
 /**
- * Splits an RFC 2397 `data:` URL into Anthropic's `{media_type, data}` base64
- * source. Returns `undefined` for a non-data URL, or for a data URL whose
- * payload is not base64 (Anthropic's `source` has no other transport).
- */
-function base64FromDataUrl(url: string): { media_type: string; data: string } | undefined {
-  const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
-  const mediaType = match?.[1];
-  const data = match?.[2];
-  if (mediaType === undefined || data === undefined || data.length === 0) return undefined;
-  return { media_type: mediaType, data };
-}
-
-/**
  * Projects a canonical image part onto an Anthropic `image` block.
  *
  * Anthropic's `source.type` is a closed set — `base64` | `url` | `file` — and
@@ -109,12 +97,12 @@ function normalizeImageBlock(payload: unknown): ClaudeWireObject {
   if (!isRecord(payload)) {
     const resolved = resolveImageSource(payload);
     if (resolved?.url !== undefined) {
-      const split = base64FromDataUrl(resolved.url);
+      const split = splitDataUrl(resolved.url);
       return {
         type: "image",
         source:
           split !== undefined
-            ? { type: "base64", media_type: split.media_type, data: split.data }
+            ? { type: "base64", media_type: split.mediaType, data: split.data }
             : { type: "url", url: resolved.url },
       };
     }
@@ -130,6 +118,19 @@ function normalizeImageBlock(payload: unknown): ClaudeWireObject {
   // else is re-projected from whichever origin vocabulary it arrived in.
   const sourceIsAnthropic = ["base64", "url", "file"].includes(String(rawSource["type"]));
   const source: Record<string, unknown> = sourceIsAnthropic ? { ...rawSource } : {};
+  // A `url` source carrying a data URI is not a URL: the bytes are in the
+  // string. Leaving it as `type: "url"` hands the upstream a data URI in a
+  // file-uri field, which it cannot fetch — so the image is lost while the
+  // request still succeeds. Split it into the base64 source it actually is.
+  if (sourceIsAnthropic && source["type"] === "url" && typeof source["url"] === "string") {
+    const split = splitDataUrl(source["url"]);
+    if (split !== undefined) {
+      source["type"] = "base64";
+      source["media_type"] = split.mediaType;
+      source["data"] = split.data;
+      delete source["url"];
+    }
+  }
   if (!sourceIsAnthropic) {
     const fileId = rawSource["file_id"];
     // A nested `image_url` (Chat) may itself be a string or `{url}`.
@@ -141,10 +142,10 @@ function normalizeImageBlock(payload: unknown): ClaudeWireObject {
       source["type"] = "file";
       source["file_id"] = fileId;
     } else if (typeof url === "string") {
-      const split = base64FromDataUrl(url);
+      const split = splitDataUrl(url);
       if (split !== undefined) {
         source["type"] = "base64";
-        source["media_type"] = split.media_type;
+        source["media_type"] = split.mediaType;
         source["data"] = split.data;
       } else {
         source["type"] = "url";

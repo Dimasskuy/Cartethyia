@@ -345,7 +345,7 @@ describe("ProviderProbingService discovery hardening", () => {
 
   test("registry exposes discovery capabilities for wired providers", async () => {
     const registry = createDefaultProviderRegistry();
-    for (const providerId of ["openai", "cloudflare", "gemini", "openrouter", "zai"]) {
+    for (const providerId of ["openai", "gemini", "openrouter", "zai"]) {
       expect(await registry.resolveModelDiscovery(providerId)).toBeDefined();
     }
   });

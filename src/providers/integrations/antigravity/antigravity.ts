@@ -80,15 +80,11 @@ const antigravityModel = (
 
 export const ANTIGRAVITY_MODELS: readonly ModelDefinition[] = [
   // Claude via Antigravity (Anthropic-branded SKUs, Gemini wire)
-  antigravityModel("claude-sonnet-4-5", 250_000, 64_000, true),
-  antigravityModel("claude-opus-4-5", 250_000, 64_000, true),
+  antigravityModel("claude-sonnet-4-6", 250_000, 64_000, true),
+  antigravityModel("claude-opus-4-6", 250_000, 64_000, true),
   // Gemini
-  antigravityModel("gemini-2.5-flash", 1_048_576, 65_535, true),
-  antigravityModel("gemini-2.5-flash-lite", 1_048_576, 65_535, true),
-  antigravityModel("gemini-2.5-pro", 1_048_576, 65_536, true),
   antigravityModel("gemini-3-flash", 1_048_576, 65_536, true),
   antigravityModel("gemini-3.1-flash-image", 200_000, 64_000, false),
-  antigravityModel("gemini-3.1-flash-lite", 1_048_576, 65_535, true),
   antigravityModel("gemini-3.1-pro", 1_048_576, 65_535, true),
   antigravityModel("gemini-3.5-flash", 1_048_576, 65_536, true),
   antigravityModel("gemini-3.6-flash", 1_048_576, 65_536, true),
@@ -96,9 +92,6 @@ export const ANTIGRAVITY_MODELS: readonly ModelDefinition[] = [
   antigravityModel("gemini-3.8-flash", 1_048_576, 65_536, true),
   // GPT-OSS
   antigravityModel("gpt-oss-120b", 131_072, 32_768, true),
-  // Tab preview (short-context)
-  antigravityModel("tab_flash_lite_preview", 16_384, 4_096, false),
-  antigravityModel("tab_jump_flash_lite_preview", 16_384, 4_096, false),
 ];
 
 

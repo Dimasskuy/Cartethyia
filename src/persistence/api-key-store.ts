@@ -29,7 +29,6 @@ export interface ApiKeyRecord {
   readonly lifetimeTokenBudget?: number;
   readonly maxConcurrentRequests?: number;
   readonly modelPrefix?: string;
-  readonly providerAllowlist?: readonly string[];
   readonly modelAllowlist?: readonly string[];
   readonly modelDenylist?: readonly string[];
   /** Client-router ids this key refuses; see the schema column for the contract. */
@@ -120,9 +119,6 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
         ? {}
         : { maxConcurrentRequests: row.maxConcurrentRequests }),
       ...(row.modelPrefix === null ? {} : { modelPrefix: row.modelPrefix }),
-      ...(row.providerAllowlist === null
-        ? {}
-        : { providerAllowlist: row.providerAllowlist as string[] }),
       ...(row.modelAllowlist === null ? {} : { modelAllowlist: row.modelAllowlist as string[] }),
       ...(row.modelDenylist === null ? {} : { modelDenylist: row.modelDenylist as string[] }),
       ...(row.clientRouterDenylist === null
@@ -180,7 +176,6 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
       lifetimeTokenBudget: record.lifetimeTokenBudget ?? null,
       maxConcurrentRequests: record.maxConcurrentRequests ?? null,
       modelPrefix: record.modelPrefix ?? null,
-      providerAllowlist: record.providerAllowlist ?? null,
       modelAllowlist: record.modelAllowlist ?? null,
       modelDenylist: record.modelDenylist ?? null,
       clientRouterDenylist: record.clientRouterDenylist ?? null,
@@ -245,9 +240,6 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
             ? { maxConcurrentRequests: patch.maxConcurrentRequests }
             : {}),
           ...(patch.modelPrefix !== undefined ? { modelPrefix: patch.modelPrefix } : {}),
-          ...(patch.providerAllowlist !== undefined
-            ? { providerAllowlist: patch.providerAllowlist }
-            : {}),
           ...(patch.modelAllowlist !== undefined ? { modelAllowlist: patch.modelAllowlist } : {}),
           ...(patch.modelDenylist !== undefined ? { modelDenylist: patch.modelDenylist } : {}),
           ...(patch.clientRouterDenylist !== undefined

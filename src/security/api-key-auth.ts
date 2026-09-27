@@ -19,8 +19,7 @@ export interface ApiKeyAuthorizationSnapshot {
   readonly tenant_id: string;
   /** Admission identity used as key for rolling counters; defaults to api_key_id when absent. */
   readonly admission_identity?: string;
-  /** Null/undefined means unrestricted. Database returns array or Set; normalized to frozen array. */
-  readonly provider_allowlist?: readonly string[] | ReadonlySet<string> | null | undefined;
+  /** Empty or absent means unrestricted; values are normalized to frozen arrays. */
   readonly model_allowlist?: readonly string[] | ReadonlySet<string> | null | undefined;
   readonly model_denylist?: readonly string[] | ReadonlySet<string> | null | undefined;
   /** Client-router ids this key refuses; see `client-router-fingerprint.ts`. */
@@ -45,7 +44,6 @@ function freezeList(
 }
 
 export function freezeSnapshot(s: ApiKeyAuthorizationSnapshot): ApiKeyAuthorizationSnapshot {
-  const provider_allowlist = freezeList(s.provider_allowlist);
   const model_allowlist = freezeList(s.model_allowlist);
   const model_denylist = freezeList(s.model_denylist);
   const client_router_denylist = freezeList(s.client_router_denylist);
@@ -58,7 +56,6 @@ export function freezeSnapshot(s: ApiKeyAuthorizationSnapshot): ApiKeyAuthorizat
     api_key_id,
     tenant_id,
     admission_identity,
-    provider_allowlist,
     model_allowlist,
     model_denylist,
     client_router_denylist,
@@ -77,7 +74,6 @@ export function createAuthorizationSnapshot(input: {
   readonly api_key_id: string;
   readonly tenant_id: string;
   readonly admission_identity?: string;
-  readonly provider_allowlist?: readonly string[] | ReadonlySet<string> | null;
   readonly model_allowlist?: readonly string[] | ReadonlySet<string> | null;
   readonly model_denylist?: readonly string[] | ReadonlySet<string> | null;
   readonly client_router_denylist?: readonly string[] | ReadonlySet<string> | null;
@@ -93,9 +89,6 @@ export function createAuthorizationSnapshot(input: {
   return freezeSnapshot({
     api_key_id: input.api_key_id,
     tenant_id: input.tenant_id,
-    ...(input.provider_allowlist !== undefined && input.provider_allowlist !== null
-      ? { provider_allowlist: input.provider_allowlist as readonly string[] }
-      : {}),
     ...(input.model_allowlist !== undefined && input.model_allowlist !== null
       ? { model_allowlist: input.model_allowlist as readonly string[] }
       : {}),
@@ -190,14 +183,6 @@ export function isModelAllowed(
   return modelRejectionReason(snapshot, targetModel, targetProvider, requestedModel) === null;
 }
 
-export function isProviderAllowed(
-  snapshot: ApiKeyAuthorizationSnapshot,
-  targetProvider: string,
-): boolean {
-  const allowlist = snapshot.provider_allowlist;
-  if (allowlist == null || listSize(allowlist) === 0) return true;
-  return listIncludes(allowlist, targetProvider);
-}
 
 export function getAdmissionIdentity(snapshot: ApiKeyAuthorizationSnapshot): string {
   return snapshot.admission_identity ?? snapshot.api_key_id;
@@ -220,8 +205,16 @@ export function requestToken(headers: Headers | Record<string, string>): string 
   const bearerMatch = /^Bearer\s+(\S+)$/i.exec(authorization);
   const hasAuthorization = authorization.length > 0;
   const hasApiKey = apiKey.length > 0;
-  if (hasAuthorization && hasApiKey)
+  if (hasAuthorization && hasApiKey) {
+    // Both headers carrying the *same* credential is a compatibility idiom, not
+    // an error: an Anthropic-compatible client sends `x-api-key` and
+    // `Authorization: Bearer <same key>` together so a gateway reading either
+    // one works, and rejecting the pair rejects the whole client. Two
+    // *different* credentials stay a conflict — accepting whichever came first
+    // would silently decide the request's identity.
+    if (bearerMatch?.[1] === apiKey) return apiKey;
     throw new GatewayError("invalid_request", 400, "conflicting credential headers");
+  }
   if (hasApiKey) return apiKey;
   const token = bearerMatch?.[1];
   if (token === undefined)
@@ -246,7 +239,6 @@ export async function resolveApiKeyAuthorization(
   const snapshot = createAuthorizationSnapshot({
     api_key_id: row.id,
     tenant_id: row.tenantId,
-    ...(row.providerAllowlist ? { provider_allowlist: row.providerAllowlist as string[] } : {}),
     ...(row.modelAllowlist ? { model_allowlist: row.modelAllowlist as string[] } : {}),
     ...(row.modelDenylist ? { model_denylist: row.modelDenylist as string[] } : {}),
     ...(row.clientRouterDenylist

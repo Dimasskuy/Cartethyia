@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test, vi } from "bun:test";
 import { clearConsoleSettingsCacheForTests } from "../../../src/transport/dispatch/attempt-finalize";
 import {
   handleProviderProxyRequest,
@@ -6,6 +6,10 @@ import {
 } from "../../../src/transport/dispatch/proxy-request";
 import { type PreparedProxyRequest } from "../../../src/transport/request/preparer";
 import { ProxyRequestStateStore } from "../../../src/transport/request/state";
+import {
+  getInFlightCount,
+  resetInFlightForTests,
+} from "../../../src/transport/request/inflight";
 import { GatewayError } from "../../../src/transport/gateway-error";
 import { type CanonicalEvent, type CanonicalRequest } from "../../../src/transport/canonical-model";
 import type { ResolvedApiKey } from "../../../src/security/api-key-auth";
@@ -1202,6 +1206,21 @@ describe("handleProviderProxyRequest — dispatch rewrite", () => {
 });
 
 describe("handleProviderProxyRequest — lifecycle hardening", () => {
+  /**
+   * The stream's release is fired with `void releaseStreamResources()`, so the
+   * decrement lands a few microtasks after the body has been drained. Reading
+   * the gauge straight after `response.text()` races that; yield until it
+   * settles, and fail loudly rather than returning a value that would make the
+   * assertion pass for the wrong reason.
+   */
+  async function settledInFlightCount(): Promise<number> {
+    for (let i = 0; i < 50; i += 1) {
+      if (getInFlightCount() === 0) return 0;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    return getInFlightCount();
+  }
+
   function setup(options: {
     providerId: string;
     wireFamily?: "chat" | "responses" | "messages";
@@ -1212,6 +1231,8 @@ describe("handleProviderProxyRequest — lifecycle hardening", () => {
     onDispatch?: (context: Record<string, unknown>) => void;
     error?: GatewayError;
     midStreamError?: GatewayError;
+    /** Makes the admission store's usage reconciliation reject. */
+    commitUsageThrows?: boolean;
     deps?: Partial<ProviderProxyHandlerDeps>;
   }): {
     request: Request;
@@ -1255,7 +1276,14 @@ describe("handleProviderProxyRequest — lifecycle hardening", () => {
         release: async () => {},
       } as never,
       admissionService: {
-        admit: async () => ({ release: async () => {}, commitUsage: async () => {} }),
+        admit: async () => ({
+          release: async () => {},
+          commitUsage: async () => {
+            // Simulates the admission store failing to reconcile (Redis down):
+            // bookkeeping that rejects *after* the terminal outcome is claimed.
+            if (options.commitUsageThrows) throw new Error("admission store unavailable");
+          },
+        }),
       } as never,
     };
     const stateStore = new ProxyRequestStateStore();
@@ -1313,6 +1341,57 @@ describe("handleProviderProxyRequest — lifecycle hardening", () => {
     };
   }
 
+  test("emits an SSE keepalive while the upstream iterator is silent", async () => {
+    vi.useFakeTimers();
+    let releaseUpstream = () => {};
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const upstreamPause = new Promise<void>((resolve) => {
+        releaseUpstream = resolve;
+      });
+      const adapter: ProviderAdapter = {
+        provider_id: parseProviderId("openai"),
+        dispatch: async function* () {
+          yield {
+            type: "response_start",
+            sequence_number: 1,
+            model: "model-1",
+          } satisfies CanonicalEvent;
+          await upstreamPause;
+          yield terminalUsage(2);
+        },
+      };
+      const { request, deps } = setup({
+        providerId: "openai",
+        accountId: "a1",
+        stream: true,
+        deps: { providerAdapters: new Map([["openai", adapter]]) },
+      });
+      const response = await handleProviderProxyRequest(request, deps);
+      expect(response.status).toBe(200);
+      reader = response.body!.getReader();
+      const activeReader = reader;
+      const decoder = new TextDecoder();
+      const prelude = await activeReader.read();
+      expect(prelude.done).toBe(false);
+      const pendingRead = activeReader.read().then((result) => ({ result }));
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+      const next = await Promise.race([
+        pendingRead,
+        Promise.resolve({ timedOut: true as const }),
+      ]);
+      expect(next).not.toHaveProperty("timedOut");
+      if ("timedOut" in next) return;
+      expect(decoder.decode(next.result.value)).toContain(": keepalive");
+    } finally {
+      releaseUpstream();
+      if (reader !== undefined) await reader.cancel();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    }
+  });
+
   test("non-streaming success carries x-request-id and security headers", async () => {
     const { request, state, deps } = setup({ providerId: "openai", accountId: "a1" });
     const response = await handleProviderProxyRequest(request, deps);
@@ -1356,6 +1435,43 @@ describe("handleProviderProxyRequest — lifecycle hardening", () => {
     expect(body).toContain('"origin":"upstream"');
     expect(body).toContain('"upstreamRequestId":"provider-123"');
     expect(body).toContain("safe provider detail");
+  });
+
+  test("releases the flight when usage reconciliation rejects after a mid-stream failure", async () => {
+    // Regression: the release used to hang off the end of the streaming error
+    // path with no `finally`. `completeAttempt` claims the terminal outcome
+    // (`state.completed`) before it awaits `commitUsage`, so a store failure
+    // unwound past the release — and the root `afterResponse` hooks cannot
+    // rescue a request whose `state.streaming` is set. Measured: the gauge
+    // stayed at 1 for the life of the process.
+    resetInFlightForTests();
+    const { request, deps } = setup({
+      providerId: "openai",
+      accountId: "a1",
+      stream: true,
+      commitUsageThrows: true,
+      midStreamError: new GatewayError("transport_unavailable", 502, "upstream stream failed"),
+    });
+    const response = await handleProviderProxyRequest(request, deps);
+    // Drain the error frame the client is owed, which is what drives the
+    // stream's error path to completion.
+    await response.text();
+    expect(await settledInFlightCount()).toBe(0);
+  });
+
+  test("releases the flight when usage reconciliation rejects on a clean completion", async () => {
+    // The completion path already had a `finally`; this pins that a rejecting
+    // bookkeeping call cannot take it away.
+    resetInFlightForTests();
+    const { request, deps } = setup({
+      providerId: "openai",
+      accountId: "a1",
+      stream: true,
+      commitUsageThrows: true,
+    });
+    const response = await handleProviderProxyRequest(request, deps);
+    await response.text();
+    expect(await settledInFlightCount()).toBe(0);
   });
 
   test("rejects before streaming when the candidate fails on its first event", async () => {

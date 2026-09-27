@@ -8,13 +8,15 @@
 
 import { OpenAICompatibleAdapter } from "../../compatible-adapter";
 import type { ProviderDispatchTarget, ModelDefinition, ProviderAdapter } from "../../provider-registry";
+import type { DiscoveryInput } from "../../discovery/discovery-types";
 import { GatewayError } from "../../../transport/gateway-error";
 import type { CanonicalRequest } from "../../../transport/canonical-model";
 import { providerBaseUrl } from "../../provider-metadata";
 import {
   codebuddyAdapterConfig,
 } from "./codebuddy-shared";
-import { makeBuddyModel, type BuddyRawEntry } from "./buddy-catalog-shared";
+import { BUDDY_SHARED_RAW, makeBuddyModel, type BuddyRawEntry } from "./buddy-catalog-shared";
+import { BUDDY_INTL_MODELS_PATH, fetchBuddyDirectoryModels } from "./buddy-discovery-shared";
 import {
   applyBuddySystemPrompt,
   buddyPrePayloadCommon,
@@ -33,7 +35,27 @@ export const CODEBUDDY_BASE_URL = providerBaseUrl("cb");
 // - upstreamId translation
 // - leading CodeBuddy system prompt + typed user content normalization
 
-const CODEBUDDY_SYSTEM_PROMPT = "You are CodeBuddy Code.";
+/**
+ * Leading system turn for this variant.
+ *
+ * The upstream validates that the wire *opens* with a `system` turn (code
+ * `11128`) but does not check its text — the CN variant installs a plain
+ * engineering-assistant sentence in the same slot and the gateway accepts it.
+ * So this text is a product choice rather than a wire contract, and the
+ * previous vendor-branded line ("You are CodeBuddy Code.") made every request
+ * claim an identity the caller never chose, while also discarding whatever
+ * system prompt the caller actually sent.
+ *
+ * The prompt is therefore a neutral assistant identity with an explicit
+ * persona: pragmatic, direct, and honest — no sycophancy, no hedging, no
+ * invented certainty.
+ */
+export const CODEBUDDY_SYSTEM_PROMPT =
+  "You are a pragmatic and direct software engineering assistant. " +
+  "Be honest and truthful: state what you know, say plainly when you are unsure " +
+  "or do not know, and never claim to have done something you have not done. " +
+  "Prefer concrete answers over filler, and say so when a request is ambiguous " +
+  "instead of guessing silently.";
 
 function codeBuddyIntlPrePayload(
   payload: Record<string, unknown>,
@@ -57,36 +79,29 @@ function codeBuddyIntlPrePayload(
 
 // Model catalog — current CodeBuddy INTL catalog (20 entries)
 
-const CODEBUDDY_INTL_RAW: readonly BuddyRawEntry[] = [
-  ["claude-opus-4.6", "Claude Opus 4.6", true, true, 200_000, 64_000],
-  ["claude-opus-4.7-1m", "Claude Opus 4.7 1M", true, true, 1_000_000, 64_000],
-  ["claude-opus-5", "Claude Opus 5", true, true, 200_000, 64_000],
-  ["deepseek-v4.1-flash", "DeepSeek V4.1 Flash", true, true, 1_000_000, 384_000],
-  ["gemini-2.5-flash-image", "Gemini 2.5 Flash Image", true, true, 1_000_000, 64_000],
-  ["gemini-3.0-pro-image", "Gemini 3.0 Pro Image", true, true, 1_000_000, 64_000],
-  ["gemini-3.1-flash-image", "Gemini 3.1 Flash Image", true, true, 1_000_000, 64_000],
-  ["gemini-3.5-flash", "Gemini 3.5 Flash", true, true, 1_048_576, 65_536],
-  ["glm-5.2", "GLM-5.2", true, true, 200_000, 128_000],
-  ["glm-5.3", "GLM-5.3", true, true, 200_000, 128_000],
-  ["gpt-5.3-codex", "GPT-5.3 Codex", true, true, 400_000, 128_000],
-  ["gpt-5.4", "GPT-5.4", true, true, 400_000, 128_000],
-  ["gpt-5.5", "GPT-5.5", true, true, 400_000, 128_000],
-  ["gpt-5.6-luna", "GPT-5.6 Luna", true, true, 400_000, 128_000],
-  ["gpt-5.6-sol", "GPT-5.6 Sol", true, true, 400_000, 128_000],
-  ["gpt-5.6-terra", "GPT-5.6 Terra", true, true, 400_000, 128_000],
-  ["gpt-6-astra", "GPT-6 Astra", true, true, 400_000, 128_000],
-  ["gpt-image-2", "GPT-Image-2", true, true, 400_000, 128_000],
-  ["hy3", "Hy3", true, false, 1_000_000, 64_000, true],
-  ["hy4-preview", "Hy4 Preview", true, false, 1_000_000, 64_000, true],
-  ["hy4-preview-f", "Hy4 Preview F", true, false, 1_000_000, 64_000, true],
-  ["kimi-k2.5", "Kimi K2.5", true, false, 164_000, 262_144],
-  ["kimi-k2.6", "Kimi K2.6", true, false, 256_000, 262_144],
-  ["kimi-k2.7", "Kimi K2.7", true, false, 256_000, 65_536],
-  ["kimi-k3", "Kimi K3", true, true, 262_144, 262_144],
-  ["minimax-m3", "MiniMax-M3", true, true, 1_000_000, 512_000],
-];
-
+const CODEBUDDY_INTL_RAW: readonly BuddyRawEntry[] = BUDDY_SHARED_RAW;
 export const CODEBUDDY_MODELS: readonly ModelDefinition[] = CODEBUDDY_INTL_RAW.map((entry) => makeBuddyModel(entry, "cb"));
+
+/**
+ * Reads the CodeBuddy intl console directory.
+ *
+ * The static `CODEBUDDY_MODELS` above stays the fallback — this console is
+ * documented to answer 500 intermittently — while discovery carries the
+ * upstream's own limits and capability flags.
+ */
+export async function discoverCodeBuddyModels(
+  input: DiscoveryInput,
+): Promise<readonly ModelDefinition[] | null> {
+  return fetchBuddyDirectoryModels({
+    siteUrl: CODEBUDDY_BASE_URL,
+    providerId: CODEBUDDY_PROVIDER_ID,
+    credential: input.credential,
+    modelsPath: BUDDY_INTL_MODELS_PATH,
+    endpoint: undefined,
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.fetcher ? { fetcher: input.fetcher } : {}),
+  });
+}
 
 // Public factory — uses OpenAI-compatible factory but forces provider semantics
 // Supports both api_key and oauth via Authorization Bearer (factory handles both)

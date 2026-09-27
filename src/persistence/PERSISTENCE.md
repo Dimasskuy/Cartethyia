@@ -18,7 +18,7 @@ src/persistence/
   redis.ts                shared ioredis client + atomic Lua eval guard
   readiness.ts            boot probe (DB + migrations + Redis) with 5s memo
   telemetry-store.ts      event writes, durable usage totals, retention/payload ops
-  share-store.ts          hash-only enrollment links + atomic child-key issuance
+  share-store.ts          enroll/handoff links (hashed lookup + retained ciphertext) + atomic child-key issuance
   tenant-scope.ts         globalOrOwnedBy / ownedByOnly / resolveTenantOverride
   tenant-preferences.ts   console_settings reader + TTL cache + revision counter
   page-cursor.ts          base64url cursor encode/decode with bounded LRU memo
@@ -28,7 +28,7 @@ src/persistence/
 ## Schema groups (`schema.ts`)
 
 - **Identity:** `tenants(id, name, status, created_at)` — root of all FKs.
-- **Catalog:** `providers(id, tenant_id NULL=global, capability_profile GIN,
+- **Catalog:** `providers(id, tenant_id NULL=global, capability_profile,
   base_url/compatibility_profile BYOK-only, enabled, requires_account)`;
   `models(provider_id, model_id, endpoint_path, wire_family, limits,
   modalities, reasoning/tool_call/web_search, cost, source, enabled)` with
@@ -47,9 +47,10 @@ src/persistence/
   `model_combos(tenant, name, members[], strategy)`;
   `provider_routing_settings(provider_id, tenant_id NULL=global, strategy,
   rotate_count, max_inflight, enabled, bypass_proxy, user_agent)` with dual
-  unique indexes (tenant-scoped + partial global). The route User-Agent
-  defaults to Codex for built-in API-key providers; OAuth adapters and
-  custom-provider identity selection remain independent;
+  unique indexes (tenant-scoped + partial global). The route User-Agent defaults to Codex but is
+  attached only to built-in API-key routes whose adapter metadata does not declare a native
+  User-Agent builder; an existing provider or account header remains authoritative. OAuth and
+  custom-provider identity settings remain independent;
   `pool_routing_settings(tenant_id PK, strategy, rotate_count)` — the
   pool-group counterpart (absent row reads as `least_loaded`); `telemetry_events`
   carries `error_origin` (cartethyia/upstream/network) beside `error_category`
@@ -58,8 +59,9 @@ src/persistence/
 - **Inbound keys / sharing:** `api_keys` (personal authentication hashes or
   hashless share templates, child-parent relationship, canonical issued-IP
   identity, encrypted personal-key material, limits and allow/deny lists);
-  `share_links` (SHA-256 `token_hash` only, enroll-only kind, active/expiry/
-  last-viewed metadata; legacy `used_at` stays stored but is not exposed);
+  `share_links` (SHA-256 `token_hash` lookup key plus the retained
+  `token_encrypted`, kind `enroll`|`handoff`, active/expiry/last-viewed
+  metadata; legacy `used_at` stays stored but is not exposed);
   `console_lockouts` (IP-keyed, survives restart, shared across instances).
 - **Ops:** `admin_audit_log` (actor, tenant SET NULL, action, target, detail);
   `console_settings(tenant_id PK, preferences JSONB, updated_at)`;
@@ -127,8 +129,11 @@ ciphertext.
   (`bounded` is an explicit debugging opt-in); rows hold checksummed frame
   references, not bodies (see `observability/OBSERVABILITY.md`).
 - `share-store.ts`: `hashShareToken()` (SHA-256); `DrizzleShareLinkStore` —
-  creates enroll-only links and resolves only active, unexpired links whose
-  parent is an active hashless share template. `issueSharedApiKey()` locks
+  creates `enroll` and `handoff` links and resolves only active, unexpired links
+  whose parent matches the kind: `getApiKeyByShareToken()` resolves an `enroll`
+  link whose parent is an active hashless share template, and
+  `getHandoffByShareToken()` resolves a `handoff` link whose parent is an active
+  personal key. `issueSharedApiKey()` locks
   parent and link before inserting the policy-inheriting child; the database
   unique-IP violation maps to the one-active-child-per-IP conflict.
 - `api-key-store.ts`: list/get/create/update/revoke plus `listChildren()` and

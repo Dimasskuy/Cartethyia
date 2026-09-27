@@ -1,6 +1,8 @@
 import { ValidationError } from "elysia";
 import type { AccessDecision, AccessScope } from "../../security/access-control";
 import { isRecord } from "../../protocol/primitives";
+import { labelGatewayMessage } from "../../transport/gateway-error";
+import type { GatewayErrorOrigin } from "../../transport/gateway-error";
 
 // Single console error/access contract. Every domain throws ConsoleDomainError
 // (or the storage-layer BackupError, same code/status/message shape) and
@@ -49,13 +51,11 @@ export function errorResponse(
   code: string;
   details?: Record<string, unknown>;
 } {
-  const prefix = options.origin === "upstream" ? "Upstream Error:" : "Cartethyia Error:";
+  const origin: GatewayErrorOrigin = options.origin === "upstream" ? "upstream" : "cartethyia";
   const shaped = asDomainError(error);
   if (shaped) {
     set.status = shaped.status;
-    const message = shaped.message.startsWith("Cartethyia Error:") || shaped.message.startsWith("Upstream Error:")
-      ? shaped.message
-      : `${prefix} ${shaped.message}`;
+    const message = labelGatewayMessage(origin, shaped.message);
     const details = isRecord(shaped.details) ? shaped.details : undefined;
     const includeDetails =
       options.detailsPolicy === "always-include"
@@ -72,7 +72,7 @@ export function errorResponse(
   }
   set.status = 500;
   const body: Record<string, unknown> = {
-    error: `${prefix} ${fallbackMessage}`,
+    error: labelGatewayMessage(origin, fallbackMessage),
     code: "internal_error",
   };
   return body as { error: string; code: string; details?: Record<string, unknown> };

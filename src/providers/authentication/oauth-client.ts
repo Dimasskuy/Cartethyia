@@ -66,6 +66,13 @@ export abstract class OAuthClient implements OAuthLoginClient, OAuthTokenRefresh
   abstract readonly supportsDeviceCode: boolean;
   /** Whether the provider supports browser PKCE authorization. */
   abstract readonly supportsBrowserCode: boolean;
+  /**
+   * Loopback/native redirect URI this client's authorization server
+   * allowlists, when it differs from the gateway-wide default. Declared here so
+   * a client can state it without the console route reaching into provider
+   * specifics; see `OAuthLoginClient.browserRedirectUri`.
+   */
+  readonly browserRedirectUri?: string;
 
   protected readonly fetchFn: FetchLike;
 
@@ -107,11 +114,6 @@ export abstract class OAuthClient implements OAuthLoginClient, OAuthTokenRefresh
   // Protected hooks
   // ---------------------------------------------------------------------------
 
-  /** Provider id used to build the OAuth callback URL. Defaults to the provider label lower-cased. */
-  protected providerIdForCallback(): string {
-    return this.providerLabel.toLowerCase();
-  }
-
   /** Extra query parameters appended to the PKCE authorize URL. */
   protected extraAuthorizeParams(): Record<string, string> | undefined {
     return undefined;
@@ -131,10 +133,27 @@ export abstract class OAuthClient implements OAuthLoginClient, OAuthTokenRefresh
     return new Date(Date.now() + Math.max(0, seconds) * 1000);
   }
 
-  /** Parses a standard token response object into a normalized result. */
+  /**
+   * Parses a standard token response object into a normalized result.
+   *
+   * Fails when the response carries no `access_token`. Returning an empty
+   * access value instead let a poll report `complete` with an unusable
+   * credential: the account was persisted and the browser saw success, while
+   * the gateway then dispatched with an empty bearer. A token endpoint that
+   * answers 2xx without a token is a failure, whatever the status code says —
+   * an `error` field in a 200 body is exactly that case. An empty refresh
+   * token is still allowed, because several providers legitimately issue an
+   * access-only credential.
+   */
   protected parseTokenResponse(data: unknown, fallbackRefresh?: string): NormalizedTokenResponse {
     const body = record(data) ?? {};
-    const access = nonEmptyString(body.access_token) ?? "";
+    const access = nonEmptyString(body.access_token);
+    if (access === undefined) {
+      const detail = nonEmptyString(body.error_description) ?? nonEmptyString(body.error);
+      throw new Error(
+        `${this.providerLabel} token response omitted access_token${detail === undefined ? "" : `: ${detail}`}`,
+      );
+    }
     const refresh = nonEmptyString(body.refresh_token) ?? fallbackRefresh ?? "";
     const expiresAt = this.calculateExpiry(body.expires_in);
     const accountLabel = this.extractAccountLabel(data);

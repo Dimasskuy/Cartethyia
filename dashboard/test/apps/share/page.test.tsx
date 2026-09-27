@@ -17,9 +17,8 @@ function render(): string { return renderToStaticMarkup(createElement(SharePage)
 
 const data: ShareEnrollmentData = {
   name: "Team Access", keyPrefix: "ctk", canIssue: true, alreadyIssued: false,
-  dailyLimit: 50_000, monthlyLimit: null, oneTimeLimit: null, requestsPerMinute: 20,
-  maxConcurrentRequests: 3, providerAllowlist: ["openai"], modelAllowlist: ["gpt-5"],
-  modelDenylist: null, modelPrefix: "gpt-", notes: { title: null, subtitle: "Shared access", body: "Use responsibly" },
+  dailyLimit: 50_000, monthlyLimit: null, oneTimeLimit: null, requestsPerMinute: 20, maxConcurrentRequests: 3,
+  modelAllowlist: ["gpt-5"], modelDenylist: null, modelPrefix: "gpt-", notes: { title: null, subtitle: "Shared access", body: "Use responsibly" },
   expiresAt: null,
 };
 

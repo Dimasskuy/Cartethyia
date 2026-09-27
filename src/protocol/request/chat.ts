@@ -11,6 +11,7 @@ import {
 } from "../../transport/translation/thinking";
 import { isClaudeBillingHeaderText, resolveImageSource } from "../primitives";
 import { resolvePromptCacheKey } from "../../providers/operations/session-resolution";
+import { reasoningEffortFromIntent } from "../../providers/reasoning";
 
 /**
  * OpenAI `input_audio.format` accepts only the discrete ids `wav`/`mp3`, never a
@@ -418,10 +419,17 @@ export function canonicalToChatPayload(
   }
   if (request.response_format) payload["response_format"] = chatResponseFormat(request.response_format);
   // OpenAI reasoning effort is a top-level Chat parameter, distinct from the
-  // provider-native `thinking` object the Anthropic wire uses.
-  if (request.reasoning?.effort !== undefined) {
+  // provider-native `thinking` object the Anthropic wire uses. A Messages
+  // client states reasoning as `thinking: {type, budget_tokens}` and never
+  // sets `effort`, so reading `effort` directly dropped the intent entirely
+  // whenever such a request was translated onto this wire — the upstream then
+  // ran with reasoning off even though the caller had asked for it.
+  // `reasoningEffortFromIntent` is the single translation for that shape (it
+  // is what the Codex encoder already uses); deriving it here instead of in
+  // each codec is what keeps a translated request from silently losing it.
+  if (request.reasoning !== undefined) {
     const effort = clampReasoningEffort(
-      request.reasoning.effort,
+      reasoningEffortFromIntent(request.reasoning),
       resolveSupportedReasoningEfforts(request.model, "chat"),
     );
     if (effort !== undefined) payload["reasoning_effort"] = effort;

@@ -169,6 +169,77 @@ export interface ParsedCredentialEntry {
   readonly identity?: string;
 }
 
+/**
+ * Unified browser cookie/session detection:
+ * Detects whether an array of objects represents a set of cookies belonging to a single
+ * session/origin rather than a batch of individual accounts:
+ * - Cookie-Editor flat export: [{ name: "...", value: "...", domain: "..." }, ...]
+ * - SessionBox / Storage Viewer format: [{ domain: "...", cookies: [...] }]
+ */
+function isCookieArrayExport(items: readonly Record<string, unknown>[]): boolean {
+  if (items.length === 0) return false;
+
+  // Pattern 1: SessionBox container export with nested cookies array
+  const hasNestedCookies = items.some(
+    (item) => Array.isArray(item["cookies"]) && (typeof item["domain"] === "string" || typeof item["originalUrl"] === "string"),
+  );
+  if (hasNestedCookies) return true;
+
+  // Pattern 2: Flat cookie export from Cookie-Editor / EditThisCookie
+  // Every item has `name` and `value`, and commonly `domain`, `path`, or `expirationDate`
+  const allAreCookies = items.every(
+    (item) =>
+      typeof item["name"] === "string" &&
+      typeof item["value"] === "string" &&
+      (item["domain"] !== undefined || item["path"] !== undefined || item["expirationDate"] !== undefined),
+  );
+  if (allAreCookies) return true;
+
+  return false;
+}
+
+/**
+ * Extracts identity and OAuth character from a cookie export bundle.
+ */
+function entryFromCookieBundle(
+  rawJsonStr: string,
+  items: readonly Record<string, unknown>[],
+): ParsedCredentialEntry {
+  let identity: string | undefined;
+  let isOAuth = false;
+
+  const inspectCookie = (name: string, val: string) => {
+    const n = name.toLowerCase();
+    if (n === "userid" || n === "uid" || n === "accountid" || n === "cuserid") {
+      if (!identity) identity = val.replace(/^"|"$/g, "").trim();
+    }
+    if (n.includes("token") || n.includes("ph") || n.includes("auth") || n.includes("session")) {
+      isOAuth = true;
+    }
+  };
+
+  for (const item of items) {
+    if (Array.isArray(item["cookies"])) {
+      for (const c of item["cookies"]) {
+        if (c && typeof c === "object") {
+          const rec = c as Record<string, unknown>;
+          if (typeof rec["name"] === "string" && typeof rec["value"] === "string") {
+            inspectCookie(rec["name"], rec["value"]);
+          }
+        }
+      }
+    } else if (typeof item["name"] === "string" && typeof item["value"] === "string") {
+      inspectCookie(item["name"], item["value"]);
+    }
+  }
+
+  return {
+    value: rawJsonStr,
+    kind: isOAuth ? "oauth" : "api_key",
+    ...(identity ? { identity } : {}),
+  };
+}
+
 function entryFromObject(obj: Record<string, unknown>): ParsedCredentialEntry {
   const kind: DetectedCredentialKind = oauthShapeFromObject(obj) ? "oauth" : "api_key";
   const value =
@@ -179,7 +250,8 @@ function entryFromObject(obj: Record<string, unknown>): ParsedCredentialEntry {
 
 /**
  * Splits a pasted blob into one or more credential entries:
- * - a JSON array → one entry per object element
+ * - a unified cookie bundle (Cookie-Editor, SessionBox, EditThisCookie) → exactly ONE entry preserving the whole JSON bundle
+ * - a JSON array of accounts → one entry per account
  * - a single JSON object, or a multi-line `key: value` block → one entry
  * - newline-delimited JSON objects, or newline-delimited plain tokens → one entry per line
  */
@@ -192,7 +264,15 @@ export function parseCredentialBatch(raw: string): ParsedCredentialEntry[] {
     const objects = wholeBlob
       .map((item) => asRecord(item))
       .filter((item): item is Record<string, unknown> => item !== undefined);
-    if (objects.length > 0) return objects.map(entryFromObject);
+
+    if (objects.length > 0) {
+      // Global Unified Check: Is this a single cookie session bundle exported as an array?
+      if (isCookieArrayExport(objects)) {
+        return [entryFromCookieBundle(trimmed, objects)];
+      }
+
+      return objects.map(entryFromObject);
+    }
   } else {
     const obj = asRecord(wholeBlob);
     if (obj) return [entryFromObject(obj)];

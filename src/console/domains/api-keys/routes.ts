@@ -74,7 +74,6 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
         ...(request.lifetimeTokenBudget == null ? {} : { lifetimeTokenBudget: request.lifetimeTokenBudget }),
         ...(request.maxConcurrentRequests == null ? {} : { maxConcurrentRequests: request.maxConcurrentRequests }),
         ...(request.modelPrefix === undefined ? {} : { modelPrefix: request.modelPrefix }),
-        ...(request.providerAllowlist === undefined ? {} : { providerAllowlist: request.providerAllowlist }),
         ...(request.modelAllowlist === undefined ? {} : { modelAllowlist: request.modelAllowlist }),
         ...(request.modelDenylist === undefined ? {} : { modelDenylist: request.modelDenylist }),
         ...(request.clientRouterDenylist === undefined
@@ -178,7 +177,6 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
         ...(patchRequest.lifetimeTokenBudget === undefined ? {} : { lifetimeTokenBudget: patchRequest.lifetimeTokenBudget }),
         ...(patchRequest.maxConcurrentRequests === undefined ? {} : { maxConcurrentRequests: patchRequest.maxConcurrentRequests }),
         ...(patchRequest.modelPrefix === undefined ? {} : { modelPrefix: patchRequest.modelPrefix }),
-        ...(patchRequest.providerAllowlist === undefined ? {} : { providerAllowlist: patchRequest.providerAllowlist }),
         ...(patchRequest.modelAllowlist === undefined ? {} : { modelAllowlist: patchRequest.modelAllowlist }),
         ...(patchRequest.modelDenylist === undefined ? {} : { modelDenylist: patchRequest.modelDenylist }),
         ...(patchRequest.clientRouterDenylist === undefined
@@ -489,7 +487,6 @@ const apiKeyBody = t.Object({
   lifetimeTokenBudget: t.Optional(t.Union([t.Number(), t.Null()])),
   maxConcurrentRequests: t.Optional(t.Union([t.Number(), t.Null()])),
   modelPrefix: t.Optional(t.String()),
-  providerAllowlist: t.Optional(t.Array(t.String())),
   modelAllowlist: t.Optional(t.Array(t.String())),
   modelDenylist: t.Optional(t.Array(t.String())),
   clientRouterDenylist: t.Optional(t.Array(t.String())),

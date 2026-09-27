@@ -195,6 +195,25 @@ describe("bundledModelCatalog", () => {
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toBe("Conflicting endpoint paths for acme-conflict/chat");
   });
+
+  test("allows two models of one wire family to declare different endpoint paths", async () => {
+    const registry = new ProviderRegistry();
+    registry.upsert({
+      provider_id: parseProviderId("acme-multi-ep"),
+      load: async () => ({ provider_id: parseProviderId("acme-multi-ep") }) as never,
+      loadModels: async () => [
+        defineModel({ id: "acme-normal", wireFamily: "chat", endpoint: "/open-apis/bot/chat" }),
+        defineModel({ id: "acme-fast", wireFamily: "chat", endpoint: "/fastchat/open-apis/bot/chat" }),
+      ],
+    });
+
+    const catalog = await bundledModelCatalog(registry);
+    const rows = catalog.modelsByProvider.get("acme-multi-ep") ?? [];
+    expect(rows.map((r) => r.endpointPath).sort()).toEqual([
+      "/fastchat/open-apis/bot/chat",
+      "/open-apis/bot/chat",
+    ]);
+  });
 });
 });
 

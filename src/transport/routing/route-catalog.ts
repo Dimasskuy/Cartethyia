@@ -28,7 +28,7 @@ import {
 } from "./route-model";
 import { DEFAULT_PROXY_BYPASS_PROVIDER_IDS, isBundledProviderId } from "../../providers/provider-registry";
 import type { WireFamily } from "../canonical-model";
-import { providerUsesBespokeWire } from "../../providers/provider-metadata";
+import { providerHasAdapterUserAgent, providerUsesBespokeWire } from "../../providers/provider-metadata";
 
 const CLAUDE_MODEL_FAMILIES = new Set(["opus", "sonnet", "haiku", "fable", "mythos"]);
 
@@ -124,6 +124,16 @@ export function buildCapabilityProfile(row: {
     responseJsonSchema: true,
     promptCaching: true,
   };
+}
+
+/** Resolves route identity only for bundled adapters without a native User-Agent builder. */
+export function resolveRouteUserAgent(
+  providerId: string,
+  tenantUserAgent: string | undefined,
+  globalUserAgent: string | undefined,
+): string | undefined {
+  if (!isBundledProviderId(providerId) || providerHasAdapterUserAgent(providerId)) return undefined;
+  return resolveTenantOverride(tenantUserAgent, globalUserAgent, DEFAULT_PROVIDER_USER_AGENT);
 }
 
 /** One persisted model row ready for candidate construction. */
@@ -362,10 +372,10 @@ class RouteCatalogRepository {
         DEFAULT_PROXY_BYPASS_PROVIDER_IDS.has(providerId),
       );
     }
-    function resolveUserAgent(providerId: string, rowTenantId: string | null): string {
+    function resolveUserAgent(providerId: string, rowTenantId: string | null): string | undefined {
       const tenantSetting = rowTenantId ? providerRouting[rowTenantId]?.[providerId]?.userAgent : undefined;
       const globalSetting = providerRouting.__global__?.[providerId]?.userAgent;
-      return resolveTenantOverride(tenantSetting, globalSetting, DEFAULT_PROVIDER_USER_AGENT);
+      return resolveRouteUserAgent(providerId, tenantSetting, globalSetting);
     }
 
     /** Provider-wide concurrency ceiling shared by every account of the provider.
@@ -505,15 +515,14 @@ class RouteCatalogRepository {
           continue;
         }
         const networkPools = resolveNetworkPools(model.providerId, rowTenantId);
+        const routeUserAgent = resolveUserAgent(model.providerId, rowTenantId);
         const candidate: RouteCandidateWithHealth = {
           provider_id: model.providerId,
           model_id: model.modelId,
           wire_family: model.wireFamily as WireFamily,
           endpoint: model.endpointPath,
           capability_profile: capabilityProfile,
-          ...(isBundledProviderId(model.providerId)
-            ? { user_agent: resolveUserAgent(model.providerId, rowTenantId) }
-            : {}),
+          ...(routeUserAgent === undefined ? {} : { user_agent: routeUserAgent }),
           tenant_id: rowTenantId,
           provider_account_id: account.id,
           ...(account.label ? { provider_account_label: account.label } : {}),

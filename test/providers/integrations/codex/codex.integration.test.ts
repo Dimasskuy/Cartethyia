@@ -737,13 +737,20 @@ describe("codex header parity P0/P1", () => {
       expect(CODEX_MODELS.some((model) => model.modelId === id)).toBe(true);
     }
     const byId = new Map(CODEX_MODELS.map((model) => [model.modelId, model] as const));
-    // The ChatGPT Codex backend caps the 6-generation and gpt-5.5 at 272k.
-    expect(byId.get("gpt-6-astra")).toMatchObject({ contextLimit: 272_000, outputLimit: 128_000 });
-    expect(byId.get("gpt-6-luna")).toMatchObject({ contextLimit: 272_000, outputLimit: 128_000 });
+    // The 6-generation is served in a 272k default window that extends to 922k:
+    // the live registry reports `context_window` 272000 with
+    // `max_context_window` 872000, and OpenAI documents 1.05M total for the
+    // generation (922k input + 128k output), so 922k is the input capacity.
+    // Recording 272k here published a window a third of what the model accepts.
+    expect(byId.get("gpt-6-astra")).toMatchObject({ contextLimit: 922_000, outputLimit: 128_000 });
+    expect(byId.get("gpt-6-luna")).toMatchObject({ contextLimit: 922_000, outputLimit: 128_000 });
+    expect(byId.get("gpt-6-sol")).toMatchObject({ contextLimit: 922_000, outputLimit: 128_000 });
+    // Daybreak rides the 5.6 generation but reports the standard window.
     expect(byId.get("gpt-daybreak-blue-latest")).toMatchObject({
       contextLimit: 272_000,
       outputLimit: 128_000,
     });
+    // gpt-5.5 reports max_context_window 272000 — its window is genuinely capped.
     expect(byId.get("gpt-5.5")).toMatchObject({ contextLimit: 272_000, outputLimit: 128_000 });
     // The 5.6 generation keeps the full 1M window.
     expect(byId.get("gpt-5.6-sol")).toMatchObject({ contextLimit: 1_000_000, outputLimit: 128_000 });

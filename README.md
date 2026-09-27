@@ -20,8 +20,8 @@ Built with Bun, TypeScript, Elysia, PostgreSQL, and optional Redis coordination.
 
 ## Highlights
 
-- **40 bundled provider integrations** — OpenAI, Anthropic, Codex, Gemini, Grok,
-  Cursor, Devin, Mistral, Groq, OpenRouter, Cerebras, NVIDIA, Cloudflare,
+- **45 bundled provider integrations** — OpenAI, Anthropic, Codex, Gemini, Grok,
+  xAI Grok Subscription, Cursor, Devin, Mistral, Groq, OpenRouter, Cerebras, NVIDIA,
   DeepSeek-family gateways, and more, each with its own authentication, wire
   quirks, and identity headers.
 - **Four client protocols, one canonical model** — Chat Completions, Responses,
@@ -59,6 +59,25 @@ property of the connection, not of the route you configure.
 | Messages | `/v1/messages` | Anthropic-native; what Claude Code speaks |
 | Completions | `/v1/completions` | Legacy text completion |
 | Models | `/v1/models` | Read-only catalog listing (`/v1/models/info` for detail) |
+
+### Cursor Editor BYOK
+
+Cursor's current BYOK documentation describes OpenAI keys for standard, non-reasoning chat
+models, while Tab Completion continues to use Cursor's built-in models. If your installed Cursor
+build exposes **Override OpenAI Base URL**, point it at a Cartethyia origin ending in `/v1`, use a
+Cartethyia API key, and select a model ID returned by `GET /v1/models`; the request surface is
+`POST /v1/chat/completions`, not the native Cursor provider wire.
+
+The override is global, not per model: Cursor staff report that it can route Cursor-managed OpenAI
+models through the custom endpoint, and separate per-model base URLs are not currently supported.
+Cursor also says BYOK requests go through its servers for prompt building, so a local-only gateway
+address must not be assumed reachable. Verify the installed client and a real request before
+depending on this configuration. The bundled `cursor` provider is separate: it uses Cursor OAuth
+and Connect+protobuf.
+
+Sources: [Cursor BYOK help](https://cursor.com/help/models-and-usage/api-keys),
+[global override behavior](https://forum.cursor.com/t/does-adding-a-custom-model-override-cursor-s-native-models/157521),
+[per-model endpoint status](https://forum.cursor.com/t/custom-base-urls-for-each-custom-model/147219).
 
 Anything else under `/v1/` is not routed. A path the gateway does not serve
 returns `404` with `{"error":{"code":"not_found"}}` rather than being forwarded
@@ -106,11 +125,11 @@ bun run dev
 The backend listens on `http://localhost:12800` by default. The dashboard is
 served by the same application in production mode.
 
-`bun run dev` runs the stack behind a supervisor proxy on that same port:
-press **CTRL+R** in its terminal to restart backend + dashboard in place —
-client requests arriving during the restart gap are held (added latency, no
-`connection refused`) until the backend is listening again. **CTRL+C** stops
-everything. `bun run dev:stack` runs the raw stack without the supervisor.
+`bun run dev` runs the backend and the Vite dev server side by side under
+`concurrently`: the backend is `bun run --hot src/main.ts` on `PORT` (default
+12800), and the dashboard is on port 5173. There is no supervisor proxy and no
+in-place restart — a client that reaches the backend while it is restarting sees
+`connection refused`. **CTRL+C** stops both processes.
 
 Useful endpoints:
 
@@ -156,8 +175,9 @@ REDIS_URL                    # unless REDIS_MODE=single_instance_local
 The environment drift test keeps literal `process.env.*` reads documented:
 
 Per-tenant runtime settings control request-body capture: `telemetryPayloads`
-defaults to `bounded` (redacted, size-limited, 15-minute TTL) and `none` is the
-kill-switch for new payload rows. The active environment template also exposes
+defaults to `none` (request-body capture off). Setting it to `bounded` opts a
+tenant into redacted, size-limited capture with a 15-minute TTL. The active
+environment template also exposes
 the local `.jsonb` backing-store directory, file-size bound, and retention
 override.
 
@@ -187,8 +207,8 @@ compile that output into `dist/cartethyia`. The binary step reads the AOT output
 rather than `src/main.ts` — the AOT pass rewrites TypeBox into statically wired
 imports, and bundling the raw source instead leaves an unresolvable
 `require("typebox/type")` in the executable. It also bakes `NODE_ENV=production`
-into the artifact, which the binary needs in order to find `<cwd>/migrations`
-and to avoid the development-only pretty-print log transport.
+into the artifact, which the binary needs in order to avoid the development-only
+pretty-print log transport.
 
 ## Tests and coverage
 
@@ -205,8 +225,10 @@ bun run check:coverage
 
 The coverage gate requires at least 90% line coverage for handwritten backend
 `src/` code. DB-gated tests may be skipped when
-`CARTETHYIA_TEST_DATABASE_URL` is not configured; when it is, the suite runs
-against that database and leaves `DATABASE_URL` alone.
+`CARTETHYIA_TEST_DATABASE_URL` is not configured; when it is, the gate repoints
+the test process's `DATABASE_URL` at that database before any pool is opened and
+applies the baseline migration and bundled provider catalog there, so fixtures
+never land in the database your `DATABASE_URL` names.
 
 ## Docker
 
@@ -217,8 +239,20 @@ docker compose down
 ```
 
 The Docker image builds the dashboard and compiled backend, runs as a dedicated
-non-root user, and exposes port `12800`. PostgreSQL must be reachable through
-`DATABASE_URL`; Compose manages Redis only.
+non-root user (uid/gid `10001`), and exposes port `12800`. PostgreSQL must be
+reachable through `DATABASE_URL`; Compose manages Redis only.
+
+If you bind-mount a data directory for telemetry payload capture, the host
+directory's ownership overrides the image's, so create it with the runtime uid
+before starting the container:
+
+```bash
+mkdir -p ./data && sudo chown -R 10001:10001 ./data
+```
+
+Without that the directory is not writable by the runtime user, every payload
+capture fails while the console still shows the switch as On, and the gateway
+logs a single warning naming the directory and this fix.
 
 ### Migrating an existing deployment
 

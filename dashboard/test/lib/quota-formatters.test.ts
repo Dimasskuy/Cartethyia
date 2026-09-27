@@ -4,6 +4,8 @@ import {
   formatResetDistance,
   friendlyQuotaError,
   quotaBarTone,
+  paginateQuotaWindows,
+  QUOTA_WINDOWS_PER_PAGE,
   accountIdentity,
 } from "../../src/lib/quota-formatters";
 
@@ -44,6 +46,37 @@ describe("quota display formatters", () => {
     expect(quotaBarTone(40).bar).toBe("var(--orange)");
     expect(quotaBarTone(80).bar).toBe("var(--green)");
     expect(quotaBarTone(null).bar).toBe("var(--text-tertiary)");
+  });
+
+  test("paginates quota windows in groups of four and clamps page boundaries", () => {
+    const windows = Array.from({ length: 9 }, (_, index) => `Window ${index + 1}`);
+
+    expect(QUOTA_WINDOWS_PER_PAGE).toBe(4);
+    expect(paginateQuotaWindows(windows, 0)).toEqual({
+      items: ["Window 1", "Window 2", "Window 3", "Window 4"],
+      page: 0,
+      pageCount: 3,
+      startIndex: 0,
+    });
+    expect(paginateQuotaWindows(windows, 1)).toEqual({
+      items: ["Window 5", "Window 6", "Window 7", "Window 8"],
+      page: 1,
+      pageCount: 3,
+      startIndex: 4,
+    });
+    expect(paginateQuotaWindows(windows, 99)).toEqual({
+      items: ["Window 9"],
+      page: 2,
+      pageCount: 3,
+      startIndex: 8,
+    });
+    expect(paginateQuotaWindows(windows, -1).page).toBe(0);
+    expect(paginateQuotaWindows([], 1)).toEqual({
+      items: [],
+      page: 0,
+      pageCount: 0,
+      startIndex: 0,
+    });
   });
 
   test("resolves account identity prioritizing email and cleaning tokens", () => {

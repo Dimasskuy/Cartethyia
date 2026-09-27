@@ -481,11 +481,11 @@ describe("agentrouter stream decoding", () => {
     ]);
     const { fetchFn } = captureFetch(() => sseResponse(body));
     const adapter = createAgentRouterAdapter({ fetch: fetchFn });
-    // The shared mapper defaults the status to 502 and classifies 5xx as
-    // `platform_unavailable` (an upstream fault, not a client error).
+    // An overload identifier is more specific than the generic upstream 5xx
+    // bucket, so the client and telemetry see the capacity failure class.
     await expect(
       collect(adapter.dispatch(messagesRequest(), candidate(), context())),
-    ).rejects.toMatchObject({ code: "platform_unavailable", status: 502 });
+    ).rejects.toMatchObject({ code: "capacity_exhausted", status: 529 });
   });
 
   test("maps a non-2xx response through the upstream HTTP mapper", async () => {

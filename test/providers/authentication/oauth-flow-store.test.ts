@@ -181,6 +181,43 @@ describe("oauth-flow-store.test.ts", () => {
       expect(failures).toHaveLength(1);
       expect(successes[0]).toEqual(samplePending);
     });
+
+    // OpenRouter does not echo `state`, so the callback arrives with no
+    // correlation key and the flow has to be found by provider instead.
+    describe("consumePendingByProvider (callbacks that carry no state)", () => {
+      test("finds the in-flight flow for a provider", async () => {
+        const store = new OAuthFlowStore(fakeRedis());
+        await store.savePending("state-or", { ...samplePending, providerId: "openrouter" });
+        const consumed = await store.consumePendingByProvider("openrouter");
+        expect(consumed).toEqual({ ...samplePending, providerId: "openrouter" });
+      });
+
+      test("is single-use: a second lookup finds nothing", async () => {
+        const store = new OAuthFlowStore(fakeRedis());
+        await store.savePending("state-or", { ...samplePending, providerId: "openrouter" });
+        expect(await store.consumePendingByProvider("openrouter")).toBeDefined();
+        expect(await store.consumePendingByProvider("openrouter")).toBeUndefined();
+      });
+
+      test("consuming by state clears the provider pointer too", async () => {
+        const store = new OAuthFlowStore(fakeRedis());
+        await store.savePending("state-or", { ...samplePending, providerId: "openrouter" });
+        expect(await store.consumePending("state-or")).toBeDefined();
+        expect(await store.consumePendingByProvider("openrouter")).toBeUndefined();
+      });
+
+      test("a provider with no login in flight returns undefined", async () => {
+        const store = new OAuthFlowStore(fakeRedis());
+        expect(await store.consumePendingByProvider("openrouter")).toBeUndefined();
+      });
+
+      test("one provider's flow is not found under another provider", async () => {
+        const store = new OAuthFlowStore(fakeRedis());
+        await store.savePending("state-or", { ...samplePending, providerId: "openrouter" });
+        expect(await store.consumePendingByProvider("zcode")).toBeUndefined();
+        expect(await store.consumePendingByProvider("openrouter")).toBeDefined();
+      });
+    });
   });
 
   describe("OAuthFlowStore — device (repeatable)", () => {

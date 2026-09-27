@@ -25,8 +25,7 @@ function incompleteResponseReason(stopReason: CanonicalStopReason | undefined): 
   return undefined;
 }
 
-type OpenOutput = {
-  kind: "text" | "reasoning" | "tool";
+type OpenOutputBase = {
   item: Record<string, unknown>;
   itemId: string;
   outputIndex: number;
@@ -34,13 +33,14 @@ type OpenOutput = {
   callId?: string;
   /** True when the open tool call is a computer-use call (`computer_call`). */
   isComputer?: boolean;
-  /** Streaming text/argument deltas, joined once in closeOpen(). */
+  /** Streaming content or argument deltas, joined once at finalization. */
   chunks: string[];
-  /** Reasoning summary text deltas, joined once at finalize. */
-  summaryChunks: string[];
-  /** True once `response.reasoning_summary_part.added` has been emitted. */
-  summaryPartOpen: boolean;
 };
+
+type OpenOutput =
+  | (OpenOutputBase & { kind: "text" })
+  | (OpenOutputBase & { kind: "reasoning"; summaryParts: Map<number, string[]> })
+  | (OpenOutputBase & { kind: "tool" });
 
 /** Stateful Responses event lifecycle encoder. */
 export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, ResponsesWireEvent> {
@@ -149,6 +149,12 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
     // Materialize streaming deltas once (O(N) join) instead of per-chunk
     // O(N²) string concatenation on the hot path.
     const chunks = open.chunks.join("");
+    const summaryParts =
+      open.kind === "reasoning"
+        ? [...open.summaryParts.entries()].sort(
+            ([leftIndex], [rightIndex]) => leftIndex - rightIndex,
+          )
+        : undefined;
     if (open.kind === "text") {
       const content = Array.isArray(open.item["content"]) ? open.item["content"] : [];
       const textPart = content[0];
@@ -163,10 +169,11 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
       if (open.chunks.length > 0) {
         open.item["content"] = [{ type: "reasoning_text", text: chunks }];
       }
-      if (open.summaryChunks.length > 0) {
-        open.item["summary"] = [
-          { type: "summary_text", text: open.summaryChunks.join("") },
-        ];
+      if (summaryParts !== undefined && summaryParts.length > 0) {
+        open.item["summary"] = summaryParts.map(([, summaryChunks]) => ({
+          type: "summary_text",
+          text: summaryChunks.join(""),
+        }));
       }
     }
     this.outputItems[outputIndex] = { ...open.item };
@@ -201,28 +208,27 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
         }),
       );
     } else if (open.kind === "reasoning") {
-      // Close the reasoning summary part with the same lifecycle the
-      // Responses wire documents: `reasoning_summary_text.done` then
-      // `reasoning_summary_part.done`. A client that keys its reasoning pane
-      // on the part lifecycle never renders a summary that only arrives as
-      // deltas with no added/done pair.
-      if (open.summaryPartOpen) {
-        events.push(
-          this.emit("response.reasoning_summary_text.done", {
-            item_id: open.itemId,
-            output_index: outputIndex,
-            summary_index: 0,
-            text: open.summaryChunks.join(""),
-          }),
-        );
-        events.push(
-          this.emit("response.reasoning_summary_part.done", {
-            item_id: open.itemId,
-            output_index: outputIndex,
-            summary_index: 0,
-            part: { type: "summary_text", text: open.summaryChunks.join("") },
-          }),
-        );
+      // Close each indexed summary part with a matching text and part lifecycle.
+      if (summaryParts !== undefined) {
+        for (const [summaryIndex, summaryChunks] of summaryParts) {
+          const text = summaryChunks.join("");
+          events.push(
+            this.emit("response.reasoning_summary_text.done", {
+              item_id: open.itemId,
+              output_index: outputIndex,
+              summary_index: summaryIndex,
+              text,
+            }),
+          );
+          events.push(
+            this.emit("response.reasoning_summary_part.done", {
+              item_id: open.itemId,
+              output_index: outputIndex,
+              summary_index: summaryIndex,
+              part: { type: "summary_text", text },
+            }),
+          );
+        }
       }
       if (open.chunks.length > 0) {
         events.push(
@@ -266,8 +272,6 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
       outputIndex,
       contentIndex: 0,
       chunks: [],
-      summaryChunks: [],
-      summaryPartOpen: false,
     };
     this.outputItems.push({ ...item });
     events.push(
@@ -309,8 +313,7 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
       outputIndex,
       contentIndex: 0,
       chunks: [],
-      summaryChunks: [],
-      summaryPartOpen: false,
+      summaryParts: new Map(),
     };
     this.outputItems.push({ ...item });
     events.push(
@@ -320,20 +323,20 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
   }
 
   /**
-   * Open the single reasoning summary part the first time summary text
-   * arrives. The Responses wire opens a summary with
-   * `response.reasoning_summary_part.added` — not `response.content_part.added`,
-   * which belongs to message items — so a client that renders the reasoning
-   * pane off the part lifecycle sees the summary as it streams.
+   * Open a summary part the first time a particular summary index arrives.
+   * The Responses wire uses a dedicated part lifecycle for each index.
    */
-  private openReasoningSummaryPart(open: OpenOutput): ResponsesWireEvent[] {
-    if (open.summaryPartOpen) return [];
-    open.summaryPartOpen = true;
+  private openReasoningSummaryPart(
+    open: OpenOutput & { kind: "reasoning" },
+    summaryIndex: number,
+  ): ResponsesWireEvent[] {
+    if (open.summaryParts.has(summaryIndex)) return [];
+    open.summaryParts.set(summaryIndex, []);
     return [
       this.emit("response.reasoning_summary_part.added", {
         item_id: open.itemId,
         output_index: open.outputIndex,
-        summary_index: 0,
+        summary_index: summaryIndex,
         part: { type: "summary_text", text: "" },
       }),
     ];
@@ -374,8 +377,6 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
       callId,
       isComputer,
       chunks: [],
-      summaryChunks: [],
-      summaryPartOpen: false,
     };
     this.outputItems.push({ ...item });
     events.push(
@@ -411,19 +412,22 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
     if (content.kind === "reasoning") {
       const events = this.openReasoning(content);
       const summaryIndex = content.summary_index ?? 0;
-      if (content.summary !== undefined && this.open !== undefined) {
-        // Open the summary part before its first delta, matching the wire
-        // lifecycle (`part.added` then `summary_text.delta`).
-        events.push(...this.openReasoningSummaryPart(this.open));
+      if (content.summary !== undefined && this.open?.kind === "reasoning") {
+        const open = this.open;
+        // Open the matching summary part before its first delta.
+        events.push(...this.openReasoningSummaryPart(open, summaryIndex));
         events.push(
           this.emit("response.reasoning_summary_text.delta", {
-            item_id: this.open.itemId,
-            output_index: this.open.outputIndex,
+            item_id: open.itemId,
+            output_index: open.outputIndex,
             summary_index: summaryIndex,
             delta: content.summary,
           }),
         );
-        this.open.summaryChunks.push(content.summary);
+        const summaryChunks = open.summaryParts.get(summaryIndex);
+        if (summaryChunks === undefined)
+          throw new Error("reasoning summary state missing after opening its part");
+        summaryChunks.push(content.summary);
       }
       if (content.encrypted_content !== undefined)
         events.push(

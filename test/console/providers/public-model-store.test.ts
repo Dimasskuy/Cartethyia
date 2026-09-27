@@ -32,7 +32,6 @@ dbDescribe("PublicModelCatalogStore — alias shadowing", () => {
     return {
       api_key_id: randomUUID(),
       tenant_id: tenantId,
-      provider_allowlist: [],
       model_allowlist: [modelName],
       model_denylist: null,
       ...overrides,
@@ -175,7 +174,6 @@ dbDescribe("PublicModelCatalogStore — alias/combo metadata", () => {
     const listed = await store.listPublicModels(tenantId, {
       api_key_id: randomUUID(),
       tenant_id: tenantId,
-      provider_allowlist: [],
       model_allowlist: [aliasName],
       model_denylist: null,
     });
@@ -196,7 +194,6 @@ dbDescribe("PublicModelCatalogStore — alias/combo metadata", () => {
     const listed = await store.listPublicModels(tenantId, {
       api_key_id: randomUUID(),
       tenant_id: tenantId,
-      provider_allowlist: [],
       model_allowlist: [poolName],
       model_denylist: null,
     });

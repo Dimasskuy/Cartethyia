@@ -73,15 +73,12 @@ export async function buildAOT(
 ): Promise<void> {
   // Bun bakes `process.env.NODE_ENV` into the output as a literal, so the value
   // substituted here is the value every consumer of `dist/main.js` sees forever
-  // after. Two things depend on it being `production`:
-  //   - `resolveMigrationsFolder()` reads `<cwd>/migrations` only in production;
-  //     otherwise it resolves relative to `import.meta.dir`, which inside a
-  //     standalone executable is Bun's virtual `/~BUN` root and can never hold
-  //     the migrations, so the binary fails to boot.
-  //   - the logger attaches the `pino-pretty` transport only in development.
-  //     That transport spawns a worker thread that loads `real-require`, which
-  //     is not present in a standalone executable, so a development build
-  //     bundles a logger that crashes on first use.
+  // after. `production` is required so the logger does not attach the
+  // `pino-pretty` transport: that transport spawns a worker thread which loads
+  // `real-require`, not present in a standalone executable, so a development
+  // build bundles a logger that crashes on first use. The migrations folder is
+  // not part of this decision — `resolveMigrationsFolder()` resolves
+  // `<cwd>/migrations` unconditionally and fails loudly when it is missing.
   //
   // Substituted through `define` rather than by assigning `process.env`, because
   // this module is imported by tests that run in the same process as everything

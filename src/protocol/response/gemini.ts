@@ -10,6 +10,11 @@
  */
 import type { CanonicalStopReason } from "../../transport/canonical-model";
 import { GatewayError } from "../../transport/gateway-error";
+import {
+  classifyUpstreamError,
+  extractUpstreamMessage,
+  upstreamErrorIdentifier,
+} from "../../transport/failure-policy";
 import { isRecord } from "../primitives";
 
 function nullableNumber(value: unknown): number | null {
@@ -111,14 +116,39 @@ export function decodeGeminiStreamEvent(
     );
   }
   if (!isRecord(parsed)) return undefined;
-  if (isRecord(parsed["error"])) {
-    const err = parsed["error"] as Record<string, unknown>;
+  if (parsed["error"] !== undefined && parsed["error"] !== null) {
+    const errorBody = isRecord(parsed["error"]) ? parsed["error"] : parsed;
+    const identifier =
+      upstreamErrorIdentifier(errorBody) ?? upstreamErrorIdentifier(parsed);
+    const providerStatus = [
+      errorBody["status"],
+      errorBody["statusCode"],
+      errorBody["code"],
+    ].find(
+      (value): value is number =>
+        typeof value === "number" &&
+        Number.isFinite(value) &&
+        value >= 400 &&
+        value < 600,
+    );
+    const classification = classifyUpstreamError(providerStatus, identifier);
+    const message =
+      extractUpstreamMessage(errorBody) ||
+      extractUpstreamMessage(parsed) ||
+      errorLabel;
     throw new GatewayError(
-      "platform_unavailable",
-      502,
-      typeof err["message"] === "string" ? (err["message"] as string).slice(0, 500) : errorLabel,
-      {},
-      "upstream",
+      classification.code,
+      classification.status,
+      message.slice(0, 500),
+      {
+        ...(providerStatus === undefined ? {} : { providerStatus }),
+        ...(identifier ? { providerCode: identifier } : {}),
+        ...(classification.credentialEvidence ? { credentialEvidence: true } : {}),
+        ...(classification.rateLimitScope
+          ? { rateLimitScope: classification.rateLimitScope }
+          : {}),
+      },
+      classification.origin,
     );
   }
   return parsed;

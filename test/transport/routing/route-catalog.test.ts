@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { createDatabaseSnapshotBuilder } from "../../../src/transport/routing/route-catalog";
+import { createDatabaseSnapshotBuilder, resolveRouteUserAgent } from "../../../src/transport/routing/route-catalog";
+import { DEFAULT_PROVIDER_USER_AGENT } from "../../../src/transport/routing/route-model";
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { getDb, type CartethyiaDatabase } from "../../../src/persistence/postgres";
@@ -16,6 +17,34 @@ import {
   poolRoutingSettings,
   cliToolMappings,
 } from "../../../src/persistence/schema";
+
+
+test("route User-Agent is limited to bundled providers without adapter identities", () => {
+  const providersWithAdapterUserAgents = [
+    "agentrouter",
+    "antigravity",
+    "cb",
+    "cbcn",
+    "claude",
+    "cline",
+    "codex",
+    "devin",
+    "github",
+    "grok",
+    "inferhub",
+    "opencodeft",
+    "opencodezen",
+    "qoder",
+    "workbuddy",
+  ];
+  for (const providerId of providersWithAdapterUserAgents) {
+    expect(resolveRouteUserAgent(providerId, "tenant-agent", "global-agent")).toBeUndefined();
+  }
+  expect(resolveRouteUserAgent("openai", undefined, undefined)).toBe(DEFAULT_PROVIDER_USER_AGENT);
+  expect(resolveRouteUserAgent("openai", "tenant-agent", "global-agent")).toBe("tenant-agent");
+  expect(resolveRouteUserAgent("opencodego", undefined, undefined)).toBe(DEFAULT_PROVIDER_USER_AGENT);
+  expect(resolveRouteUserAgent("custom-qoder", "tenant-agent", "global-agent")).toBeUndefined();
+});
 
 dbDescribe("createDatabaseSnapshotBuilder — model aliases/combos", () => {
   let db: CartethyiaDatabase;

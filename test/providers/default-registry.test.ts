@@ -39,7 +39,31 @@ describe("default provider composition", () => {
     expect(await registry.resolveQuotaCollector("codex")).toBeDefined();
     expect(await registry.resolveQuotaCollector("openai")).toBeUndefined();
     expect(await registry.resolveModelDiscovery("openai")).toBeDefined();
+    // deepseek serves a standard `/v1/models`, so it carries a discovery loader
+    // even though its adapter is one of the shared zero-hook specs.
+    expect(await registry.resolveModelDiscovery("deepseek")).toBeDefined();
     expect(registry.modelDiscoveryRequiresCredential("opencodeft")).toBe(false);
     expect(registry.modelDiscoveryRequiresCredential("openai")).toBe(true);
+  });
+
+  /**
+   * A provider's token refresher is what the 401 retry and the proactive sweep
+   * call. Registering one where no refresh grant exists makes a recoverable
+   * auth failure permanent (the retry calls a method that always throws);
+   * omitting one where a grant exists leaves a short-lived token to expire
+   * silently. Both directions are pinned here, at the layer that decides.
+   */
+  test("every OAuth provider registers a refresher exactly when it has a refresh grant", async () => {
+    const registry = createDefaultProviderRegistry();
+    // Short-lived access tokens re-minted from a durable grant.
+    for (const id of ["claude", "codex", "grok", "cursor", "antigravity", "muse", "kimi", "cline", "cb", "cbcn", "workbuddy", "github"]) {
+      expect(await registry.resolveRefresher(id)).toBeDefined();
+    }
+    // The sign-in ends in a durable credential with no refresh grant: Kilo Code
+    // (no token lifetime), OpenRouter (a durable API key), Zcode (a minted
+    // Z.AI key, `refresh "none"`), and Devin.
+    for (const id of ["kilo", "openrouter", "zcode", "devin"]) {
+      expect(await registry.resolveRefresher(id)).toBeUndefined();
+    }
   });
 });

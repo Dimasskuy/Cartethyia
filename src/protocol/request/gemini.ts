@@ -4,8 +4,7 @@
  * schema-sanitization helpers shared with the Antigravity adapter.
  */
 import type { CanonicalRequest } from "../../transport/canonical-model";
-import { isRecord } from "../primitives";
-import { isClaudeBillingHeaderText } from "../primitives";
+import { isClaudeBillingHeaderText, isRecord, resolveImageSource, splitDataUrl } from "../primitives";
 import { geminiThinkingOutputFloor } from "../../providers/reasoning";
 
 export function geminiModelUrl(base: string, model: string, action: string): string {
@@ -76,6 +75,57 @@ function sanitizeGeminiSchema(value: unknown): Record<string, unknown> {
   return schema;
 }
 
+/**
+ * Encodes a canonical non-image attachment (`file` / `document`) onto the
+ * Gemini wire.
+ *
+ * Gemini takes attachment bytes as `inlineData` (`Blob`) and a reference as
+ * `fileData` (`FileData`), so the transport is read from the part instead of
+ * guessed:
+ * - a Files API id names a file in the *originating* provider's store and has
+ *   no Gemini equivalent, so it degrades to a text reference rather than a
+ *   `fileUri` this upstream cannot resolve;
+ * - a `data:` URL carries its own bytes and is split into `inlineData`;
+ * - any other URL stays a reference;
+ * - inline `data` is base64 bytes under the part's declared media type.
+ */
+function geminiMediaPart(part: {
+  readonly data: unknown;
+  readonly media_type: string;
+  readonly file_id?: string | undefined;
+  readonly url?: string | undefined;
+  readonly source_type?: string | undefined;
+}): Record<string, unknown>[] {
+  // An Anthropic `text` document source is prose, and Gemini has no document
+  // wrapper for prose: it belongs in a plain text part.
+  if (part.source_type === "text" && typeof part.data === "string") {
+    return [{ text: part.data }];
+  }
+  // No `source_type === "url"` arm: it would be both redundant and wrong. The
+  // surface parsers always set `url` alongside that discriminator, so the
+  // reference guard below already covers it — and short-circuiting here would
+  // hand a `data:` URI straight to `fileData.fileUri`, the very bug this
+  // projection exists to prevent.
+  if (part.file_id !== undefined) {
+    return [{ text: `[file: ${part.file_id}]` }];
+  }
+  const candidate = typeof part.data === "string" && part.data.length > 0 ? part.data : part.url;
+  if (candidate === undefined) return [{ text: "[file: unsupported source]" }];
+  const split = splitDataUrl(candidate);
+  if (split !== undefined) {
+    return [{ inlineData: { mimeType: split.mediaType, data: split.data } }];
+  }
+  // A part carrying no bytes holds its URL in `data` (see the surface parsers),
+  // so a declared `url` source — or any `http(s)` value — is a reference. The
+  // media type is omitted here: `file` parts default it to
+  // `application/octet-stream` when the origin declared none, and forwarding
+  // that guess as a content type would mislabel the file to the upstream.
+  if (part.url !== undefined || /^https?:\/\//i.test(candidate)) {
+    return [{ fileData: { fileUri: candidate } }];
+  }
+  return [{ inlineData: { mimeType: part.media_type, data: candidate } }];
+}
+
 function toGeminiPart(
   part: CanonicalRequest["messages"][number]["content"][number],
   toolNames: ReadonlyMap<string, string>,
@@ -86,23 +136,63 @@ function toGeminiPart(
     return [{ text: summary, thought: true, ...(part.signature ? { thoughtSignature: part.signature } : {}) }];
   }
   if (part.kind === "image") {
-    // Canonical image payload may be {url} or {source:{data,media_type}} or inlineData shape. Try to extract data uri.
-    const payload = part.payload as Record<string, unknown>;
-    if (payload && typeof payload["url"] === "string") {
-      const url = payload["url"] as string;
-      if (url.startsWith("data:")) {
-        const m = /^data:([^;,]+);base64,(.*)$/.exec(url);
-        if (m) return [{ inlineData: { mimeType: m[1], data: m[2] } }];
+    // Resolution goes through the shared `resolveImageSource` primitive rather
+    // than a local re-implementation: a Chat/Responses-origin payload is an
+    // opaque object this encoder must project, and every arm it failed to
+    // recognise here degraded to a text placeholder while the request still
+    // succeeded — the attachment was simply lost.
+    const source = resolveImageSource(part.payload);
+    if (source === undefined) return [{ text: "[image: unsupported source]" }];
+    if (source.url !== undefined) {
+      const split = splitDataUrl(source.url);
+      // Bytes inline: Gemini carries them as `inlineData`. The media type comes
+      // from the data URL itself, because that is the caller's own declaration.
+      if (split !== undefined) {
+        return [{ inlineData: { mimeType: split.mediaType, data: split.data } }];
       }
-      return [{ fileData: { fileUri: url, mimeType: "image/png" } }];
+      // A URL is a reference, so it stays a reference. `mimeType` is omitted
+      // rather than guessed: the origin declared no media type, and a
+      // hardcoded `image/png` would mislabel a JPEG as a wire lie the upstream
+      // has no way to detect. Gemini's `FileData.mimeType` is optional.
+      return [{ fileData: { fileUri: source.url } }];
     }
-    if (payload && payload["source"] && typeof payload["source"] === "object") {
-      const src = payload["source"] as Record<string, unknown>;
-      if (src["type"] === "base64" && typeof src["data"] === "string") return [{ inlineData: { mimeType: (src["media_type"] as string) ?? "image/png", data: src["data"] as string } }];
-      if (src["type"] === "url" && typeof src["url"] === "string") return [{ fileData: { fileUri: src["url"] as string, mimeType: (src["media_type"] as string) ?? "image/png" } }];
+    if (source.fileId !== undefined) {
+      // A Files API id names a file in the *originating* provider's store; it
+      // is not a Gemini file URI and cannot be fetched by this upstream. Naming
+      // it keeps the attachment visible to the model instead of dropping it.
+      return [{ text: `[image: ${source.fileId}]` }];
     }
-    // fallback inlineData with placeholder
-    return [{ text: "[image]" }];
+    // Fail-closed, and deliberately kept. `resolveImageSource` documents that a
+    // defined result carries a URL or a file id, so no input reaches this arm
+    // today — a mutation that replaces it with a bare `[image]` placeholder
+    // fails no test, which is how that was confirmed. It stays because the
+    // resolver's type permits a result carrying neither, and the alternative to
+    // a visible placeholder is an undefined part in `parts` that the provider
+    // rejects, taking the caller's text with it. Do not delete this as dead
+    // code: deleting it moves the failure from "attachment named" to
+    // "request rejected".
+    return [{ text: "[image: unsupported source]" }];
+  }
+  if (part.kind === "file" || part.kind === "document") {
+    // Gemini accepts non-image payloads as inline bytes (`application/pdf`,
+    // `audio/*`, `text/*`) or as a file URI. There was no arm for either kind,
+    // so a document the capability layer had already granted this route was
+    // dropped here without an error.
+    return geminiMediaPart(part);
+  }
+  if (part.kind === "audio") {
+    if (typeof part.data !== "string" || part.data.length === 0) {
+      return [{ text: "[audio: unsupported source]" }];
+    }
+    const split = splitDataUrl(part.data);
+    return [
+      {
+        inlineData: {
+          mimeType: split?.mediaType ?? part.media_type,
+          data: split?.data ?? part.data,
+        },
+      },
+    ];
   }
   if (part.kind === "toolCall") {
     const args = typeof part.arguments === "string" ? parseJsonObject(part.arguments) : ((part.arguments as Record<string, unknown> | null) ?? {});

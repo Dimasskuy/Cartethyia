@@ -75,6 +75,26 @@ describe("SQL migration integrity", () => {
     expect(migration).not.toContain('CREATE TABLE "backup_status"');
   });
 
+  test("provider allowlist is absent from the baseline and dropped on upgrade", async () => {
+    const baseline = await readFile(resolve(migrationsDir, "0000_baseline.sql"), "utf8");
+    const migration = await readFile(
+      resolve(migrationsDir, "0005_remove_api_key_provider_allowlist.sql"),
+      "utf8",
+    );
+    expect(baseline).not.toContain('"provider_allowlist"');
+    expect(migration).toContain('DROP COLUMN IF EXISTS "provider_allowlist"');
+  });
+
+  test("existing share-link checks allow personal handoff links", async () => {
+    const migration = await readFile(
+      resolve(migrationsDir, "0006_allow_personal_handoff_links.sql"),
+      "utf8",
+    );
+    expect(migration).toContain('DROP CONSTRAINT IF EXISTS "share_links_kind_check"');
+    expect(migration).toContain('ADD CONSTRAINT "share_links_kind_check"');
+    expect(migration).toContain("CHECK (\"kind\" IN ('enroll', 'handoff'))");
+  });
+
   test("the wire_family enum carries no retired `native` label", async () => {
     // `native` was never a protocol: it marked a row served by a bespoke
     // adapter (Cursor, Devin) that frames its own wire. Sitting in the same

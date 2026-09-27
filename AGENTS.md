@@ -418,7 +418,10 @@ result. "The tests pass" means you ran them this turn.
 
 ## 10. Repository boundaries
 
-- `src/` contains production backend code only. Tests belong under `test/`.
+- `src/` contains production backend code only. Backend tests belong under
+  `test/`. The one exception is a script's own co-located suite
+  (`scripts/<name>.test.ts`), which imports its sibling module directly; those
+  run with the rest of the suite and are not mirrored under `test/`.
 - `dashboard/src/` contains production browser code only. Dashboard tests
   belong under `dashboard/test/`, mirroring `dashboard/src/` one-for-one, with
   shared scaffolding in `dashboard/test/helpers/`; `dashboard/tsconfig.json`
@@ -442,8 +445,14 @@ result. "The tests pass" means you ran them this turn.
 
 ## 11. TypeScript and implementation rules
 
-The project uses strict TypeScript, exact optional properties, unchecked-index
-safety, isolated modules, verbatim module syntax, and unused-local checks.
+The backend workspace (`tsconfig.json`, covering `src/`, `test/`, `scripts/`)
+uses strict TypeScript, exact optional properties, unchecked-index safety,
+isolated modules, verbatim module syntax, and unused-local checks. The browser
+workspace (`dashboard/tsconfig.json`) does not extend the root config and sets
+its own subset: strict, unchecked index safety, isolated modules, and unused
+locals and parameters. It does not enable `exactOptionalPropertyTypes` or
+`verbatimModuleSyntax`, so a rule that depends on either applies to the backend
+only.
 
 - Use `import type` for type-only imports.
 - Prefer `unknown` plus explicit narrowing at external boundaries.
@@ -534,8 +543,9 @@ Documentation is part of the same change.
   `src/providers/PROVIDERS.md`) so no two docs share a basename and neither
   editor tabs nor search results are ambiguous. Subfolders do not carry a doc
   of their own; fold their behavior into the parent folder's doc so a subtree
-  never has two competing sources. Only the repo-root `README.md` and
-  `dashboard/README.md` keep the `README.md` name.
+  never has two competing sources. Only a directory with no layer doc of its
+  own keeps the `README.md` name — today the repo root, `dashboard/`, and
+  `migrations/`.
 - `CONTRIBUTING.md` describes human setup and contribution workflow.
 - `.skills/cartethyia-engineering` is the single development/debugging/guard/
   self-improvement skill. Read its relevant reference

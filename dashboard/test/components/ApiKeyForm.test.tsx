@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiKeyForm, keyCredentialFields, oneTimeSecretForMode } from "../../src/components/ApiKeyForm";
-import type { ApiKeyResponse } from "../../src/lib/contracts";
+import { CLIENT_ROUTER_IDS, TENANT_KEY_SCOPES, type ApiKeyResponse } from "../../src/lib/contracts";
 
 const shareRecord: ApiKeyResponse = {
   id: "parent-id", label: "Team share", keyMode: "share", scopes: [], createdAt: "2026-09-01T00:00:00.000Z", tokensConsumed: 0,
@@ -51,5 +51,22 @@ describe("API key mode form", () => {
     expect(oneTimeSecretForMode("personal", "rk_once")).toBe("rk_once");
     expect(oneTimeSecretForMode("share", "must-not-show")).toBeNull();
     expect(oneTimeSecretForMode("personal", undefined)).toBeNull();
+  });
+  test("renders descriptive router and scope switches without provider allowlist", () => {
+    const markup = render("create", null);
+    expect(markup).toContain("Blocked client routers");
+    expect(markup).toContain("Matching fingerprints are rejected with 403 before routing.");
+    expect(markup).toContain("clients without a fingerprint are not matched.");
+    for (const routerId of CLIENT_ROUTER_IDS) {
+      expect(markup).toContain(`aria-label="Block client router ${routerId}"`);
+    }
+    expect(markup).toContain("Routing");
+    expect(markup).toContain("Dashboard / Resources");
+    for (const scope of TENANT_KEY_SCOPES) {
+      expect(markup).toContain(`aria-label="Grant ${scope}"`);
+    }
+    expect(markup).toContain("Call /v1/* gateway routes within this tenant.");
+    expect(markup).not.toContain("providerAllowlist");
+    expect(markup).not.toContain("Provider allowlist");
   });
 });

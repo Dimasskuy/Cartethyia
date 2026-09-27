@@ -9,7 +9,7 @@ import type { CartethyiaDatabase } from "../../persistence/postgres";
 import { models, providers } from "../../persistence/schema";
 import { canonicalClientIpKey } from "../../security/ip-boundary";
 import { decryptCredentialToString } from "../../security/crypto";
-import { isModelAllowed, isProviderAllowed, type ApiKeyAuthorizationSnapshot } from "../../security/api-key-auth";
+import { isModelAllowed, type ApiKeyAuthorizationSnapshot } from "../../security/api-key-auth";
 import { API_CONTENT_SECURITY_POLICY, X_FRAME_OPTIONS } from "../../security/outbound-headers";
 import { generateApiKeySecret } from "../domains/api-keys/contracts";
 import {
@@ -66,7 +66,6 @@ async function modelsForShare(db: CartethyiaDatabase, row: ShareApiKeyRow): Prom
   const snapshot: ApiKeyAuthorizationSnapshot = {
     api_key_id: row.id,
     tenant_id: row.tenantId,
-    provider_allowlist: row.providerAllowlist,
     model_allowlist: row.modelAllowlist,
     model_denylist: row.modelDenylist,
   };
@@ -77,7 +76,6 @@ async function modelsForShare(db: CartethyiaDatabase, row: ShareApiKeyRow): Prom
         const providerId = providerOf(slug);
         const modelId = providerId === "" ? slug : slug.slice(providerId.length + 1);
         return (
-          isProviderAllowed(snapshot, providerId) &&
           isModelAllowed(snapshot, modelId, providerId || undefined, slug) &&
           modelPrefixAllows(row.modelPrefix, providerId, modelId)
         );
@@ -92,7 +90,6 @@ async function modelsForShare(db: CartethyiaDatabase, row: ShareApiKeyRow): Prom
     .where(and(eq(models.enabled, true), eq(providers.enabled, true), providerScope));
   const slugs = new Set<string>();
   for (const entry of rows) {
-    if (!isProviderAllowed(snapshot, entry.providerId)) continue;
     const slug = `${entry.providerId}/${entry.modelId}`;
     if (!isModelAllowed(snapshot, entry.modelId, entry.providerId, slug)) continue;
     if (!modelPrefixAllows(row.modelPrefix, entry.providerId, entry.modelId)) continue;
@@ -173,7 +170,6 @@ export function createShareRouter(options: ShareRouterOptions): Elysia {
         oneTimeLimit: row.lifetimeTokenBudget,
         requestsPerMinute: row.requestsPerMinute,
         maxConcurrentRequests: row.maxConcurrentRequests,
-        providerAllowlist: row.providerAllowlist,
         modelPrefix: row.modelPrefix,
         modelAllowlist,
         modelDenylist: row.modelDenylist,

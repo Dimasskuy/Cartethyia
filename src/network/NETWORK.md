@@ -141,12 +141,13 @@ empty case returns an empty list without issuing a command Redis would reject (`
 least one key). `pool-health-machine.ts` records pool-origin tunnel
 failures and successful pooled requests: a pool that cannot carry traffic enters `cooldown`, with a
 recovery deadline from `CARTETHYIA_POOL_COOLDOWN_MS` (default two minutes), and are excluded from new
-route snapshots. Three consecutive faults are labeled `cooldown`; successful requests recover these
-states immediately, while the 30-second health sweep recovers expired faults. A request through a pool
-that receives HTTP 402 or 407 marks the proxy reachable but unusable, disables it from routing, records
-the status in `health_events`, and invalidates the route snapshot; only an operator can re-enable it.
-These proxy responses do not count as provider-account failures. Disabled pools are never
-auto-recovered. `subscribePoolHealth` feeds status transitions to the console pool SSE stream.
+route snapshots. The first failed probe parks the pool; successful requests recover it immediately,
+A proxy-origin HTTP 402 or 407 marks the proxy reachable but unusable, disables it from routing,
+records the status in `health_events`, and invalidates the route snapshot; only an operator can
+re-enable it. Dispatch checks the error origin first, so an upstream provider's 402 quota response
+does not disable the proxy pool. These proxy responses do not count as provider-account failures.
+Disabled pools are never auto-recovered. `subscribePoolHealth` feeds status transitions to the
+console pool SSE stream.
 
 ## Supporting modules
 

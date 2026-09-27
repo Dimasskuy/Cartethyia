@@ -28,8 +28,10 @@ Production serves the built files from `dist/dashboard`.
   imported by `src/` (`test/helpers/test-helpers.ts`).
 - `test/route-modules.test.ts` owns the render-level route contracts; the
   JSX-free backend-boundary contracts stay in the root `test/frontend/` tree.
-- `bun run test` runs `bun test test`; `tsconfig.json` includes `test` so
-  `bun run typecheck` checks the suite as well as the app.
+- `bun run dashboard:test` runs `bun test test` inside the dashboard workspace;
+  `tsconfig.json` includes `test` so `bun run dashboard:typecheck` checks the
+  suite as well as the app. The root `bun run test` is the backend suite and does
+  not run these.
 
 ## Route map
 

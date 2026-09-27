@@ -5,7 +5,6 @@
  */
 import { postFormTokenRequest } from "../../authentication/oauth-flow-store";
 import { readJsonResponse } from "../../authentication/oauth-flow-store";
-import { oauthCallbackUrl } from "../../../config";
 import type { OAuthExchangeResult } from "../../authentication/oauth-flow-store";
 import type { OAuthTokenRefreshResult } from "../../authentication/oauth-refresh-service";
 import { OAuthClient, type FetchLike } from "../../authentication/oauth-client";
@@ -33,6 +32,17 @@ export const ANTIGRAVITY_CLIENT_SECRET = Buffer.from(
 export const ANTIGRAVITY_AUTHORIZE_URL =
   "https://accounts.google.com/o/oauth2/v2/auth";
 export const ANTIGRAVITY_TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+/**
+ * Loopback callback the Antigravity Google client registers.
+ *
+ * Google validates `redirect_uri` against the OAuth client's allowlist at both
+ * authorize and token time, so this must be the exact value the client was
+ * registered with — the gateway's own console callback is not on that list and
+ * answers `redirect_uri_mismatch`. The dashboard dialog relays the code back
+ * from this landing URL, so the server still performs the exchange.
+ */
+export const ANTIGRAVITY_REDIRECT_URI = "http://127.0.0.1:51121/oauth-callback" as const;
 export const ANTIGRAVITY_SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
   "https://www.googleapis.com/auth/userinfo.email",
@@ -144,16 +154,19 @@ export class AntigravityOAuthClient extends OAuthClient {
   protected override readonly authorizeUrl = ANTIGRAVITY_AUTHORIZE_URL;
   protected override readonly scopes = ANTIGRAVITY_SCOPES;
 
-  protected override providerIdForCallback(): string {
-    return "antigravity";
-  }
+  /** Google validates `redirect_uri` against the client's registered allowlist. */
+  override readonly browserRedirectUri = ANTIGRAVITY_REDIRECT_URI;
 
   protected override extraAuthorizeParams(): Record<string, string> | undefined {
     return { access_type: "offline", prompt: "consent" };
   }
 
-  override async exchangeCode(code: string, codeVerifier: string): Promise<OAuthExchangeResult> {
-    return exchangeCodeForToken(code, codeVerifier, oauthCallbackUrl("antigravity"), this.fetchFn);
+  override async exchangeCode(
+    code: string,
+    codeVerifier: string,
+    redirectUri: string,
+  ): Promise<OAuthExchangeResult> {
+    return exchangeCodeForToken(code, codeVerifier, redirectUri, this.fetchFn);
   }
 
   override async refresh(refreshToken: string, signal?: AbortSignal): Promise<OAuthTokenRefreshResult> {

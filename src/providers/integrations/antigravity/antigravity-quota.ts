@@ -13,112 +13,169 @@ import {
   number,
   isoDate,
 } from "../../quota/quota-contracts";
-import { getAntigravityUserAgent } from "./antigravity-protocol";
+import { getAntigravityUserAgent, collapseAntigravityVariant } from "./antigravity-protocol";
+import { ANTIGRAVITY_MODELS } from "./antigravity";
 
 interface AntigravityQuotaFamily {
   readonly key: string;
   readonly label: string;
 }
 
-const IMPORTANT_MODELS = new Set([
-  "gemini-3-flash-agent",
-  "gemini-3.5-flash-low",
-  "gemini-3.5-flash-medium",
-  "gemini-3.5-flash-high",
-  "gemini-3.5-flash-extra-low",
-  "gemini-3.6-flash-low",
-  "gemini-3.6-flash-medium",
-  "gemini-3.6-flash-high",
-  "gemini-3.7-flash-low",
-  "gemini-3.7-flash-medium",
-  "gemini-3.7-flash-high",
-  "gemini-pro-agent",
-  "gemini-3.1-pro-low",
-  "claude-sonnet-4-6",
-  "gpt-oss-120b-medium",
-  "gemini-3-flash",
-  "gemini-3.1-flash-image",
-  "gemini-3-pro-image",
-]);
+/**
+ * Catalog model ids whose quota the console reports.
+ *
+ * The upstream `fetchAvailableModels` payload carries every deployment the
+ * account can reach — internal ones, and one entry per effort tier
+ * (`gemini-3.8-flash-low`/`-medium`/`-high`), which are a single model to the
+ * operator. Each upstream key is collapsed with
+ * {@link collapseAntigravityVariant} and kept only when the catalog serves the
+ * resulting id, so a quota row exists for exactly the models the operator can
+ * select.
+ *
+ * This replaced a hand-kept list plus a permissive id pattern, which let a
+ * deployment the catalog no longer serves (`gemini-2.5-pro`) report a quota row
+ * for a model that cannot be chosen. Deriving the set means removing a catalog
+ * model removes its quota row in the same change.
+ */
+const CATALOG_MODEL_IDS: ReadonlySet<string> = new Set(
+  ANTIGRAVITY_MODELS.map((model) => model.modelId),
+);
 
 function modelFamily(modelId: string): AntigravityQuotaFamily {
   if (/^(?:gemini[-_]|tab_)/i.test(modelId)) return { key: "google", label: "Google" };
-  if (/^(?:claude[-_]|gpt-oss[-_])/i.test(modelId)) return { key: "claude", label: "Claude" };
-  return { key: `model:${modelId}`, label: modelId };
+  return { key: "claude", label: "Claude" };
 }
+
+/** Display names for the two per-model families, as the operator reads them. */
+const FAMILY_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  google: "Gemini (Flash / Pro)",
+  claude: "Claude (Sonnet / Opus)",
+});
+
+/**
+ * Display names for the weekly summary groups.
+ *
+ * The upstream groups buckets by family rather than by model, so the label
+ * names both families that share the window — a row labelled only "Claude"
+ * would hide that GPT-OSS draws on the same weekly allowance.
+ */
+const WEEKLY_LABELS: readonly { readonly pattern: RegExp; readonly label: string }[] = [
+  { pattern: /gemini/i, label: "Gemini (Weekly)" },
+  { pattern: /claude|gpt/i, label: "Claude & GPT (Weekly)" },
+];
 
 function isQuotaModel(modelId: string): boolean {
-  return (
-    IMPORTANT_MODELS.has(modelId) ||
-    /^(?:gemini-\d+(?:\.\d+)?-[a-z0-9-]+|claude-[a-z0-9-]+|gpt-oss-[a-z0-9-]+)$/i.test(modelId)
-  );
+  return CATALOG_MODEL_IDS.has(collapseAntigravityVariant(modelId));
 }
 
-function earlierReset(left: string | null, right: string | null): string | null {
-  if (left === null) return right;
-  if (right === null) return left;
-  return Date.parse(left) <= Date.parse(right) ? left : right;
+/**
+ * Keeps the row whose remaining allowance is lowest.
+ *
+ * The upstream reports one quota per deployment, and several deployments are
+ * tier variants of one catalog model (`gemini-3.8-flash-high`/`-medium`/`-low`).
+ * The family row must reflect the *worst* variant, because that is the one the
+ * operator will actually run out of; averaging them, or showing the first, hid
+ * an exhausted tier behind a healthy sibling.
+ */
+function keepWorse(
+  current: ProviderQuotaWindow | undefined,
+  candidate: ProviderQuotaWindow,
+): ProviderQuotaWindow {
+  if (current === undefined) return candidate;
+  const currentRemaining = current.remainingPercent;
+  const candidateRemaining = candidate.remainingPercent;
+  if (currentRemaining === null) return candidate;
+  if (candidateRemaining === null) return current;
+  return candidateRemaining < currentRemaining ? candidate : current;
 }
 
-function mergeWindow(left: ProviderQuotaWindow, right: ProviderQuotaWindow): ProviderQuotaWindow {
-  const remaining =
-    left.remainingPercent === null
-      ? right.remainingPercent
-      : right.remainingPercent === null
-        ? left.remainingPercent
-        : Math.min(left.remainingPercent, right.remainingPercent);
+/** Total the upstream's fractional allowance is normalized against. */
+const QUOTA_TOTAL = 1000;
+
+/** Builds a window from a `remainingFraction` + `resetTime` pair. */
+function fractionWindow(
+  kind: string,
+  label: string,
+  remainingFraction: number,
+  resetsAt: string | null,
+): ProviderQuotaWindow {
+  const fraction = Math.min(1, Math.max(0, remainingFraction));
+  const used = QUOTA_TOTAL - Math.round(QUOTA_TOTAL * fraction);
   return {
-    ...left,
-    usedPercent: remaining === null ? null : 100 - remaining,
-    remainingPercent: remaining,
-    resetsAt: earlierReset(left.resetsAt, right.resetsAt),
+    ...percentWindow(kind, label, (1 - fraction) * 100, resetsAt, used, QUOTA_TOTAL),
+    recurring: true,
   };
 }
 
-function parseAntigravityQuota(body: unknown): ProviderQuotaResult {
-  const payload = quotaRecord(body);
-  const models =
-    record(payload.models) ?? record(payload.modelQuotas) ?? record(payload.quota) ?? {};
+/**
+ * Per-model quotas from `v1internal:fetchAvailableModels`.
+ *
+ * Collapses tier variants to one row per catalog family: the upstream lists
+ * `gemini-3.8-flash-low`, `…-medium`, and `…-high` as three deployments, and
+ * three rows for one model is noise. Each key is collapsed to its catalog id,
+ * kept only when the catalog serves it, and the worst variant in a family
+ * becomes that family's row.
+ */
+function parseModelQuotas(payload: Record<string, unknown>): ProviderQuotaWindow[] {
+  const models = record(payload.models) ?? record(payload.modelQuotas) ?? record(payload.quota);
+  if (models === null) return [];
   const grouped = new Map<string, ProviderQuotaWindow>();
   for (const [modelId, raw] of Object.entries(models)) {
     const model = record(raw);
     if (!model || model.isInternal === true || !isQuotaModel(modelId)) continue;
-    const family = modelFamily(modelId);
-    const infos = [
-      ["quota", model.quotaInfo],
-      ["daily", model.dailyQuotaInfo],
-      ["weekly", model.weeklyQuotaInfo],
-      ["quotas", model.quotaInfos],
-      ["daily-quotas", model.dailyQuotaInfos],
-      ["weekly-quotas", model.weeklyQuotaInfos],
-    ] as const;
-    for (const [slot, value] of infos) {
-      const entries = Array.isArray(value) ? value : [value];
-      for (const infoRaw of entries) {
-        const info = record(infoRaw);
-        if (!info) continue;
-        const remaining = number(info.remainingFraction);
-        const reset = isoDate(info.resetTime);
-        if (remaining === null && reset === null) continue;
-        const windowLabel = text(info.windowLabel) ?? text(info.windowId) ?? "Quota";
-        const window = percentWindow(
-          `${family.key}:${slot}`,
-          `${family.label} · ${windowLabel}`,
-          remaining === null ? 100 : (1 - Math.min(1, Math.max(0, remaining))) * 100,
-          reset,
-        );
-        const key = `${family.key}:${slot}:${windowLabel}`;
-        const previous = grouped.get(key);
-        grouped.set(key, previous === undefined ? window : mergeWindow(previous, window));
-      }
+    const quota = record(model.quotaInfo);
+    if (!quota) continue;
+    const fraction = number(quota.remainingFraction);
+    if (fraction === null) continue;
+    const family = modelFamily(collapseAntigravityVariant(modelId));
+    const label = FAMILY_LABELS[family.key] ?? family.label;
+    const window = fractionWindow(family.key, label, fraction, isoDate(quota.resetTime));
+    grouped.set(family.key, keepWorse(grouped.get(family.key), window));
+  }
+  return [...grouped.values()];
+}
+
+/**
+ * Weekly quotas from `v1internal:retrieveUserQuotaSummary`.
+ *
+ * This is the *only* quota a free-tier account has: the upstream omits
+ * per-model quota for it, so a parser that reads only `models` reports no
+ * windows at all on a free account. The groups are matched to a family by
+ * display name and only weekly buckets are read — the same response also
+ * carries shorter buckets, which are not the weekly allowance this row means.
+ */
+function parseWeeklyQuotas(payload: Record<string, unknown>): ProviderQuotaWindow[] {
+  const summary = record(payload.quotaSummary) ?? payload;
+  const groups = Array.isArray(summary.groups) ? summary.groups : [];
+  const found = new Map<string, ProviderQuotaWindow>();
+  for (const rawGroup of groups) {
+    const group = record(rawGroup);
+    if (!group) continue;
+    const groupName = text(group.displayName) ?? "";
+    const match = WEEKLY_LABELS.find((candidate) => candidate.pattern.test(groupName));
+    if (match === undefined) continue;
+    const buckets = Array.isArray(group.buckets) ? group.buckets : [];
+    for (const rawBucket of buckets) {
+      const bucket = record(rawBucket);
+      if (!bucket) continue;
+      // Identify the weekly bucket by its own id/label; a group can carry
+      // several windows and only the weekly one is this row's meaning.
+      const bucketText = `${text(bucket.bucketId) ?? ""} ${text(bucket.displayName) ?? ""}`;
+      if (!/weekly/i.test(bucketText)) continue;
+      if (bucket.disabled === true) continue;
+      const fraction = number(bucket.remainingFraction);
+      if (fraction === null) continue;
+      const window = fractionWindow(
+        `weekly:${match.label}`,
+        match.label,
+        fraction,
+        isoDate(bucket.resetTime),
+      );
+      found.set(match.label, keepWorse(found.get(match.label), window));
+      break;
     }
   }
-  return {
-    source: "antigravity",
-    plan: text(payload.tier) ?? text(payload.plan) ?? "Antigravity",
-    windows: [...grouped.values()],
-    error: null,
-  };
+  return [...found.values()];
 }
 
 export async function fetchAntigravityQuota(
@@ -133,34 +190,50 @@ export async function fetchAntigravityQuota(
     // x-client-* headers the reference client does not send.
     "user-agent": getAntigravityUserAgent(),
   };
-  // Primary: quota summary on the production host, then sandbox (reference
-  // order); the models endpoint below is only the legacy fallback. An
-  // unrecognized (empty) primary shape falls through rather than reporting
-  // a phantom empty quota.
-  for (const host of [
+  const project = fields.projectId ?? fields.providerAccountId;
+  const hosts = [
     "https://daily-cloudcode-pa.googleapis.com",
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
-  ]) {
+  ];
+  // Both endpoints are read and merged, because each carries a quota the other
+  // does not: `fetchAvailableModels` has the per-model windows, and
+  // `retrieveUserQuotaSummary` has the weekly ones — the only windows a
+  // free-tier account has at all. Either may fail without failing the other,
+  // and a result with neither is the caller's error to report.
+  const windows: ProviderQuotaWindow[] = [];
+  let plan: string | null = null;
+  for (const host of hosts) {
     try {
-      const result = parseAntigravityQuota(
-        await getJson(
-          `${host}/v1internal:retrieveUserQuotaSummary`,
-          headers,
-          fetcher,
-          { project: fields.projectId ?? fields.providerAccountId },
-        ),
+      const summary = quotaRecord(
+        await getJson(`${host}/v1internal:retrieveUserQuotaSummary`, headers, fetcher, {
+          ...(project === undefined ? {} : { project }),
+        }),
       );
-      if (result.windows.length > 0) return result;
+      windows.push(...parseWeeklyQuotas(summary));
+      plan = plan ?? text(summary.tier) ?? text(summary.plan);
+      if (windows.length > 0) break;
     } catch {
-      // Fall through to the next host, then the legacy endpoint.
+      // Fall through to the next host.
     }
   }
-  return parseAntigravityQuota(
-    await getJson(
-      "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-      headers,
-      fetcher,
-      { project: fields.projectId ?? fields.providerAccountId },
-    ),
-  );
+  for (const host of hosts) {
+    try {
+      const models = quotaRecord(
+        await getJson(`${host}/v1internal:fetchAvailableModels`, headers, fetcher, {
+          ...(project === undefined ? {} : { project }),
+        }),
+      );
+      windows.push(...parseModelQuotas(models));
+      plan = plan ?? text(models.tier) ?? text(models.plan);
+      break;
+    } catch {
+      // Fall through to the next host.
+    }
+  }
+  return {
+    source: "antigravity",
+    plan: plan ?? "Antigravity",
+    windows,
+    error: null,
+  };
 }

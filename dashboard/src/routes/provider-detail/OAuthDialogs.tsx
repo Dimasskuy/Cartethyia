@@ -15,23 +15,40 @@ import { queryKeys } from "../../lib/query-keys";
 import { toast } from "../../lib/toast";
 import { useTrackedTimeout } from "../../lib/use-timeout";
 
-function extractOAuthCode(raw: string): string {
+/**
+ * Extracts the authorization code from whatever the operator pasted.
+ *
+ * Accepts a full redirect URL, a bare query string, or the raw code. A pasted
+ * URL that carries no `code` is **not** treated as a code: returning the whole
+ * URL made the server send it to the token endpoint, which answered `Invalid or
+ * expired code` — an error that names the code but is really a failed parse, so
+ * the operator retries the same broken paste. A URL with `error` is reported
+ * with the provider's own description instead, and a URL with neither is
+ * rejected as an unrecognized redirect.
+ */
+export function extractOAuthCode(raw: string): { code: string } | { error: string } {
   const trimmed = raw.trim();
-  try {
-    const url = new URL(trimmed);
-    const code = url.searchParams.get("code");
-    if (code) return code;
-  } catch {
-    // Not a full URL — fall through to query-string / raw-code parsing.
+  const paramsOf = (value: string): URLSearchParams | undefined => {
+    try {
+      return new URL(value).searchParams;
+    } catch {
+      return undefined;
+    }
+  };
+  const params =
+    paramsOf(trimmed) ??
+    new URLSearchParams(trimmed.startsWith("?") ? trimmed.slice(1) : trimmed);
+  const code = params.get("code");
+  if (code) return { code };
+  const providerError = params.get("error_description") ?? params.get("error");
+  if (providerError) return { error: `The provider refused the login: ${providerError}` };
+  // A query string or a bare code both parse to no `code` param. Only a value
+  // that is recognizably a URL is refused; anything else is handed on as the
+  // code the operator pasted.
+  if (paramsOf(trimmed) !== undefined || trimmed.startsWith("?")) {
+    return { error: "That redirect URL carries no authorization code — copy the full URL from the address bar." };
   }
-  try {
-    const params = new URLSearchParams(trimmed.startsWith("?") ? trimmed.slice(1) : trimmed);
-    const code = params.get("code");
-    if (code) return code;
-  } catch {
-    // Ignored — falls back to the raw trimmed value below.
-  }
-  return trimmed;
+  return { code: trimmed };
 }
 
 export function OAuthBrowserDialog({
@@ -108,10 +125,13 @@ export function OAuthBrowserDialog({
   };
 
   const handleConnect = () => {
-    const code = extractOAuthCode(callbackValue);
-    if (!code) return;
+    const parsed = extractOAuthCode(callbackValue);
+    if ("error" in parsed) {
+      toast.error("OAuth callback failed", parsed.error);
+      return;
+    }
     complete.mutate(
-      { providerId, code, state },
+      { providerId, code: parsed.code, state },
       {
         onSuccess: () => {
           popup.close();

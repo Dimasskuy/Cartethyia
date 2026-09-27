@@ -21,6 +21,8 @@ src/security/
   admission.ts      ApiKeyAdmissionService + atomic counter stores (reserve/reconcile/release)
   crypto.ts         AES-256-GCM credential encryption + HMAC secret hashing
   outbound-headers.ts API/dashboard CSP builders + BASE_PROTECTED_HEADERS
+  client-router-fingerprint.ts inbound caller labelling for the per-key client-router denylist
+                    (best-effort header label, not an authentication boundary)
 ```
 
 ## Layer order on the data plane
@@ -29,11 +31,17 @@ Ingress (`src/transport/middleware/ingress.ts`, `pipeline.ts`) applies these
 in order; prepare/dispatch consult the snapshot the authentication layer
 produces:
 
-1. `ip-boundary.ts: resolveClientIdentity` — `disabled` mode trusts the
-   normalized TCP peer; `trusted` mode accepts `CF-Connecting-IP`,
+1. `ip-boundary.ts: resolveClientIdentity` — three modes. `disabled` (unset
+   `TRUSTED_PROXY_CIDRS`) trusts the normalized TCP peer and ignores forwarding
+   headers. `trusted` accepts `CF-Connecting-IP`,
    `True-Client-IP`, `X-Forwarded-For`, then `X-Real-IP`, but only when the
-   TCP peer matches a `TRUSTED_PROXY_CIDRS` allowlist entry. Otherwise it
-   falls back to the peer. Both the peer and the allowlist entry are
+   TCP peer itself matches the CIDR allowlist. `platform` (the single value
+   `platform`) accepts them from any peer, for a PaaS edge whose CIDRs are not
+   published or stable and whose container has no other ingress; it is opt-in
+   for exactly that reason. The two single-valued edge headers are preferred
+   because the edge overwrites them, while a forwarded chain is read from its
+   left end, which assumes the edge prepends. Otherwise it falls back to the
+   peer. Both the peer and the allowlist entry are
    normalized first, so an IPv4-mapped IPv6 peer (`::ffff:127.0.0.1`) matches
    a plain IPv4 network like `127.0.0.1/32`, and an accepted header value is
    normalized the same way. Pure function; console login reuses the same pair
@@ -46,7 +54,7 @@ produces:
    caller rotate paths, keep each count below the threshold, and never be
    banned. Every attempt counts, including rejected and unauthenticated ones,
    so failing requests escalate rather than being exempt (atomic
-   `checkAndIncrement`, so concurrent callers cannot race past the limit).
+   `checkAndRecord`, so concurrent callers cannot race past the limit).
    Fail-closed 503 on store outage. Stores: `InMemoryIpAbuseStore` (per-key
    ring counters, 10 000-key bound, oldest-evicted) and `RedisIpAbuseStore`
    (ZSET sliding window trimmed to the ceiling, separate ban keys). This runs
@@ -59,20 +67,20 @@ produces:
    available to a client that has decided to hammer the gateway. The hook
    resolves the client identity itself, from the same trusted-proxy boundary
    the identity middleware uses, because it runs ahead of that middleware.
-3. `api-key-auth.ts: requestToken` + `resolveApiKeyAuthorization` — exactly one of
-   `Authorization: Bearer` / `x-api-key`; both present is 400, neither or
-   malformed is 401. The token is HMAC-hashed (`hashSecret`, same key as
+3. `api-key-auth.ts: requestToken` + `resolveApiKeyAuthorization` — the credential comes from
+   `Authorization: Bearer` or `x-api-key`. Both present is accepted only when they carry the *same*
+   token, which is how an Anthropic-compatible client presents one key in both places; two different
+   credentials are 400, and neither or malformed is 401. The token is HMAC-hashed (`hashSecret`, same key as
    credential encryption) and looked up via
    `DrizzleApiKeyStore.findActiveByHash`; unknown/revoked returns `undefined`
    and the caller must 401 — never a default identity. The result is a frozen
-   `ApiKeyAuthorizationSnapshot` (provider/model allow/deny lists, rpm,
+   `ApiKeyAuthorizationSnapshot` (model allow/deny lists, rpm,
    daily/monthly/lifetime budgets, `max_concurrent`, scopes) plus the
    authorization record's optional `model_prefix`. `isModelAllowed` uses
-   dual-form bare/qualified matching with denylist-wins semantics;
-   `isProviderAllowed` is a plain allowlist membership test (an absent or
-   empty provider allowlist permits every provider). The public `/v1/models`
-   catalog also applies `model_prefix` so discovery and dispatch expose the
-   same policy.
+   dual-form bare/qualified matching with denylist-wins semantics. Provider
+   selection is not an API-key restriction; the key's model policy and the
+   tenant's available routes determine what can be used. The public `/v1/models`
+   catalog applies the same model policy and `model_prefix` as dispatch.
    The same snapshot carries an optional `client_router_denylist`: ids of
    downstream routers this key refuses, matched against
    `client-router-fingerprint.ts`. That module reads inbound headers only and
@@ -122,8 +130,11 @@ request or response payloads.
 
 - `access-control.ts`: closed `AccessScope` (`routing:invoke`,
   `routing:cli_mapping` (opt-in use of persisted CLI source→target mappings),
-  `dashboard:read`, `dashboard:write`, `platform:admin` — `platform:admin` is
-  never assignable to tenant keys); `createAccessDecision` (frozen; empty
+  `dashboard:read`, `dashboard:write`, `providers:read`, `providers:write`
+  (register or modify a BYOK upstream and its credential), `models:read`,
+  `models:write`, `platform:admin` — `platform:admin` is
+  never assignable to tenant keys; `TENANT_KEY_SCOPES` is the assignable
+  subset); `createAccessDecision` (frozen; empty
   tenant scopes default to `routing:invoke`; `tenantId: null` = cross-tenant
   operator).
 - `crypto.ts`: AES-256-GCM (`iv12 || tag16 || ciphertext`, key from

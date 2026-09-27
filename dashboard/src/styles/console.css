@@ -537,6 +537,14 @@
     grid-column: auto;
   }
 }
+
+.api-key-form-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
 /* ===== shell ===== */
 /* App shell, sidebar, navigation, topbar, main column, and footer. */
 /* ==========================================================================

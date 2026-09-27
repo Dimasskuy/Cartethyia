@@ -37,6 +37,7 @@ import { toast } from "../lib/toast";
 import type { ProviderAccountResponse } from "../lib/contracts";
 import { providerCanConfigureUserAgent } from "../lib/provider-user-agent";
 import { RoutingStrategyCard } from "./provider-detail/RoutingStrategyCard";
+import { CredentialNotice } from "./provider-detail/CredentialNotice";
 import { AccountsList, AddAccountModal } from "./provider-detail/Accounts";
 import { DeviceCodeDialog, OAuthBrowserDialog } from "./provider-detail/OAuthDialogs";
 import { AddModelModal, ModelGrid, ThinkingSelect } from "./provider-detail/Models";
@@ -254,6 +255,8 @@ export default function ProviderDetail(): ReactNode {
         }
 
       />
+      {/* Where to obtain this provider's credential */}
+      <CredentialNotice provider={provider} />
       {/* Routing Strategy */}
       <RoutingStrategyCard
         providerId={id}

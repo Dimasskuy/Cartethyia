@@ -1,7 +1,7 @@
 // HTTP ingress policy, authentication, lifecycle, and request context hooks.
 import { createHash } from "node:crypto";
 import { Elysia } from "elysia";
-import { GatewayError, explainGatewayError, publicGatewayErrorDetails } from "../gateway-error";
+import { GatewayError, explainGatewayError, labelGatewayMessage, publicGatewayErrorDetails } from "../gateway-error";
 import { resolveClientIdentity } from "../../security/ip-boundary";
 import { resolveUpstreamTimeoutMs } from "../../config";
 import type { TrustedProxyBoundary } from "../../config";
@@ -655,16 +655,20 @@ export function createErrorNormalizationMiddleware(deps: {
         !gateway && typeof error === "object" && error !== null
           ? (error as ElysiaBuiltinError)
           : undefined;
+      const builtinStatus = typeof builtin?.status === "number" ? builtin.status : undefined;
+      const builtinCode = typeof builtin?.code === "string" ? builtin.code : undefined;
+      const isBuiltinError = builtinStatus !== undefined || builtinCode !== undefined;
       const status =
-        gateway?.status ?? (typeof builtin?.status === "number" ? builtin.status : 400);
-      const code = gateway?.code ?? builtin?.code ?? "invalid_request";
-      const rawMessage = gateway?.message ?? builtin?.message ?? "Unable to process request";
+        gateway?.status ?? builtinStatus ?? (isBuiltinError ? 400 : 500);
+      const code =
+        gateway?.code ?? builtinCode ?? (isBuiltinError ? "invalid_request" : "internal_error");
       const message =
-        gateway?.origin === "upstream"
+        gateway !== undefined
           ? explainGatewayError(gateway)
-          : rawMessage.startsWith("Cartethyia Error:")
-            ? rawMessage
-            : `Cartethyia Error: ${rawMessage}`;
+          : labelGatewayMessage(
+              "cartethyia",
+              isBuiltinError ? builtin?.message ?? "Unable to process request" : "Internal server error",
+            );
       const origin = gateway?.origin ?? "cartethyia";
       // `afterResponse` telemetry hook can enqueue it even when the request
       // never reached canonical parse / auth / preparation.

@@ -224,29 +224,20 @@ export function upstreamRequestId(headers: Headers | undefined): string | undefi
 /**
  * Canonical status→code mapping for upstream HTTP failures.
  *
- * This is the single source of truth for every upstream HTTP status. Callers
- * that need an intentional deviation (e.g. an adapter that treats 401/403 as a
- * proxy auth problem) should call this function and then apply their explicit
- * override on top of the result — never restate the table.
- *
- * A second, contradictory table (`statusToErrorCategory`) used to live beside
- * this one and disagreed with it on 5xx and 529. It is gone: the two callers
- * that used it only ever re-derived a code from it, so the disagreement bought
- * nothing and cost a false `proxy_unreachable` label on every generic upstream
- * 5xx (the dashboard reads that code as "network proxy was unreachable").
- *
- * Deliberately absent: a 404 → `model_not_found` branch. An upstream 404 does
- * not mean "model not found" — it also means "that route does not exist here",
- * and the two are indistinguishable without parsing free-text messages, which
- * this taxonomy refuses to do. A 404 body distinguishes a route-level from a
- * model-level miss only in prose, so blanket-mapping 404 would mislabel a
- * route-level misconfiguration as a per-request model problem.
- * `invalid_request` is the honest bucket for an unclassified 4xx.
+ * Structured error identifiers are refined by `classifyUpstreamError`; this
+ * status-only table keeps distinct HTTP failure classes distinct without
+ * guessing whether a generic 404 names a model or an upstream route.
  */
 export function statusToGatewayErrorCode(status: number): GatewayErrorCode {
   if (status === 401 || status === 403) return "authentication_failed";
-  if (status === 429) return "quota_exceeded";
+  if (status === 402 || status === 429) return "quota_exceeded";
+  if (status === 404) return "upstream_not_found";
   if (status === 407) return "proxy_auth_required";
+  if (status === 408 || status === 504) return "deadline_exceeded";
+  if (status === 409) return "upstream_conflict";
+  if (status === 413) return "request_too_large";
+  if (status === 415) return "unsupported_media_type";
+  if (status === 422) return "upstream_unprocessable";
   if (status === 529) return "capacity_exhausted";
   if (status >= 500 && status <= 599) return "platform_unavailable";
   return "invalid_request";
@@ -276,9 +267,26 @@ export function classifyUpstreamFailure(error: unknown): UpstreamFailurePolicy {
   const providerCode = typeof error.details.providerCode === "string" ? error.details.providerCode : undefined;
   const providerId = typeof error.details.providerId === "string" ? error.details.providerId : undefined;
   const credentialEvidence = error.details.credentialEvidence === true || error.details.accountScope === true;
-  const scope = error.origin === "network" ? "network" : credentialEvidence ? "account" : "provider";
+  const policyAccountEvidence = providerCode === "11140";
+  let scope: "network" | "account" | "provider";
+  if (error.origin === "network") scope = "network";
+  else if (credentialEvidence || policyAccountEvidence) scope = "account";
+  else scope = "provider";
   const retryAfterMs = typeof error.details.retryAfterMs === "number" ? error.details.retryAfterMs : undefined;
-  const retryable = error.code === "capability_unsupported" || error.code === "model_not_found" || error.code === "admission_unavailable" || error.code === "capacity_exhausted" || error.code === "accounts_unavailable" || error.code === "quota_exceeded" || error.code === "authentication_failed" || error.code === "proxy_auth_required" || error.status === 401 || error.status === 403 || error.status === 429 || (error.status >= 500 && error.status <= 504);
+  const retryable =
+    error.code === "capability_unsupported" ||
+    error.code === "model_not_found" ||
+    error.code === "admission_unavailable" ||
+    error.code === "capacity_exhausted" ||
+    error.code === "accounts_unavailable" ||
+    error.code === "quota_exceeded" ||
+    error.code === "authentication_failed" ||
+    error.code === "proxy_auth_required" ||
+    error.code === "deadline_exceeded" ||
+    error.status === 401 ||
+    error.status === 403 ||
+    error.status === 429 ||
+    (error.status >= 500 && error.status <= 504);
   return {
     retryable,
     mutatesAccount: error.origin === "upstream" && scope === "account",
@@ -353,6 +361,179 @@ export function isContextLengthFailure(body: unknown): boolean {
   }
   return false;
 }
+const QUOTA_ERROR_IDENTIFIERS: ReadonlySet<string> = new Set([
+  "rate_limit_exceeded",
+  "rate_limit_error",
+  "insufficient_quota",
+  "quota_exceeded",
+  "usage_limit_reached",
+  "usage_not_included",
+  "subscription:free-usage-exhausted",
+  "resource_exhausted",
+]);
+const CAPACITY_ERROR_IDENTIFIERS: ReadonlySet<string> = new Set([
+  "overloaded_error",
+  "capacity_exhausted",
+  "model_at_capacity",
+  "server_is_overloaded",
+  "model_capacity",
+]);
+const AUTH_ERROR_IDENTIFIERS: ReadonlySet<string> = new Set([
+  "authentication_error",
+  "invalid_api_key",
+  "permission_error",
+  "insufficient_scope",
+  "unauthenticated",
+  "permission_denied",
+  "permissiondenied",
+]);
+const PLATFORM_ERROR_IDENTIFIERS: ReadonlySet<string> = new Set([
+  "server_error",
+  "internal_error",
+  "internal_server_error",
+  "api_error",
+  "service_unavailable",
+  "service_unavailable_error",
+  "internal",
+  "unavailable",
+]);
+const FRAME_TYPE_IDENTIFIERS: ReadonlySet<string> = new Set([
+  "error",
+  "response.failed",
+  "response.error",
+]);
+
+/** Finds a machine-readable provider error code or type without reading prose. */
+export function upstreamErrorIdentifier(body: unknown): string | undefined {
+  if (!isRecord(body)) return undefined;
+  const nested = isRecord(body.error) ? body.error : undefined;
+  const ext = isRecord(body.extError) ? body.extError : undefined;
+  for (const candidate of [ext?.code, nested?.code, body.code]) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) return candidate.trim();
+  }
+  for (const candidate of [
+    ext?.type,
+    nested?.type,
+    body.type,
+    ext?.status,
+    nested?.status,
+    body.status,
+  ]) {
+    if (typeof candidate !== "string" || candidate.trim().length === 0) continue;
+    const normalized = candidate.trim().toLowerCase();
+    if (!FRAME_TYPE_IDENTIFIERS.has(normalized) && !/^\d{3}$/.test(normalized))
+      return candidate.trim();
+  }
+  const numericCode = ext?.code ?? nested?.code ?? body.code;
+  return typeof numericCode === "number" && Number.isFinite(numericCode)
+    ? String(numericCode)
+    : undefined;
+}
+
+/** Structured classification used consistently by HTTP and in-stream errors. */
+export interface UpstreamErrorClassification {
+  readonly code: GatewayErrorCode;
+  readonly status: number;
+  readonly origin: GatewayErrorOrigin;
+  readonly credentialEvidence?: boolean;
+  readonly rateLimitScope?: "provider";
+}
+
+/** Maps a machine-readable provider identifier before falling back to status alone. */
+export function classifyUpstreamError(
+  status: number | undefined,
+  identifier?: string,
+): UpstreamErrorClassification {
+  const normalized = identifier?.trim().toLowerCase();
+  const upstreamStatus = status ?? 502;
+  const serverStatus =
+    status !== undefined && status >= 500 && status <= 599 ? status : undefined;
+  if (status === 407)
+    return { code: "proxy_auth_required", status: 407, origin: "network" };
+  if (normalized === "proxy_auth_required" || normalized === "proxy_authentication_error")
+    return { code: "proxy_auth_required", status: 407, origin: "network" };
+  if (normalized === "11140")
+    return { code: "policy_rejected", status: 403, origin: "upstream" };
+  if (normalized !== undefined && CONTEXT_LENGTH_CODES.has(normalized))
+    return { code: "context_length_exceeded", status: 413, origin: "upstream" };
+  if (normalized !== undefined && QUOTA_ERROR_IDENTIFIERS.has(normalized))
+    return {
+      code: "quota_exceeded",
+      status: status === 402 || status === 429 ? status : 429,
+      origin: "upstream",
+      rateLimitScope: "provider",
+    };
+  if (normalized !== undefined && AUTH_ERROR_IDENTIFIERS.has(normalized)) {
+    let authStatus: number;
+    if (status === 401 || status === 403) authStatus = status;
+    else if (
+      normalized === "permission_error" ||
+      normalized === "insufficient_scope" ||
+      normalized === "permission_denied" ||
+      normalized === "permissiondenied"
+    )
+      authStatus = 403;
+    else authStatus = 401;
+    return {
+      code: "authentication_failed",
+      status: authStatus,
+      origin: "upstream",
+      credentialEvidence: true,
+    };
+  }
+  if (normalized !== undefined && CAPACITY_ERROR_IDENTIFIERS.has(normalized))
+    return {
+      code: "capacity_exhausted",
+      status: status === 503 || status === 529 ? status : 529,
+      origin: "upstream",
+    };
+  if (normalized !== undefined && PLATFORM_ERROR_IDENTIFIERS.has(normalized))
+    return {
+      code: "platform_unavailable",
+      status: serverStatus ?? 502,
+      origin: "upstream",
+    };
+  if (normalized === "model_not_found")
+    return { code: "model_not_found", status: 404, origin: "upstream" };
+  if (
+    normalized === "not_found_error" ||
+    normalized === "resource_not_found" ||
+    normalized === "not_found"
+  )
+    return { code: "upstream_not_found", status: 404, origin: "upstream" };
+  if (normalized === "conflict_error" || normalized === "already_exists")
+    return { code: "upstream_conflict", status: 409, origin: "upstream" };
+  if (normalized === "request_too_large" || normalized === "payload_too_large")
+    return { code: "request_too_large", status: 413, origin: "upstream" };
+  if (normalized === "unsupported_media_type" || normalized === "invalid_content_type")
+    return { code: "unsupported_media_type", status: 415, origin: "upstream" };
+  if (normalized === "unprocessable_entity" || normalized === "unprocessable_entity_error")
+    return { code: "upstream_unprocessable", status: 422, origin: "upstream" };
+  if (
+    normalized === "timeout_error" ||
+    normalized === "upstream_timeout" ||
+    normalized === "deadline_exceeded"
+  )
+    return { code: "deadline_exceeded", status: 504, origin: "upstream" };
+  if (
+    normalized === "invalid_request_error" ||
+    normalized === "invalid_argument" ||
+    normalized === "invalid_parameter" ||
+    normalized === "bad_request"
+  )
+    return { code: "invalid_request", status: 400, origin: "upstream" };
+  const code = statusToGatewayErrorCode(upstreamStatus);
+  return {
+    code,
+    status: upstreamStatus,
+    origin: code === "proxy_auth_required" ? "network" : "upstream",
+    ...(code === "authentication_failed" ? { credentialEvidence: true } : {}),
+    ...(upstreamStatus === 429 || upstreamStatus === 529
+      ? { rateLimitScope: "provider" as const }
+      : {}),
+  };
+}
+
 
 /** Converts one failed upstream response into the shared GatewayError contract. */
 export async function mapUpstreamHttpError(response: Response, providerId: string): Promise<never> {
@@ -365,28 +546,27 @@ export async function mapUpstreamHttpError(response: Response, providerId: strin
   } catch {
     parsedBody = undefined;
   }
-  // A named overflow outranks the status bucket: the upstream may send it as a
-  // generic 400, where `invalid_request` told the client its syntax was wrong
-  // and invited a byte-identical retry that could never fit. The envelope
-  // status becomes 413 so a status-only client reads "too large" too, while
-  // `providerStatus` below keeps the literal upstream status for diagnostics.
-  const contextLength = isContextLengthFailure(parsedBody);
-  const code: GatewayErrorCode = contextLength ? "context_length_exceeded" : statusToGatewayErrorCode(response.status);
-  const status = contextLength ? 413 : response.status;
+  const identifier = upstreamErrorIdentifier(parsedBody) ?? providerCode;
+  const classification = isContextLengthFailure(parsedBody)
+    ? { code: "context_length_exceeded" as const, status: 413, origin: "upstream" as const }
+    : classifyUpstreamError(response.status, identifier);
   const extracted = extractUpstreamMessage(parsedBody ?? text);
-  const message = (extracted.length > 0 ? extracted : text.trim() || `Provider returned HTTP ${status}.`).slice(0, MAX_UPSTREAM_ERROR_BYTES).replace(/[\r\n]+/g, " ");
+  const message = (extracted.length > 0 ? extracted : text.trim() || `Provider returned HTTP ${response.status}.`).slice(0, MAX_UPSTREAM_ERROR_BYTES).replace(/[\r\n]+/g, " ");
   const retryAfterMs = parseUpstreamBackoff(response.headers);
   const requestId = upstreamRequestId(response.headers);
-  throw new GatewayError(code, status, message, {
+  const reportedProviderCode = providerCode ?? identifier;
+  throw new GatewayError(classification.code, classification.status, message, {
     providerId,
     providerStatus: response.status,
-    ...(providerCode ? { providerCode } : {}),
+    ...(reportedProviderCode ? { providerCode: reportedProviderCode } : {}),
     ...(requestId ? { upstreamRequestId: requestId } : {}),
     raw: text.slice(0, MAX_UPSTREAM_ERROR_BYTES).replace(/[\r\n]+/g, " "),
     ...(retryAfterMs === null || retryAfterMs === undefined ? {} : { retryAfterMs }),
-    ...(response.status === 429 ? { rateLimitScope: "provider" } : {}),
-    ...(response.status === 401 || response.status === 403 ? { credentialEvidence: true } : {}),
-  }, response.status === 407 ? "network" : "upstream");
+    ...(classification.rateLimitScope
+      ? { rateLimitScope: classification.rateLimitScope }
+      : {}),
+    ...(classification.credentialEvidence ? { credentialEvidence: true } : {}),
+  }, classification.origin);
 }
 
 const TITLE_PATTERN = /<title[^>]*>([\s\S]*?)<\/title>/i;

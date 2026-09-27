@@ -14,6 +14,7 @@ import {
 } from "../../../src/providers/integrations/qoder";
 import type { CanonicalEvent, CanonicalRequest } from "../../../src/transport/canonical-model";
 import type { ProviderDispatchContext, ProviderDispatchTarget } from "../../../src/providers/provider-registry";
+import { buildUpstreamDispatchContext } from "../../../src/transport/dispatch/upstream";
 describe("Qoder dynamic version resolver", () => {
   beforeEach(() => {
     _resetQoderVersion();
@@ -51,6 +52,8 @@ describe("Qoder dynamic version resolver", () => {
 });
 
 describe("Qoder Modern Profile contracts", () => {
+  beforeEach(_resetQoderVersion);
+  afterEach(_resetQoderVersion);
   test("declares modern endpoint and business parameters", () => {
     expect(MODERN_PROFILE.chatUrl).toContain("https://api2.qoder.sh");
     expect(MODERN_PROFILE.businessProduct).toBe("cli");
@@ -90,15 +93,21 @@ describe("Qoder Modern Profile contracts", () => {
     expect(messages[1]?.["content"]).toBe("Fix the bug");
   });
 
-  test("modern dispatch sends business headers, model headers, and modern endpoint", async () => {
-    let capturedHeaders: Record<string, string> = {};
+  test("preserves Qoder's API-key User-Agent when route identity is configured", async () => {
+    let capturedHeaders = new Headers();
     let capturedUrl = "";
     let capturedBodyBytes: Uint8Array | null = null;
 
     const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
       capturedUrl = String(input);
-      capturedHeaders = (init?.headers as Record<string, string>) ?? {};
+      capturedHeaders = new Headers(init?.headers);
       if (init?.body instanceof Uint8Array) capturedBodyBytes = init.body;
+      if (capturedUrl === VERSION_SOURCES.qoder.sources[0]?.url) {
+        return new Response(JSON.stringify({ version: "1.1.58" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       if (capturedUrl.includes("jobToken")) {
         return new Response(
           JSON.stringify({
@@ -130,15 +139,19 @@ describe("Qoder Modern Profile contracts", () => {
       endpoint_path: "",
       capabilities: {},
     };
-    const ctx: ProviderDispatchContext = {
-      credential: {
-        provider_id: "qoder",
-        credential_kind: "api_key",
-        secret: new TextEncoder().encode("pat_secret_123"),
-      },
-      deadline: Date.now() + 10_000,
-      abort_signal: new AbortController().signal,
+    const credential = {
+      provider_id: "qoder",
+      credential_kind: "api_key",
+      secret: new TextEncoder().encode("pat_secret_123"),
     };
+    const context = buildUpstreamDispatchContext({
+      credential,
+      deadline: Date.now() + 10_000,
+      signal: new AbortController().signal,
+      headers: {},
+      userAgent: "codex_cli_rs/0.156.1",
+      outboundFetch: fakeFetch,
+    }) as unknown as ProviderDispatchContext;
     const request: CanonicalRequest = {
       model: "lite",
       messages: [{ role: "user", content: [{ kind: "text", text: "hello" }] }],
@@ -147,16 +160,17 @@ describe("Qoder Modern Profile contracts", () => {
       source_surface: "chat",
     };
 
-    for await (const _ of adapter.dispatch(request, target, ctx)) {
+    for await (const _ of adapter.dispatch(request, target, context)) {
       // drain
     }
 
     expect(capturedUrl).toBe(MODERN_PROFILE.chatUrl);
-    expect(capturedHeaders["cosy-business-product"]).toBe("cli");
-    expect(capturedHeaders["cosy-business-type"]).toBe("agent");
-    expect(capturedHeaders["cosy-scene"]).toBe("assistant");
-    expect(capturedHeaders["x-model-key"]).toBe("lite");
-    expect(capturedHeaders["x-model-source"]).toBe("system");
+    expect(capturedHeaders.get("cosy-business-product")).toBe("cli");
+    expect(capturedHeaders.get("cosy-business-type")).toBe("agent");
+    expect(capturedHeaders.get("cosy-scene")).toBe("assistant");
+    expect(capturedHeaders.get("x-model-key")).toBe("lite");
+    expect(capturedHeaders.get("x-model-source")).toBe("system");
+    expect(capturedHeaders.get("user-agent")).toBe("Go-http-client/2.0");
     expect(capturedBodyBytes).not.toBeNull();
   });
 

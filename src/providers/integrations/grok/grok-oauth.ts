@@ -137,6 +137,20 @@ export class GrokOAuthClient extends OAuthDeviceFlow {
     if (!response.ok) {
       return { status: "failed", reason: nonEmptyTrimmedString(payload.error_description) ?? error ?? `token polling failed (${response.status})` };
     }
+    // A 2xx is not by itself a completed authorization: the endpoint can answer
+    // 200 with an `error` field and no token. Returning `failed` rather than
+    // letting the shared parser throw keeps the verdict inside the poll
+    // contract — the dashboard's poll error path stops polling but shows no
+    // reason, so a throw would look like a spinner that never ends.
+    if (nonEmptyTrimmedString(payload.access_token) === undefined) {
+      return {
+        status: "failed",
+        reason:
+          nonEmptyTrimmedString(payload.error_description) ??
+          error ??
+          "grok token response omitted access_token",
+      };
+    }
     const result = this.parseTokenResponse(payload);
     const accountLabel = await fetchUserLabel(result.access, this.fetchFn);
     return { status: "complete", result: this.toExchangeResult({ ...result, accountLabel }) };

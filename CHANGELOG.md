@@ -5,6 +5,734 @@
 > All changes below are pre-release. Cartethyia has not been tagged or
 > released; this document reflects the current production codebase architecture and capabilities.
 
+
+### Error envelopes name the failing side
+
+Every public error message now carries an origin label: `Cartethyia Error:`, `Upstream Error:`, or
+`Network Error:`. Previously an upstream failure was emitted with **no** prefix at all, which was
+meant to keep the gateway from being blamed but produced the opposite effect — a bare message is
+ambiguous, so a provider rejection and a gateway defect were indistinguishable and every unlabelled
+failure read as ours. `labelGatewayMessage` owns the mapping and applies it exactly once, so a value
+that passes through both the ingress normalizer and the console error handler is not double-prefixed.
+
+The `origin` field on each construction site was corrected to match reality. A provider that stopped
+sending mid-stream, an upstream stream that ended before its terminal event, an upstream that produced
+no terminal event, and a model-discovery fetch to a provider endpoint were all reported as `cartethyia`
+— they are now `upstream`. An unresolvable upstream hostname was a 400 `invalid_request` blaming the
+caller's request; it is now a 502 `transport_unavailable` with `network` origin. The
+`proxy_unreachable` DNS-failure path keeps its `network` origin, which is what degrades a network pool.
+
+### MiMo Desktop requests SSE explicitly
+
+MiMo Desktop now sends `Accept: text/event-stream` with streamed Chat requests
+and `Accept: application/json` with non-streamed ones, plus the native
+`X-Client-Version` alongside its existing MiMo User-Agent and `X-Mimo-Source`.
+The shared Chat decoder continues forwarding upstream reasoning and answer frames
+incrementally.
+
+MiMo Desktop's `/api/route/chat/completions` is served through Xiaomi's `MiFE`
+edge proxy, which emits the SSE body in a few large bursts rather than per token,
+so a short Desktop answer can arrive in one or two frames. This is an upstream
+property; MiMo Studio's bot endpoint flushes per token and stays smooth.
+
+### Provider detail shows where to get a credential
+
+Every bundled provider now declares its credential page in `provider-metadata.ts`, and the
+provider detail page renders it as a "Get API Key" action with one line of guidance. A
+provider whose sign-in runs through its own login flow is labelled "Sign in" instead, and
+providers with no published page show nothing rather than an empty card. The link and hint
+are projected from bundled metadata, never from the stored provider row, so a stale or
+hostile record cannot redirect them; posting either field as a compatibility-profile
+override is rejected as an unknown field.
+
+### MiMo Studio keeps one conversation per chat
+
+MiMo Studio no longer mints a random upstream `conversationId` per request. The adapter
+now resolves it per provider account: an inbound session id pins one upstream conversation
+for that chat, and a request whose history extends a tracked turn range continues it.
+Callers sharing one Studio account therefore stay in separate chat sessions instead of
+overwriting each other, and a multi-turn chat keeps its own thread. Because the upstream
+keeps the history, a resumed turn sends only the turns the upstream has not received, which
+also keeps a long chat inside the endpoint's request limit.
+
+### MiMo Studio supports tool calls and reports upstream rejections
+
+The Studio bot-chat endpoint ignores a `tools` field and accepts one `query` string, so the
+gateway carries tool use in the prompt using the convention MiMo models already emit, and
+turns closed blocks into canonical tool calls with `stop_reason: tool_use`. History tool
+calls and results replay as the same blocks. The `query` is capped at the measured upstream
+limit of 50 000 characters by dropping the oldest turns, instead of failing a request whose
+history the model's own window could hold. An in-band `error` frame is now surfaced as a
+typed gateway error — 413 for `query is too long`, 409 for a duplicate in-flight submit —
+rather than ending the stream with no terminal event and reporting a generic 502.
+
+### Xiaomi MiMo streaming distinguishes completion from interruption
+
+MiMo Studio now forwards the request cancellation signal and reports an SSE body that
+ends without `finish` or `[DONE]` as failed, rather than showing a truncated answer
+as complete. A stream carrying both end markers emits only one terminal event.
+MiMo Desktop inference now sends its service session cookie and native MiMo headers
+without also leaking the stored passToken as an `Authorization` bearer token.
+
+### Xiaomi MiMo integrations share one family directory
+
+The Xiaomi API-key adapters (`xiaomipg`, `xiaomitp`), MiMo Desktop, and MiMo Studio
+now live under `src/providers/integrations/xiaomi-mimo/`, alongside Studio's
+think-tag splitter. Their provider IDs, credentials, upstream wire formats,
+models, and quota behavior remain independent.
+
+### Buddy thinking replay keeps parallel tool calls on one assistant turn
+
+WorkBuddy and CodeBuddy now coalesce adjacent assistant fragments before dispatching
+Chat wire. A Responses history with reasoning followed by parallel function calls
+replays the trace on the combined assistant turn rather than leaving later calls
+without it. Tool results and user turns remain boundaries; absent traces are not invented.
+
+### Xiaomi MiMo AI Studio joins bundled providers
+
+Cartethyia supports Xiaomi MiMo AI Studio (`mimostudio`) via pasted cURL,
+JSON credentials, or `serviceToken` + `userId` cookies and translates its SSE stream
+for `mimo-v2.6-flash` and `mimo-v2.6-pro`. The configured Studio quota endpoint
+currently returns HTTP 404; quota verification and cookie renewal are not established.
+
+### Xiaomi MiMo Desktop joins bundled OAuth providers
+
+Cartethyia integrates Xiaomi MiMo Desktop (`mimodesktop`) using its local passToken
+to acquire a MiMo service session through Xiaomi SSO. The adapter preserves the
+OpenAI-compatible chat stream and its native `reasoning_content`; model aliases
+and the Desktop quota collector remain separate from MiMo Studio's cookie-based flow.
+
+### Route identity respects adapter User-Agent ownership
+
+Routing Strategy now supplies its configured User-Agent only to built-in API-key providers whose
+adapter does not build a native User-Agent. Provider-native identities, including Qoder's
+`Go-http-client/2.0`, remain intact, and the dashboard hides the route setting for those providers.
+
+### Antigravity quota reports the free-tier weekly window, and its catalog drops retired models
+
+**The quota collector called one endpoint and parsed the other's shape.** Antigravity serves
+quota from two endpoints, each carrying a window the other does not: `fetchAvailableModels` has
+the per-model windows, and `retrieveUserQuotaSummary` has the weekly summary groups — the *only*
+quota a free-tier account has, because the upstream omits per-model quota for it. The collector
+requested the summary first but parsed only a `models` key, so a free-tier account showed no
+quota at all and a paid one never showed its weekly allowance. Each endpoint is now parsed by
+its own function and both are read, either may fail without discarding the other's windows, and
+the family row takes the worst tier in its family — the one the operator runs out of first.
+
+**Quota rows no longer name models the catalog cannot serve.** The upstream returns every
+deployment the account can reach, including internal ones and one entry per effort tier. The
+collector now collapses each key with `collapseAntigravityVariant` and keeps it only when the
+catalog serves the result, so `gemini-2.5-pro` — a live deployment the catalog had dropped —
+can no longer report a quota row for a model that cannot be selected. The accepted set is
+derived from `ANTIGRAVITY_MODELS`, so a catalog change carries its quota rows with it.
+
+**The static catalog matches the reference provider list.** Removed: `gemini-2.5-flash`,
+`gemini-2.5-flash-lite`, `gemini-2.5-pro`, `gemini-3.1-flash-lite`, `claude-sonnet-4-5`,
+`claude-opus-4-5`, and the two `tab_*_preview` entries — deployments the provider no longer
+serves, which is why the rows were invalid. Added: `claude-sonnet-4-6` and `claude-opus-4-6`.
+Live discovery remains the authority at runtime; this is the static floor, and it now names the
+same families the reference list does.
+
+
+### Browser OAuth completes on its own: the gateway now binds the loopback redirect
+
+Every browser OAuth client advertises a **loopback** redirect URI — Codex
+`localhost:1455`, OpenRouter `127.0.0.1:54549`, Antigravity `127.0.0.1:51121`,
+Claude `127.0.0.1:54545`, and the gateway default `127.0.0.1:59653/callback`.
+That URI names the machine the *operator's browser* is on, and nothing was
+listening on it: the redirect landed on a dead page with the code stranded in
+the address bar, so every browser login needed the URL pasted back by hand, and
+on a local install even the manual path was the only way it could ever work.
+
+**The cause was a stated premise, not an oversight.** The OAuth domain carried a
+comment reading *"Cartethyia hosts the callback itself (it's a server process,
+not a local CLI), so there is no loopback-listener/port-selection problem."* The
+gateway is a server process, but it is not the server those redirects arrive at.
+The claim is corrected in place where it stood.
+
+**`callback-listener.ts` closes the gap.** `beginAuthorize` now binds the
+redirect's loopback port for the life of the flow — on `127.0.0.1` *and* `::1`,
+because `localhost` resolves to either and binding only IPv4 hands the code to
+whatever else holds the IPv6 loopback on that port — and releases it when the
+flow settles, so an idle gateway holds no extra sockets. The exchange runs
+`completeLogin`, the same function the hosted console callback uses, so token
+material still never reaches the dashboard. A port that cannot be bound fails
+the login immediately rather than advertising an address nothing answers, and a
+redirect the process cannot bind (the `zcode://` custom scheme, a remote host)
+keeps the manual paste path.
+
+The listener enforces the same replay and correlation rules as the hosted route:
+the flow is claimed before the exchange so a retried redirect cannot spend the
+code twice, and a state-less redirect (OpenRouter omits `state` entirely) is
+matched to the one flow waiting on that port. The manual paste path stays as a
+fallback, not as the only way in.
+
+
+### The provider list reports per-model cooldowns, and every card is clickable end to end
+
+Two provider-list defects, both invisible on the provider's own detail page:
+
+**A per-model throttle was reported as a healthy connection.** A 429 scoped to
+a single model writes only `modelCooldowns` and deliberately leaves
+`status: "active"` and `cooldownUntil` untouched, because the account stays
+routable for its other models (`account-health-service.ts`). The card built its
+badges from `status`, so a provider whose detail page said "1 model cooling"
+read as "1 Connected" in the list. The card now counts cooling accounts from
+`modelCooldowns` — via `modelCoolingCount`, the same helper the Accounts tab
+reads, so the two views cannot disagree — and shows a `Cooling` badge beside
+`Connected`, which is accurate: the account is connected and cooling for the
+models named in the map. The count is of accounts, not backoffs, so one account
+cooling three models is one row to look at rather than three.
+
+**A card could not be clicked near its bottom edge.** `.provider-grid` stretches
+every card in a row to the tallest one, but each card's `<Link>` was only as
+tall as its own content, so a card shorter than its row left a dead strip below
+the link where a click hit the card and did nothing. The card is now a flex
+column and the link carries `flex: 1`, so the clickable area spans the whole
+card in both the built-in and custom-provider grids.
+
+
+### Every OAuth provider's token request and exchange is verified, and two poll bugs are fixed
+
+All 17 OAuth clients were audited against the three failure shapes this
+codebase has already produced — an ignored redirect URI, a `pending` verdict
+for a real failure, and a token body read as success without a token — and two
+live instances of the second were found and fixed:
+
+**Grok** read its poll body through the shared parser, which answered
+`access: ""` for a body carrying no token, so a 200 with an `error` field
+reported `complete` and persisted an account whose bearer was empty. **Kimi**
+returned `pending` for the same body, so a rejected authorization polled until
+the flow expired and showed the operator nothing. Both now fail with the
+upstream's own reason. `parseTokenResponse` itself refuses a body without an
+`access_token` (an access-only credential is still valid), which covers the
+direct callers that read a token body outside the generic device poll.
+
+**Dead code removed.** `providerIdForCallback` on the OAuth client base class
+and its two overrides had no caller — the callback URL is now derived from the
+route, not the client — and were deleted rather than left as a silently
+unused hook.
+
+Verified live: all 12 device-code providers complete a real device
+authorization request and a real token poll (`pending` before approval), and
+all 6 browser clients advertise the same redirect URI at authorize and at
+exchange.
+
+### xAI Grok Subscription joins as `xai`, and three provider ids are renamed
+
+**`xai` is a new bundled provider** for the paid xAI subscription (SuperGrok /
+X Premium+), served at `api.x.ai/v1` over the OpenAI Responses wire. It is
+deliberately separate from the existing `grok`, which is the *free* Grok Build
+CLI surface at `cli-chat-proxy.grok.com` carrying that CLI's own session,
+turn-index, and identity headers: the two share an authorization server and a
+public client id but not a base URL, a model roster, or a header set. The xAI
+device flow registers a real refresher (`offline_access`), its own `/v1/models`
+drives discovery, and the canonical reasoning-effort scale is mapped to xAI's
+(`minimal`→`low`, `xhigh`/`max`→`high`) — xAI has no `minimal` and nothing above
+`high`, and the shared codec clamps `max` to `xhigh` before this runs.
+
+**Three provider ids were renamed** for brevity: `github-copilot`→`github`,
+`kilocode`→`kilo`, `siliconflow`→`sifo`. This is a clean cutover — every module,
+symbol, test, dashboard mirror, and doc reference was migrated and the old ids
+are gone. Two facts stayed put because they belong to the upstream, not to us:
+`base-models.json` keys (the generator writes models.dev's own provider names,
+so `github`/`sifo` are mapped in `MODELS_DEV_PROVIDER_IDS` instead of editing
+generated output) and the `X-Kilocode-OrganizationID` request header, which is a
+wire byte the upstream reads. Display names and icon assets are unchanged.
+
+**Browser OAuth exchange now sends the redirect URI it advertised.** Two
+providers hardcoded the gateway's own console callback inside `exchangeCode`
+instead of using the URI the authorize step sent, so Google answered
+Antigravity with `redirect_uri_mismatch` (400) and the Claude exchange sent a
+URI Anthropic has not registered. Both now declare their registered loopback
+callback (`http://127.0.0.1:51121/oauth-callback` for Antigravity,
+`http://127.0.0.1:54545/callback` for Claude Code) and the exchange uses the
+caller's value, which is the same string the authorize step used.
+
+**A pasted redirect URL with no `code` is no longer sent as the code.** The
+dashboard dialog returned the whole URL when it found no `code` parameter, so
+the token endpoint answered `Invalid or expired code` — an error naming the code
+that was really a failed parse, sending the operator back to retry the same
+broken paste. A URL carrying `error` now reports the provider's own description,
+and a URL with neither is refused with a message saying so.
+
+**An unknown device-poll verdict fails instead of polling forever.** GitHub
+Copilot's device poll returned `pending` for any error it did not recognize, so a
+permanent upstream rejection looked like a login that never finished: the dialog
+spun until its own expiry with no reason shown. Unrecognized errors and non-2xx
+responses now fail with the upstream's reason. The xAI client gained the
+matching guard that a 2xx carrying an `error` field and no `access_token` is a
+failure, not a completed authorization.
+
+### Provider-native User-Agent precedence
+
+Route-selected upstream User-Agent now fills only when the provider adapter has not set one, so
+API-key identities such as Qoder remain intact.
+
+### GitHub Copilot gets live discovery, capability routing, long context, and quota
+
+Copilot was registered with a six-row static catalog and nothing else, so the
+model list could not reflect the subscription's own entitlement and a
+responses-only SKU had no route. Four gaps are closed:
+
+**Live model discovery.** `github-copilot-discovery.ts` reads the account's own
+`/models` using the host and token from the credential envelope. The envelope is
+OpenAI-shaped but the rows are not: `supported_endpoints` names the surface each
+SKU answers on and the window is nested under
+`capabilities.limits.max_context_window_tokens`. A row is registered against the
+wire family it actually serves — chat when it serves chat, `/responses` when
+that is the only surface — and a row that serves neither on the OpenAI wire is
+skipped rather than mislabelled as chat. An unreadable directory returns `null`,
+leaving the static catalog in place.
+
+**Long-context tier.** A SKU whose window reaches 500k carries Copilot's
+`contextTier: "long_context"` request extension, injected only on the chat and
+responses wires because the native Anthropic surface validates against its own
+schema and rejects an unknown top-level key. The qualifying ids are recorded by
+discovery, which is the only place the account's real window is known.
+
+**Quota.** `github-copilot-quota.ts` reads plan and windows from
+`/copilot_internal/v2/token`, the same call that mints the inference token. That
+endpoint authenticates with the *GitHub* token rather than the minted one, so
+the credential envelope now carries both; a window is emitted only when it
+carries a usable number, never fabricated.
+
+**Refresher wiring is pinned.** A new registry test asserts that every OAuth
+provider registers a token refresher exactly when it has a refresh grant —
+present for the short-lived-token providers, absent for Kilo Code, OpenRouter,
+Zcode, and Devin, whose sign-in ends in a durable credential. Registering one
+where no grant exists turns a recoverable auth failure into a permanent one;
+omitting one where a grant exists lets a short-lived token expire silently.
+
+### Quota account cards
+
+Quota cards now show four usage windows at a time with previous/next pagination. Compact
+square-corner meters keep account cards denser.
+
+### API-key access controls and dialog
+
+The Create/Edit key dialog now uses a responsive single-column layout with descriptive switches for
+blocked client routers and scopes. Provider allowlists are removed from authorization and persistence;
+migration `0005` drops the column. Existing provider restrictions are intentionally lost on upgrade;
+model rules and scopes remain. Migration `0006` widens the existing `share_links` constraint to allow
+personal handoff links.
+
+### The Cloudflare Workers AI provider is dropped
+
+The bundled `cloudflare` provider is removed: its adapter and request suite, its
+identity row in `provider-metadata.ts`, its registry capabilities entry, its
+dashboard display name and icon, its entry in the free-tier list, its icon
+asset, and its documentation references. The bundled provider count in
+`README.md` follows.
+
+The composite `{apiKey, accountId}` credential was the only provider shape that
+required a caller to supply a second identifier in the secret itself, and its
+catalog served no model the remaining providers do not. Removing it leaves no
+alias and no forwarding shim: the id is no longer a bundled provider, and both
+`registry.resolve` and `registry.resolveModelDiscovery` answer `undefined` for
+it rather than loading a module that no longer exists.
+
+A deployment that already holds a `cloudflare` row keeps the row. `seedBundledProviders`
+upserts only the ids the registry still ships and never deletes, and the bundled
+rows it writes carry no `base_url`, so the row is not walked by `registerByokProviders`
+either — it simply stops resolving to an adapter, which is the state any retired
+provider reaches.
+
+### Kilo Code is a bundled provider
+
+`kilocode` joins the bundled set: a device-code OAuth login, an OpenAI-compatible
+chat adapter on `api.kilo.ai/api/openrouter/chat/completions`, and a live model
+directory at `api.kilo.ai/api/gateway/models`. The bundled provider count in
+`README.md` follows.
+
+Three things about this upstream decided the shape of the port, and each is
+pinned by a test rather than left to a comment:
+
+- **The poll key is the user code, not the `device_code`.** The start response
+  carries both; polling with the `device_code` is answered `410 expired`, so the
+  user code is what the flow carries forward. The first implementation of this
+  port copied the wrong field and the flow could never complete.
+- **The directory is OpenRouter-shaped, so it does not go through the shared
+  `/models` fetcher.** Limits live under `top_provider`, modality under
+  `architecture.input_modalities`, capability under `supported_parameters`.
+  Feeding that to the tolerant fetcher does not fail — it publishes every row at
+  the `200_000/64_192` floors with `toolCall: false`, and `toolCall: false`
+  makes capability preflight strip `tools` from the request, so every model
+  would silently lose tool calling.
+- **There is no refresh grant, so no refresher is registered.** The client
+  declares `refresh` as a throw and the registry wires it without
+  `withRefresher`, which is what makes the credential path and the 401 retry use
+  the stored token as issued instead of calling a method that always throws.
+  Because the issuer advertises no token lifetime either, the stored `expires_at`
+  is a far-future fallback; a nearer value would mark a working token as due for
+  a refresh that cannot happen.
+
+The stored credential is a `{accessToken, orgId}` envelope, because the console
+keeps one opaque string per account while the gateway scopes every request to
+the account's organization. Both consumers decode it: the adapter at the auth
+boundary, where it also stamps `X-Kilocode-OrganizationID`, and the model
+directory reader, which would otherwise put the JSON on the wire as the bearer.
+That second one is invisible against the live endpoint — the directory answers
+identically with no credential at all — so it is pinned by a test rather than
+left to observation. The static fallback catalog carries 18
+rows read from the live directory, and every one of them was verified present
+there; the eight ids another gateway's fallback list carries are not reused,
+because three of them (`anthropic/claude-sonnet-4-20250514`,
+`anthropic/claude-opus-4-20250514`, `deepseek/deepseek-reasoner`) no longer
+resolve upstream.
+
+### DeepSeek and Hugging Face are bundled providers
+
+Both join as bearer-authenticated OpenAI-compatible hosts, and the bundled
+provider count in `README.md` follows.
+
+**DeepSeek** is a zero-hook host: bare root `api.deepseek.com` with the
+`/v1`-prefixed wire paths, so its adapter is one row in `GENERIC_API_KEY_PROVIDER_IDS`
+plus its metadata entry. Verified live: `/v1/chat/completions` and `/v1/models`
+both answer 401 to a bad key (a route that exists). Because a zero-hook host
+declares no `loadModels`, it also carries an `openAIModelDiscovery` loader — the
+same shape `ollamacloud` uses — so the operator does not have to type model ids
+by hand. The base catalog already files four `deepseek` rows under that exact
+id, so limits and pricing resolve without a filing-name mapping.
+
+**Hugging Face** is not a zero-hook host, for one reason: the router's `/v1/models`
+listing is OpenAI-shaped in its envelope but not in its entries. Each row is one
+model with a nested `providers[]` array — the router brokers to several backends
+at different prices and context lengths — and capability lives under
+`architecture.input_modalities` plus a per-backend `supports_tools`. The shared
+tolerant fetcher reads a top-level `context_length` and a `modality` string, so
+against this listing it would publish every row at the `200_000/64_192` floors,
+drop tools from every model, and lose the image input that **28 of the 78
+bundled rows** declare. `integrations/huggingface.ts` reads the nesting instead,
+with two judgement calls stated in the code: the window and price come from the
+cheapest live backend, and `supports_tools` is ANDed across backends because a
+model routed to a backend without tool support cannot call tools. The base URL
+carries `/v1` (the bare host answers 404 on both `/v1/models` and
+`/v1/chat/completions`), so the row path is the suffix that completes it.
+
+### GitHub Copilot is a bundled provider
+
+`github-copilot` joins the bundled set with a device-code login, and the bundled
+provider count in `README.md` follows.
+
+**Two tokens, and storing the wrong one is invisible until dispatch.** The
+device flow issues a GitHub access token, which is then exchanged for a
+short-lived Copilot token at `/copilot_internal/v2/token`; only the Copilot token
+is accepted by the inference API. The GitHub token is stored as the refresh
+value because it is what re-mints the Copilot token — which expires on the order
+of half an hour, so without a real refresher every session would need a fresh
+device authorization. This is the first bundled OAuth provider whose grant is
+genuinely short-lived and refreshed rather than a durable key.
+
+**The API host is per-account, so the credential carries it.** The Copilot token
+embeds a `proxy-ep` claim naming the account's host, and an enterprise account is
+served from a different host than an Individual one. A declarative spec cannot
+express that — its `base_url` is fixed at registration and routing resolves one
+base URL per provider, not per account — so this is a bespoke adapter that reads
+the host out of the stored `{access, apiHost}` envelope. Payload translation,
+SSE decoding, and error mapping stay with the shared pipeline. Its client
+identity headers are a protocol requirement rather than cloaking: the API rejects
+a request that does not identify a Copilot client, so they are stamped after the
+shared pipeline and win over a route-level User-Agent.
+
+`CARTETHYIA_COPILOT_ENTERPRISE_DOMAIN` points the login at a GitHub Enterprise
+domain; empty (the default) means github.com.
+
+**Not verified against the live API.** No Copilot subscription credential was
+available in this environment, so the device flow, the token mint, and dispatch
+are covered by tests against the upstream response shapes rather than by a real
+request. The shapes come from a working client implementation (the token format,
+the `proxy-ep` claim, the required headers, and the pending-state answers).
+
+### The Codex GPT-6 context window was understated by two thirds
+
+The bundled `codex` catalog recorded a 272k context window for the GPT-6
+generation. That is the model's *default* window, not its capacity: the live
+Codex registry (`/backend-api/codex/models`, read with a real account) reports
+`gpt-6-astra` with `context_window` 272000 and `max_context_window` 872000, and
+OpenAI documents 1.05M total context for the generation — 922k input plus the
+128k output ceiling — so 922k is the input capacity and the registry's 872k is
+the stale figure. Every routing alias and combo that resolves through a
+`codex/gpt-6-*` row inherited the understated number.
+
+`gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` keep the full 1M window they
+were given when OpenAI raised it; the same registry still reports the pre-raise
+272k for those ids, which is why the catalog does not read its limits from it.
+`gpt-5.5` is genuinely capped — its `max_context_window` is 272000 — and
+`gpt-daybreak-blue-latest` reports the standard window despite riding the 5.6
+generation, so both stay at 272k.
+
+Worth recording for the next reader: `model_context_window` is **not** a request
+field. Sending it is rejected with `Unsupported parameter`, and the Responses
+Lite header is likewise never sent by this gateway (`responses_lite` is not
+enabled anywhere), so the window is the model's own and the catalog figure is
+client-side bookkeeping. The extended window therefore needs no opt-in flag on
+this path.
+
+### Three providers gain OAuth sign-in, and Codex browser login is fixed
+
+Codex, OpenRouter, and a new `zcode` provider (Z.AI Coding Plan) can be signed
+into from the console. The bundled provider count in `README.md` follows.
+
+**Codex browser login could never complete.** The console advertised one
+gateway-wide loopback redirect URI to every provider, but authorization servers
+allowlist redirect URIs exactly: OpenAI registers only
+`http://localhost:1455/auth/callback` for the Codex client and answers any other
+value with `invalid_request` *before* a consent screen. A login client may now
+state its own `browserRedirectUri`, which the console route prefers over the
+gateway default, and the same string is reused at exchange because the token
+endpoint compares it against what the authorize step sent. The authorize request
+also now sends the two flags the reference client sends —
+`id_token_add_organizations` and `codex_cli_simplified_flow` — since without them
+the reduced consent screen is skipped and the id token omits the organization
+claim the account label reads. The device-code flow was already working and is
+unchanged; both flows remain one merged client.
+
+**A callback that carries no `state` is correlated by provider.** OpenRouter
+never echoes `state`, so its callback arrived with no key to look the pending
+flow up by and every sign-in would have failed as "unknown or expired state".
+`OAuthFlowStore` now writes a per-provider pointer alongside the state key and
+`handleCallback` falls back to it when `state` is absent. The pointer is
+last-write-wins — a second console login for one provider repoints it, and the
+operator's newest attempt is the one they are watching — while the state key is
+still consumed atomically, so a callback can never inherit a spent verifier.
+OpenRouter's authorize request is also non-standard in ways a "make it look like
+the others" refactor would undo, so each is pinned by a test: it names its
+callback `callback_url` rather than `redirect_uri` and sends no `client_id`,
+`response_type`, or `scope`.
+
+**`zcode` is a separate provider from `zai`.** Z.AI's Coding Plan is a
+subscription served on a different host (`api.z.ai/api/coding/paas/v4`) with its
+own catalog and its own credential, so it is registered as `zcode` rather than
+folded into the pay-as-you-go `zai` provider that already existed.
+
+**Its sign-in is two-stage, and the second stage is what makes it usable.** The
+authorization code is exchanged for a short-lived OAuth access token, which is
+then traded through Z.AI's business APIs — business login → resolve the default
+organization/project → find or create the gateway's own named key → read its
+secret — for the durable `<apiKey>.<secretKey>` the coding endpoint actually
+accepts. Storing the OAuth token instead produces a credential that
+authenticates nowhere, and the failure would have surfaced at first dispatch
+rather than at login, so the whole chain is pinned by tests: the minted key and
+never the token, each hop's auth, re-login reusing the existing key rather than
+creating a second one, and the secret read from the copy endpoint because the
+list endpoint masks it. Z.AI rejects every loopback URI for this client, so the
+flow uses its `zcode://` desktop scheme and the operator pastes the final
+redirect URL.
+
+All three register no refresher where the grant ends in a durable key
+(OpenRouter, `zcode`), matching how the 401 retry path and the credential
+resolver already behave for Devin and Kilo Code: a registered refresher would
+make the retry call a method that always throws.
+
+A Gemini route (the `gemini` provider, or Antigravity) received images,
+documents, and audio through an encoder that resolved only two payload shapes
+of its own. Everything else — a Responses `input_image`, a bare string
+`image_url`, a document, an audio part — fell through to a text placeholder,
+so the request succeeded and the model answered as if nothing had been
+attached. The same encoder put a `data:` URI in Gemini's `fileUri` field, a
+field the upstream treats as a fetchable reference, and stamped a hardcoded
+`image/png` on every remote image. This is the path an IDE or a router in front
+of one takes, and its images arrive as data URIs by construction.
+
+The encoder now projects media through the shared `resolveImageSource` and
+`splitDataUrl` primitives that every other wire builder already used: inline
+bytes become `inlineData` under the media type the caller declared, a remote
+URL stays a `fileData` reference, and a non-image attachment is encoded as the
+inline bytes or reference it actually is. `fileData.mimeType` is omitted when
+the origin declared none, rather than guessed. An image that carries only a
+Files API id still degrades to a text reference naming the id — the id belongs
+to the originating provider's store and is not a Gemini file URI — but it is
+never silently dropped. The cross-protocol fidelity matrix now includes the
+Gemini wire, which is why this gap went unnoticed: it covered the three codec
+wires and not the two direct-entry ones.
+
+### One key in both credential headers is accepted
+
+A client that presented the same API key in `x-api-key` *and*
+`Authorization: Bearer` was rejected `400 conflicting credential headers`, so
+every request from it failed. That pairing is a compatibility idiom, not a
+mistake: an Anthropic-compatible client sends both so a gateway reading either
+header works, which is why one such router sends them together by design. The
+pair is now accepted when both carry the same token.
+
+Two *different* credentials are still `400`, and a non-Bearer `Authorization`
+alongside `x-api-key` is still `400`: tolerating the pair must not mean picking
+one at random, because that would silently decide which identity the request
+runs as. A single header, or neither, behaves exactly as before.
+
+### A repeated OAuth login replaces the account it belongs to
+
+Logging in again with an email that was already enrolled added a *second*
+account instead of refreshing the first. The account identity was the
+refresh-token fingerprint, and a fresh login mints a new refresh token — so the
+identity index never saw a duplicate, and the unique constraint only caught a
+replay of the exact same credential. The result was the pair an operator saw:
+the original sitting `Disabled` with `Re-login required`, and a new `Active`
+row for the same email.
+
+The identity is now the label the provider reports — the account's email or org
+name — which is stable across logins. A login whose identity already exists
+replaces that row and its stored refresh state, and clears the failure state
+with it, because a fresh credential makes the previous rejection meaningless by
+definition: the account comes back `Active` rather than leaving an operator to
+delete the stale row by hand. A provider that reports no label keeps the old
+behaviour and still rejects an exact replay, and a different email is still a
+different account.
+
+Two consequences worth stating. Renaming an account in the console changes the
+stored label, so a later login is treated as a new account instead of silently
+overwriting the rename — the tradeoff the identity index always had, now
+recorded where the decision is made. And two logins for the same identity
+racing each other can still collide on the unique index; the second answers the
+existing `provider_account_duplicate` 409, and a retry replaces.
+
+### Payload capture failures are visible, and a bind-mounted data directory is prepared
+
+Telemetry payload capture could be switched On in the console and store nothing,
+with no error anywhere. The bodies are written to local `.jsonb` frames and the
+database row holds only a reference to the frame, so when the frame write fails
+there is no row at all — and the failure was swallowed by an empty `catch` on
+the fire-and-forget capture path. A deployment could not tell "capture is off"
+from "capture is on and broken".
+
+The usual cause is a deployment one. The container runs as a non-root user, and
+a bind-mounted data directory arrives with the *host's* ownership, so the
+payload directory is not writable and every capture fails. The image's chown of
+`/app/data` cannot help: the mount overrides it. The entrypoint's existing
+permission fix could not help either — it was guarded on `id -u = 0`, which
+never holds under the image's own `USER`, and it tested `/app/migrations`
+instead of the data directory.
+
+Three changes. Capture failures now log a single warning per process naming the
+directory and the remedy, so an opted-in tenant that stores nothing can see why.
+The runtime uid/gid are pinned to `10001` so a host directory can be prepared
+against a known id. And the entrypoint prepares the data directory when it can
+run as root, reporting the uid to chown to when it cannot — which is the normal
+case, and now documented in `README.md` and `.env.example` with the one-line
+`chown` that fixes it.
+
+
+### Error codes preserve distinct failure types
+
+Untyped gateway exceptions now return `internal_error`/500, not `invalid_request`/400. HTTP and stream
+errors share structured provider-code classification, retaining upstream status details. Proxy pools
+are disabled only for network-origin 402/407 responses; an upstream 402 remains a provider quota error.
+
+### The in-flight gauge can no longer be stranded by a bookkeeping failure
+
+The console's in-flight gauge climbed and never came back down under traffic.
+The counter is incremented when a request is admitted and decremented exactly
+once by `state.cleanup()`, which on a streamed response is reached only through
+`releaseStreamResources()`; the root `afterResponse` hooks deliberately skip a
+request whose `state.streaming` is set. That release sat at the end of the
+streaming error path with nothing protecting it, and `completeAttempt` claims
+the terminal outcome *before* it awaits the usage reconciliation — so a store
+failure there unwound past the release, the error frame, and the close. The
+request's slot was gone from the state map, so nothing could reclaim it and the
+gauge stayed one higher for the life of the process. A stalled provider reached
+the same place with no client action at all.
+
+Two changes, both at the cause rather than at one caller. Usage reconciliation
+is now swallowed like the health and pool reports beside it, because it is
+bookkeeping and a failed report must not decide the request's outcome; and the
+two streaming error paths that await it now release in a `finally`, so no
+throwing await between the terminal outcome and the release can skip it. The
+release was already single-shot, so reaching it twice is safe.
+
+Reproduced before the fix and pinned after: with a rejecting usage commit, a
+mid-stream failure left the gauge stuck at 1. Removing the guards again fails
+that test, which is what makes it a regression test rather than a description.
+
+### A PaaS edge can be trusted without an allowlist
+
+`TRUSTED_PROXY_CIDRS` accepts a third form: the single value `platform`. The
+gateway previously offered only an allowlist or nothing, and behind a PaaS edge
+(Railway, Fly, Render) neither works — the edge terminates TLS and the container
+has no public address, so every request arrives from an edge node whose CIDRs
+are not published and not stable, no allowlist entry can match, and the
+forwarding headers were ignored. Every request was recorded under the edge's own
+address instead of the client's, which also collapsed per-IP enrollment and
+per-IP abuse accounting onto one key.
+
+`platform` trusts the forwarding headers from any peer, so it is opt-in and
+documented with the condition that makes it safe: the container must be
+unreachable except through the edge, or a direct caller could forge its client
+IP. It is matched only as the whole value, so a list that also names CIDRs stays
+a real allowlist rather than silently widening to trust-everything. Unset still
+means `disabled`, and the raw peer is still the client there.
+
+The two single-valued edge headers (`CF-Connecting-IP`, `True-Client-IP`) remain
+preferred because the edge overwrites them. A forwarded chain is still read from
+its left end, which assumes the edge prepends the address it observed; that
+assumption is now stated in the code rather than left implicit, and the headers
+that do not depend on it are the ones recommended for a deployment whose edge
+behavior is unknown.
+
+### Documentation corrected against the code
+
+An audit of the README, the layer docs, the environment template, the CI
+workflow and the contributor docs checked each claim against the implementation.
+The corrections, most consequential first:
+
+- **`.env.example` inverted the SSRF default.** It said private upstreams are
+  blocked by default and showed `CARTETHYIA_ALLOW_PRIVATE_UPSTREAMS=false`.
+  The setting is a flag — enabled unless the literal `false` is set — so leaving
+  it unset *permits* a provider base URL that resolves into a private range. An
+  operator who trusted the comment and left the line commented ran with the
+  permissive policy. The template now states the real default and how to narrow
+  it, and the `README` telemetry-capture default was corrected the same way
+  (`telemetryPayloads` defaults to `none`, not `bounded`).
+- **The CI push trigger named a branch that does not exist on the remote.** Only
+  `dev` and the GitHub default branch are published, and the default branch
+  carries no copy of the workflow, so `push: branches: [main]` could never fire
+  and direct pushes to the integration branch went unverified. The filter now
+  names `dev`.
+- **`README.md` and `CONTRIBUTING.md` described a development supervisor that
+  no script runs.** `bun run dev` is `dev:stack` — `concurrently` over the
+  backend and the Vite dev server on two ports — with no proxy, no CTRL+R
+  in-place restart, and no request holding. `scripts/ops-dev-supervisor.ts`
+  exists but is referenced by nothing, including the docs that described it.
+- **`TRANSPORT.md` contradicted the middleware it documents.** The IP-abuse
+  middleware was listed as a stage of the `/v1/*` chain (it mounts on the root
+  `request` hook, ahead of the whole chain), `EligibilityEvaluator` was said to
+  filter out `cooldown` and a `unhealthy` reason that no longer exists, and
+  `resolveMaxInflight()` was said to prefer an account value the function never
+  reads. `ARCHITECTURE.md` repeated the stage-order error.
+- **`PERSISTENCE.md` and `CONSOLE.md` described share links as hash-only and
+  enroll-only.** They retain the bearer token encrypted so the console can
+  re-display the link, and a personal key gets a `handoff` link while a share
+  template gets an `enroll` one. `PERSISTENCE.md` also claimed a GIN index on
+  `providers.capability_profile` that no migration creates — the same false
+  claim sat in a `schema.ts` comment, which is where the doc had copied it from.
+- **`SECURITY.md` named an API that was renamed and listed two thirds of the
+  scope union**, omitting the four `providers:*`/`models:*` scopes that are
+  tenant-assignable and security-relevant.
+- **The engineering skill's build command produced a broken binary.** It
+  compiled `src/main.ts`; the real entrypoint is the AOT output `dist/main.js`,
+  because bundling the raw source leaves Elysia's lazy `require("typebox/type")`
+  unresolved. Its prescribed commit trailer and `type(scope):` prefix appear in
+  no commit in the repository, and it named a `test/providers/integrations/qoder`
+  directory that does not exist — a path that still exits 0 by falling back to a
+  filename filter, so a reader would take it as a passing run.
+- Smaller corrections: `NODE_ENV=production` no longer gates the migrations
+  folder (in `README.md`, `Dockerfile`, and both build scripts), the baseline is
+  no longer described as the directory's only file, `bun run fetch:binaries`
+  was an instruction for a script that does not exist, the dashboard's test
+  command was confused with the backend's, `AGENTS.md` now records the
+  `scripts/*.test.ts` exception and the dashboard's actual TypeScript subset,
+  and the pull-request template no longer grants committed docs an exception to
+  the line-number ban.
+
+### Unified protocol hardening map
+
+Documented the distinct Chat Completions, Responses, and Messages contracts; mapped token-count and
+compaction APIs, modality/reasoning boundaries, Responses failure work, and Cursor Editor BYOK
+constraints. The stream path also sends downstream SSE keepalives during upstream silence without
+changing upstream watchdogs or retries. The Responses encoder now preserves multi-part reasoning
+summary indices through completion, fixing a confirmed output bug. The broader missing-reasoning
+report and HTTP 400 cause remain unconfirmed and are not claimed fixed.
+
 ### A fresh install starts from the current health statuses
 
 `0000_baseline.sql` still declared the `health_status` enum with the retired
@@ -613,11 +1341,17 @@ without a decorative page background or a separate HTML document.
 
 > **Koreksi.** The earlier startup-migration note treated the root `migrations/`
 > directory as disposable; it contained hand-run SQL that startup never read.
-> That was wrong. The tracked root directory now contains only
-> `0000_baseline.sql`, the complete schema for a fresh database. Backend
-> initialization runs its numbered SQL from this directory; the separate
+> That was wrong. The tracked root directory now holds `0000_baseline.sql`, the
+> complete schema for a fresh database, alongside the numbered forward
+> migrations added since. Backend initialization runs its numbered SQL from this
+> directory; the separate
 > `db:migrate` command and setup-time migration invocation were removed.
 > Future changes add a numbered SQL migration here for existing databases.
+>
+> **Koreksi.** The sentence above said the directory contains "only
+> `0000_baseline.sql`", which was true when written and stopped being true as
+> forward migrations landed beside it. The baseline is the only *baseline*; it
+> is not the only file.
 
 ### Claude Code tool results reach Codex
 
@@ -1143,8 +1877,10 @@ defects and a set of round-trip regressions.
 
 - `telemetry_events (api_key_id, created_at)` had no index, so every render of a
   public share page aggregated the largest table in the schema with a scan.
-  Added to `schema.ts`, the baseline, and as a hand-run migration
-  (`drizzle/migrations/manual/0010_*`). Existing databases need the migration.
+  Added to `schema.ts` and to the baseline. Existing databases need a forward
+  migration; the runner reads only top-level numbered SQL files and never read
+  the hand-run path this entry originally named, so a database created before
+  this change converges only once that migration exists.
 
 **Single owners and duplicates removed**
 

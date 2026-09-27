@@ -33,18 +33,15 @@ function accept(profile: unknown): void {
 }
 
 describe("validateCompatibilityProfile — credentialUrl", () => {
-  test("rejects a non-string credential URL before the allow-list runs", () => {
-    // The dashboard can post this field, so a numeric value must be rejected
-    // rather than persisted as a truthy non-URL.
-    expect(reject({ credentialUrl: 42 }).message).toBe("credentialUrl must be string");
-  });
-
-  test("a well-formed credentialUrl is still rejected by the unknown-field allow-list", () => {
-    // Observed inconsistency, pinned so a fix is deliberate: `credentialUrl`
-    // is validated above and then rejected below because it is missing from
-    // the `allowed` map. A provider profile carrying a credential URL cannot
-    // be persisted today. Reported, not silently repaired.
+  test("rejects a credential URL in a compatibility profile as an unknown field", () => {
+    // A provider's credential page is bundled metadata, not a per-tenant wire
+    // override: it has no dispatch reader, and it is projected from
+    // `provider-metadata.ts` onto the provider response. Posting it here must
+    // fail loudly rather than persist a field nothing reads.
     expect(reject({ credentialUrl: "https://console.example/keys" }).message).toBe(
+      "unknown compatibility_profile field credentialUrl has no runtime reader",
+    );
+    expect(reject({ credentialUrl: 42 }).message).toBe(
       "unknown compatibility_profile field credentialUrl has no runtime reader",
     );
   });

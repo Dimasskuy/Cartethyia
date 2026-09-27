@@ -8,6 +8,7 @@ import type { CanonicalEvent, CanonicalRequest } from "../../src/transport/canon
 import { canonicalToChatPayload } from "../../src/protocol/request/chat";
 import { canonicalToResponsesPayload } from "../../src/protocol/request/responses";
 import { canonicalToClaudeMessagesPayload } from "../../src/protocol/request/messages";
+import { buildGeminiPayload } from "../../src/protocol/request/gemini";
 import { parseResponsesResponseToEvents, decodeResponsesSseStream } from "../../src/protocol/response/responses";
 import { parseClaudeSseStream } from "../../src/protocol/response/messages";
 import { MessagesAdapter } from "../../src/transport/surface/messages/adapter";
@@ -39,6 +40,40 @@ describe("F1 chat reasoning_effort forwarding", () => {
   test("omits reasoning_effort when the caller did not request it", () => {
     const payload = canonicalToChatPayload(request());
     expect(payload).not.toHaveProperty("reasoning_effort");
+  });
+
+  // A Messages client states reasoning as `thinking: {type, budget_tokens}` and
+  // never sets `effort`. When such a request is translated onto the Chat wire
+  // the intent must survive the crossing: reading `effort` directly made the
+  // upstream run with reasoning off while the caller believed it was on.
+  test("derives reasoning_effort from an Anthropic thinking block", () => {
+    const payload = canonicalToChatPayload(
+      request({ reasoning: { thinking_type: "adaptive", budget_tokens: 8192 } }),
+    );
+    expect(payload.reasoning_effort).toBe("high");
+  });
+
+  test("maps thinking disabled to an omitted reasoning_effort", () => {
+    const payload = canonicalToChatPayload(
+      request({ reasoning: { thinking_type: "disabled", budget_tokens: 8192 } }),
+    );
+    expect(payload).not.toHaveProperty("reasoning_effort");
+  });
+});
+
+describe("F1b Responses reasoning effort forwarding", () => {
+  test("derives reasoning.effort from an Anthropic thinking block", () => {
+    const payload = canonicalToResponsesPayload(
+      request({ reasoning: { thinking_type: "adaptive", budget_tokens: 8192 } }),
+    );
+    expect(payload.reasoning).toMatchObject({ effort: "high" });
+  });
+
+  test("omits reasoning.effort for thinking disabled", () => {
+    const payload = canonicalToResponsesPayload(
+      request({ reasoning: { thinking_type: "disabled" } }),
+    );
+    expect(payload.reasoning).toBeUndefined();
   });
 });
 
@@ -687,6 +722,7 @@ describe("F2 chat emits Messages-homed tool results as role:tool", () => {
       chat: (r: CanonicalRequest) => canonicalToChatPayload(r),
       responses: (r: CanonicalRequest) => canonicalToResponsesPayload(r),
       messages: (r: CanonicalRequest) => canonicalToClaudeMessagesPayload(r),
+      gemini: (r: CanonicalRequest) => buildGeminiPayload(r),
     } as const;
 
     /** Every image block in a body, validated against that wire's contract. */
@@ -727,6 +763,40 @@ describe("F2 chat emits Messages-homed tool results as role:tool", () => {
             problems.push("messages file source has no file_id");
           }
         }
+        if (wire === "gemini") {
+          // A Gemini `Part` is a union: an image is either inline bytes
+          // (`inlineData`, a `Blob`) or a reference (`fileData`, a `FileData`
+          // whose only required field is `fileUri`). Two failures are silent
+          // there: a `data:` URI in `fileUri`, which asks the upstream to fetch
+          // bytes that are already in the string, and the text placeholder this
+          // builder emits for a shape it could not resolve — the image is gone
+          // while the request still succeeds.
+          const inline = record["inlineData"];
+          if (inline !== undefined) {
+            if (typeof inline !== "object" || inline === null)
+              problems.push("gemini inlineData is not an object");
+            else if (typeof (inline as Record<string, unknown>)["data"] !== "string")
+              problems.push("gemini inlineData has no data");
+          }
+          const fileData = record["fileData"];
+          if (fileData !== undefined) {
+            if (typeof fileData !== "object" || fileData === null) {
+              problems.push("gemini fileData is not an object");
+            } else {
+              const fileUri = (fileData as Record<string, unknown>)["fileUri"];
+              if (typeof fileUri !== "string") problems.push("gemini fileData has no fileUri");
+              else if (fileUri.startsWith("data:"))
+                problems.push("gemini fileData.fileUri is a data URI the upstream cannot fetch");
+            }
+          }
+          // A bare placeholder means the attachment was lost. The named form
+          // (`[image: file-9]`) is the intentional degradation for a Files API
+          // id — the Chat wire does the same, because an id minted by the
+          // *originating* provider's store is not a Gemini file URI and cannot
+          // be fetched — so it stays visible to the model and is not a loss.
+          if (typeof record["text"] === "string" && /^\[(image|file|audio)(: unsupported source)?\]$/.test(record["text"]))
+            problems.push(`gemini dropped the attachment to ${JSON.stringify(record["text"])}`);
+        }
         for (const nested of Object.values(record)) walk(nested);
       };
       walk(body);
@@ -748,7 +818,7 @@ describe("F2 chat emits Messages-homed tool results as role:tool", () => {
     ];
 
     for (const { label, owner, body } of origins) {
-      for (const wire of ["chat", "responses", "messages"] as const) {
+      for (const wire of ["chat", "responses", "messages", "gemini"] as const) {
         test(`${label} -> ${wire} is a valid image block`, () => {
           const canonical = adapters[owner].parse(body);
           const outbound = builders[wire](canonical);
@@ -882,7 +952,7 @@ describe("F2 chat emits Messages-homed tool results as role:tool", () => {
     }
 
     for (const { label, owner, body } of AUDIO_ORIGINS) {
-      for (const wire of ["chat", "responses", "messages"] as const) {
+      for (const wire of ["chat", "responses", "messages", "gemini"] as const) {
         test(`${label} -> ${wire} is a valid audio encoding`, () => {
           const canonical = adapters[owner].parse(body);
           const outbound = builders[wire](canonical);

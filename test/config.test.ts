@@ -90,6 +90,29 @@ describe("Network policy — trusted proxy + SSRF", () => {
     });
   });
 
+  test("resolveTrustedProxyBoundary reads the platform token as its own mode", () => {
+    // A PaaS edge cannot be allowlisted, so `platform` is the only way to trust
+    // forwarded headers there. It carries no allowlist: matching one would
+    // defeat the point of the mode.
+    withEnvironment("TRUSTED_PROXY_CIDRS", "platform", () => {
+      expect(resolveTrustedProxyBoundary()).toEqual({ mode: "platform" });
+    });
+    withEnvironment("TRUSTED_PROXY_CIDRS", " Platform ", () => {
+      expect(resolveTrustedProxyBoundary()).toEqual({ mode: "platform" });
+    });
+  });
+
+  test("the platform token widens trust only when it is the whole value", () => {
+    // A list that also names CIDRs is a real allowlist. Reading it as
+    // "trust everything" would silently drop the boundary the operator set.
+    withEnvironment("TRUSTED_PROXY_CIDRS", "platform,10.0.0.0/8", () => {
+      expect(resolveTrustedProxyBoundary()).toEqual({
+        mode: "trusted",
+        allowlist: ["platform", "10.0.0.0/8"],
+      });
+    });
+  });
+
   test("resolveSsrfPolicy preserves network and private-destination settings", () => {
     withEnvironment("CARTETHYIA_ALLOWED_NETWORKS", " 10.0.0.0/8,192.0.2.0/24 ", () =>
       withEnvironment("CARTETHYIA_MAX_REDIRECTS", "0", () =>

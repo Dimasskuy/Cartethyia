@@ -94,12 +94,6 @@ const ADAPTER_OWNED: Record<string, true> = {
 };
 
 export function validateCompatibilityProfile(profile: CompatibilityProfile): void {
-  if (profile.credentialUrl !== undefined) {
-    // credentialUrl is presentation-only, but we allow it; just ensure it's a string URL if present
-    if (typeof profile.credentialUrl !== "string") {
-      throw new GatewayError("invalid_request", 400, "credentialUrl must be string");
-    }
-  }
   if (profile.cli_identity !== undefined) {
     if (typeof profile.cli_identity !== "boolean") {
       throw new GatewayError("invalid_request", 400, "cli_identity must be boolean");
@@ -425,6 +419,12 @@ export interface ProviderResponse {
   /** `false` only for a genuinely credential-less provider (OpenCode Free) —
    * the dashboard hides account creation for it since none is usable. */
   requiresAccount: boolean;
+  /** Whether its built-in adapter constructs a User-Agent header itself. */
+  hasAdapterUserAgent: boolean;
+  /** Where the operator obtains this provider's credential. Presentation-only. */
+  credentialUrl?: string;
+  /** One line of guidance beside {@link credentialUrl} when the flow is not a plain paste. */
+  credentialHint?: string;
   capabilityProfile?: Record<string, unknown>;
   baseUrl?: string;
   compatibilityProfile?: CompatibilityProfile;
@@ -442,7 +442,7 @@ export interface ProviderResponse {
    * declares nothing and the caller's own choice stands. */
   supportedWireFamilies?: readonly WireFamily[];
 }
-export interface ProviderRecord extends ProviderResponse {
+export interface ProviderRecord extends Omit<ProviderResponse, "hasAdapterUserAgent"> {
   tenantId: string | null;
 }
 

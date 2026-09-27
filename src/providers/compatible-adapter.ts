@@ -1,6 +1,14 @@
 import { GatewayError } from "../transport/gateway-error";
 import type { CanonicalEvent, CanonicalRequest, WireFamily } from "../transport/canonical-model";
-import { throwIfHtmlResponse, mapUpstreamHttpError, extractUpstreamMessage, extractHtmlTitle, upstreamProviderCode } from "../transport/failure-policy";
+import { isRecord } from "../protocol/primitives";
+import {
+  classifyUpstreamError,
+  throwIfHtmlResponse,
+  mapUpstreamHttpError,
+  extractUpstreamMessage,
+  extractHtmlTitle,
+  upstreamErrorIdentifier,
+} from "../transport/failure-policy";
 import {
   applyRouteUserAgent,
   CARTETHYIA_PROBE_MARKER,
@@ -371,17 +379,35 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
         json["content"] !== undefined ||
         json["candidates"] !== undefined;
       if (envelopeError !== undefined && envelopeError !== null && !hasCompletionShape) {
+        const errorObject = isRecord(envelopeError) ? envelopeError : json;
+        const identifier = upstreamErrorIdentifier(json);
+        const providerStatus = [
+          errorObject["status"],
+          errorObject["statusCode"],
+          errorObject["code"],
+        ].find(
+          (value): value is number =>
+            typeof value === "number" &&
+            Number.isFinite(value) &&
+            value >= 400 &&
+            value < 600,
+        );
+        const classification = classifyUpstreamError(providerStatus, identifier);
         const message = extractUpstreamMessage(json) || "Upstream reported an error";
-        const providerCode = upstreamProviderCode(json);
         throw new GatewayError(
-          "transport_unavailable",
-          502,
+          classification.code,
+          classification.status,
           message.slice(0, 300),
           {
-            upstreamStatus: res.status,
-            ...(providerCode === undefined ? {} : { providerCode }),
+            providerId: this.provider_id,
+            ...(providerStatus === undefined ? {} : { providerStatus }),
+            ...(identifier === undefined ? {} : { providerCode: identifier }),
+            ...(classification.credentialEvidence ? { credentialEvidence: true } : {}),
+            ...(classification.rateLimitScope
+              ? { rateLimitScope: classification.rateLimitScope }
+              : {}),
           },
-          "upstream",
+          classification.origin,
         );
       }
       for (const ev of decodeWireResponse(wireFamily, json, request)) yield ev;

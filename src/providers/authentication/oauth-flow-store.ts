@@ -51,6 +51,19 @@ export interface OAuthLoginClient {
   readonly supportsDeviceCode: boolean;
   /** False for device-only clients; omitted clients that omit this flag default to browser support. */
   readonly supportsBrowserCode?: boolean;
+  /**
+   * Loopback/native redirect URI this client's authorization server has
+   * allowlisted, when it differs from the gateway-wide default.
+   *
+   * Authorization servers allowlist redirect URIs exactly. OpenAI registers
+   * only `http://localhost:1455/auth/callback` for the Codex client, and Z.AI
+   * rejects every loopback URI for the ZCode client, so a single shared default
+   * cannot serve both — advertising the gateway default to OpenAI is answered
+   * with `invalid_request` before the user ever sees a consent screen. The same
+   * value is reused verbatim at code exchange, because the token endpoint
+   * compares it against the one the authorize step sent.
+   */
+  readonly browserRedirectUri?: string;
   /** Browser-code clients only; device-only clients omit both. */
   buildAuthorizeUrl?(request: OAuthAuthorizeRequest): string;
   exchangeCode?(code: string, codeVerifier: string, redirectUri: string): Promise<OAuthExchangeResult>;
@@ -337,6 +350,7 @@ export function composeAbortSignal(signal: AbortSignal | undefined, timeoutMs: n
 export const DEFAULT_TTL_SECONDS = 900;
 const KEY_PREFIX = "cartethyia:oauth:";
 const PENDING_PREFIX = `${KEY_PREFIX}pending:`;
+const PENDING_PROVIDER_PREFIX = `${KEY_PREFIX}pending-provider:`;
 const DEVICE_PREFIX = `${KEY_PREFIX}device:`;
 const DEVICE_STATE_PREFIX = `${KEY_PREFIX}device-state:`;
 
@@ -371,6 +385,39 @@ export class OAuthFlowStore {
 
   async savePending(state: string, flow: PendingOAuthFlow): Promise<void> {
     await this.#redis.set(PENDING_PREFIX + state, JSON.stringify(flow), "EX", this.#ttlSeconds);
+    // Per-provider pointer alongside the state key. An authorization server that
+    // does not echo `state` (OpenRouter omits it from the callback entirely)
+    // leaves the callback with no correlation key, and the state-keyed entry
+    // alone cannot be found. One browser login is in flight per provider at a
+    // time — the console dialog is modal — so a single pointer is the correct
+    // shape, and it is cleared together with the state key on consume.
+    await this.#redis.set(
+      PENDING_PROVIDER_PREFIX + flow.providerId,
+      state,
+      "EX",
+      this.#ttlSeconds,
+    );
+  }
+
+  /**
+   * Reads and clears the pending flow for a provider, for callbacks that arrive
+   * without `state`. Returns `undefined` when no browser login is in flight.
+   *
+   * The pointer is last-write-wins: starting a second console login for one
+   * provider before the first callback arrives repoints it at the newer state,
+   * so the newer callback is the one served and the earlier flow stays
+   * unreachable until its TTL expires. That is deliberate — the alternative
+   * would be guessing which of two in-flight logins a stateless callback
+   * belongs to, and the operator's newest attempt is the one they are watching.
+   * The consumed state key is deleted first, so a callback can never inherit a
+   * verifier that was already spent.
+   */
+  async consumePendingByProvider(providerId: string): Promise<PendingOAuthFlow | undefined> {
+    const pointer = PENDING_PROVIDER_PREFIX + providerId;
+    const state = await this.#redis.get(pointer);
+    if (!state) return undefined;
+    await this.#redis.del(pointer);
+    return this.consumePending(state);
   }
 
   /**
@@ -399,7 +446,10 @@ export class OAuthFlowStore {
     }
     if (!raw) return undefined;
     try {
-      return JSON.parse(raw) as PendingOAuthFlow;
+      const flow = JSON.parse(raw) as PendingOAuthFlow;
+      // Clear the provider pointer so a consumed state cannot be looked up again.
+      await this.#redis.del(PENDING_PROVIDER_PREFIX + flow.providerId);
+      return flow;
     } catch {
       return undefined;
     }

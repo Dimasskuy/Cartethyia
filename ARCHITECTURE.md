@@ -13,8 +13,11 @@ below — each layer doc sits beside the code it describes, named for its layer.
 ## How to read the docs
 
 - Start here for orientation, then open the doc for the top-level folder you
-  need. Each has the same shape: purpose, layout, key behaviors with concrete
-  file/function names, invariants, and a "How to extend" checklist.
+  need. Each opens the same way — purpose, layout, and key behaviors with
+  concrete file/function names — and closes with the section that fits the
+  layer: a "How to extend" checklist in console, network, protocol, providers,
+  and security, or a rules/invariants list in observability, persistence,
+  runtime, transport, and workers.
 - One doc per top-level `src/` folder, covering its whole subtree, named for its
   layer in caps (`src/providers/PROVIDERS.md`, `src/transport/TRANSPORT.md`) so
   no two docs share a basename. Subfolders carry no doc of their own — the
@@ -49,14 +52,16 @@ discriminant selects how much of the process mounts:
   where `bootstrap()` is skipped and no database exists, and the routing /
   static-serving tests need the console router to be absent.
 
-One request, end to end: ingress (single body read) → ordered pipeline
-(readiness → identity → IP-abuse → API-key auth → canonical parse → route
+One request, end to end: ordered pipeline (dependency readiness → ingress policy,
+the single body read → client identity → API-key auth → canonical parse → route
 prepare) → `RoutingEngine.plan()` (alias → combo → ambiguity → eligibility
 → capability filter → provider-routing reorder) → leases (admission →
 pool slot → reservation) → provider adapter dispatch (stream primed before
 the 200 commits) → `completeAttempt()` (usage, health, capture, exactly one
 telemetry row); the persistence batch transaction also updates durable account
-and API-key usage totals.
+and API-key usage totals. The per-IP abuse check is not a stage in that array:
+it mounts at the composition root on the `request` hook so it counts a request
+that matches no route, which puts it ahead of readiness and client identity.
 
 ## Doc map
 
@@ -67,7 +72,7 @@ and API-key usage totals.
 | transport | `src/transport/TRANSPORT.md` | Canonical core, lifecycle, ingress pipeline, surface codecs, preparation/state, capability/alias/combo, routing plan, dispatch, error taxonomy |
 | protocol | `src/protocol/PROTOCOL.md` | Canonical↔wire codecs, registry dispatcher, shared primitives |
 | network | `src/network/NETWORK.md` | Validated egress, SSRF policy, pool agents, weighted admission, retry/dedup rules |
-| security | `src/security/SECURITY.md` | Identity → auth → CSRF → IP-abuse → admission, crypto, headers |
+| security | `src/security/SECURITY.md` | Data plane: identity → IP-abuse → API-key auth → admission; shared primitives: crypto, headers; console-scoped CSRF |
 | providers | `src/providers/PROVIDERS.md` | Registry, metadata × capabilities × lazy import, seeding/catalog/discovery, OAuth kit, quota shape and window engine, per-provider adapters, runtime operations |
 
 ### Control plane

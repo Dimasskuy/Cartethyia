@@ -14,6 +14,7 @@ import {
 } from "../../transport/translation/thinking";
 import { isClaudeBillingHeaderText, resolveImageSource } from "../primitives";
 import { resolvePromptCacheKey } from "../../providers/operations/session-resolution";
+import { reasoningEffortFromIntent } from "../../providers/reasoning";
 
 const RESPONSES_CACHEABLE_BLOCK_TYPES: ReadonlySet<string> = new Set([
   "input_text",
@@ -282,9 +283,15 @@ export function canonicalToResponsesPayload(
   if (request.metadata !== undefined) payload.metadata = request.metadata;
   if (request.reasoning) {
     const reasoning: Record<string, unknown> = {};
-    if (request.reasoning.effort !== undefined) {
+    // `effort` is read through the shared intent translation, not off the
+    // intent directly: a Messages client states reasoning as
+    // `thinking: {type, budget_tokens}`, so reading `effort` alone dropped
+    // the intent on the floor whenever such a request was translated onto
+    // this wire. Codex already derives its tier this way.
+    const requestedEffort = reasoningEffortFromIntent(request.reasoning);
+    if (requestedEffort !== undefined) {
       const effort = clampReasoningEffort(
-        request.reasoning.effort,
+        requestedEffort,
         resolveSupportedReasoningEfforts(request.model, "responses"),
       );
       if (effort !== undefined) reasoning.effort = effort;

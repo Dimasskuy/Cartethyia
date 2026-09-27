@@ -177,7 +177,7 @@ export function RoutingStrategyCard({
               value={routing.userAgent}
               maxLength={4096}
               onChange={(event) => routing.setUserAgent(event.target.value)}
-              hint="Built-in API-key provider requests only; OAuth and custom-provider identity settings stay unchanged."
+              hint="Only for built-in API-key providers without an adapter User-Agent builder; provider-owned identities are preserved."
             />
           </div>
         ) : null}

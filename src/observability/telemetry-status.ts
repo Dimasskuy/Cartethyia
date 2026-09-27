@@ -58,11 +58,10 @@ export const GATEWAY_ERROR_STATUSES = ["failed", "truncated"] as const;
 export const GATEWAY_ERROR_HTTP_MIN = 500;
 
 /**
- * The `5xx` statuses that are *not* gateway defects, even though they are
- * server errors: capacity and availability. Named explicitly because they are
- * the only exceptions above `GATEWAY_ERROR_HTTP_MIN`.
+ * The `5xx` statuses that represent provider capacity/availability rather than
+ * a gateway defect. Named explicitly so error-rate rollups exclude both cases.
  */
-export const CAPACITY_HTTP_STATUSES = [503] as const;
+export const CAPACITY_HTTP_STATUSES = [503, 529] as const;
 
 const CAPACITY_HTTP_STATUS_SET: ReadonlySet<number> = new Set(CAPACITY_HTTP_STATUSES);
 

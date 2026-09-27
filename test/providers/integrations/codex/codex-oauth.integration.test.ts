@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCodexDeviceStart, pollCodexDeviceAuth, startCodexDeviceAuth } from "../../../../src/providers/integrations/codex/codex-device-code";
 import { createCodexIdentity, filterCodexMetadata, getCodexAccountId, getCodexInstallId, getCodexResidency } from "../../../../src/providers/integrations/codex/codex-identity";
-import { CODEX_CLIENT_ID, CODEX_DEVICE_REDIRECT_URI, CodexOAuthClient } from "../../../../src/providers/integrations/codex/codex-oauth";
+import { CODEX_BROWSER_REDIRECT_URI, CODEX_CLIENT_ID, CODEX_DEVICE_REDIRECT_URI, CodexOAuthClient } from "../../../../src/providers/integrations/codex/codex-oauth";
 import { OAuthFlowStore } from "../../../../src/providers/authentication/oauth-flow-store";
 import type { RedisClient } from "../../../../src/persistence/redis";
 
@@ -174,19 +174,26 @@ describe("Codex OAuth and Identity Integration", () => {
           const originalOrigin = process.env.CARTETHYIA_PUBLIC_ORIGIN;
           process.env.CARTETHYIA_PUBLIC_ORIGIN = "https://example.test";
           try {
-            const authorizeUrl = new CodexOAuthClient().buildAuthorizeUrl({
+            const client = new CodexOAuthClient();
+            // Pinned as a literal, not compared against the constant it is
+            // derived from: OpenAI allowlists exactly this string, so a change
+            // to the constant must fail here rather than agree with itself.
+            expect(client.browserRedirectUri).toBe("http://localhost:1455/auth/callback");
+            expect(CODEX_BROWSER_REDIRECT_URI).toBe("http://localhost:1455/auth/callback");
+            const authorizeUrl = client.buildAuthorizeUrl({
               state: "s",
               codeChallenge: "c",
-              redirectUri: "http://127.0.0.1:59653/callback",
+              redirectUri: CODEX_BROWSER_REDIRECT_URI,
             });
             const params = new URL(authorizeUrl).searchParams;
             expect(params.get("client_id")).toBe(CODEX_CLIENT_ID);
-            expect(params.get("redirect_uri")).toBe(
-              "http://127.0.0.1:59653/callback",
-            );
+            expect(params.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
             expect(params.get("originator")).toBe("codex_cli_rs");
-            expect(params.get("codex_cli_simplified_flow")).toBeNull();
-            expect(params.get("id_token_add_organizations")).toBeNull();
+            // Both flags the reference client sends. Without them the reduced
+            // consent screen is skipped and the id token omits the organization
+            // claim the account label reads.
+            expect(params.get("codex_cli_simplified_flow")).toBe("true");
+            expect(params.get("id_token_add_organizations")).toBe("true");
           } finally {
             if (originalOrigin === undefined) delete process.env.CARTETHYIA_PUBLIC_ORIGIN;
             else process.env.CARTETHYIA_PUBLIC_ORIGIN = originalOrigin;

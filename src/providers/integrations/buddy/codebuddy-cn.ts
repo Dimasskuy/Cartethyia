@@ -8,6 +8,7 @@
 
 import { OpenAICompatibleAdapter } from "../../compatible-adapter";
 import type { ProviderDispatchTarget, ModelDefinition, ProviderAdapter } from "../../provider-registry";
+import type { DiscoveryInput } from "../../discovery/discovery-types";
 import type { CanonicalRequest } from "../../../transport/canonical-model";
 import { ensurePayloadModel } from "../configured-provider";
 import { providerBaseUrl } from "../../provider-metadata";
@@ -15,6 +16,7 @@ import {
   codebuddyAdapterConfig,
 } from "./codebuddy-shared";
 import { makeBuddyModel, type BuddyRawEntry } from "./buddy-catalog-shared";
+import { BUDDY_CN_MODELS_PATH, fetchBuddyDirectoryModels } from "./buddy-discovery-shared";
 import {
   buddyPrePayloadCommon,
   coalesceConsecutiveUserMessages,
@@ -93,21 +95,35 @@ export function codeBuddyCnPrePayload(
 // Model catalog — exact current provider CN catalog (13 entries)
 
 const CODEBUDDY_CN_RAW: readonly BuddyRawEntry[] = [
-  ["glm-5.2", "GLM 5.2", true, true, 1_000_000, 48_000],
-  ["glm-5.1", "GLM 5.1", true, true, 200_000, 48_000],
-  ["glm-5v-turbo", "GLM 5v Turbo", true, true, 200_000, 64_000],
-  ["minimax-m3", "MiniMax M3", true, true, 512_000, 128_000],
-  ["kimi-k2.7", "Kimi K2.7", true, true, 256_000, 32_000],
-  ["kimi-k2.6", "Kimi K2.6", true, true, 256_000, 32_000],
-  ["hy3", "Hy3", true, true, 192_000, 64_000],
-  ["hy4-preview", "Hy4 Preview", true, true, 1_000_000, 64_000],
   ["glm-5.3", "GLM 5.3", true, true, 1_000_000, 48_000],
   ["glm-5.3-flash", "GLM 5.3 Flash", true, true, 1_000_000, 32_000],
+  ["glm-5v-turbo", "GLM 5v Turbo", true, true, 200_000, 64_000],
+  ["minimax-m3", "MiniMax M3", true, true, 512_000, 128_000],
+  ["kimi-k2.8-preview", "Kimi K2.8 Preview", true, true, 256_000, 32_000],
+  ["kimi-k2.7", "Kimi K2.7", true, true, 256_000, 32_000],
+  ["kimi-k2.6", "Kimi K2.6", true, true, 256_000, 32_000],
+  ["kimi-k2.5", "Kimi K2.5", true, true, 164_000, 32_000],
   ["kimi-k3-1", "Kimi K3", true, true, 1_000_000, 32_000],
+  ["hy3", "Hy3", true, true, 192_000, 64_000],
+  ["hy4-preview", "Hy4 Preview", true, true, 1_000_000, 64_000],
   ["deepseek-v4.1-flash", "DeepSeek V4.1 Flash", true, true, 1_000_000, 50_000],
 ];
-
 export const CODEBUDDY_CN_MODELS: readonly ModelDefinition[] = CODEBUDDY_CN_RAW.map((entry) => makeBuddyModel(entry, "cbcn"));
+
+/** Reads the CodeBuddy CN console directory (same envelope as the intl site). */
+export async function discoverCodeBuddyCnModels(
+  input: DiscoveryInput,
+): Promise<readonly ModelDefinition[] | null> {
+  return fetchBuddyDirectoryModels({
+    siteUrl: CODEBUDDY_CN_BASE_URL,
+    providerId: CODEBUDDY_CN_PROVIDER_ID,
+    credential: input.credential,
+    modelsPath: BUDDY_CN_MODELS_PATH,
+    endpoint: undefined,
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.fetcher ? { fetcher: input.fetcher } : {}),
+  });
+}
 
 // Public factory
 

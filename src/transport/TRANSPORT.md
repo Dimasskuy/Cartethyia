@@ -39,18 +39,20 @@ src/transport/
 ## Ingress pipeline (`middleware/`)
 
 `pipeline.ts` fixes the stage order once; `ingress.ts` implements the factories. Composition code (`app.ts`) only mounts — it
-never assembles policy. `mountRoot()` applies request-context state and error normalization at the root; `createGateway()`
-mounts the ordered `/v1/*` chain around caller-registered routes, then attaches the telemetry lifecycle (or plain cleanup when
-no telemetry buffer is configured):
+never assembles policy. `mountRoot()` applies request-context state, the root IP-abuse hook, and error normalization, and
+attaches the telemetry lifecycle (or plain cleanup when no telemetry buffer is configured); `createGateway()` mounts the
+ordered `/v1/*` chain and registers the caller's routes, registering no lifecycle of its own:
 
 1.  `createDependencyReadinessMiddleware` — fail closed on not-ready dependencies or shutdown drain.
 2.  `createIngressPolicyMiddleware` — single-read body decode + size/media enforcement.
 3.  `createClientIdentityMiddleware` — peer address → trusted client IP on state; logs `request_start`.
-4.  `createIpAbuseProtectionMiddleware` — optional, only with an `IpAbuseProtectionService`.
-5.  `createApiKeyAuthenticationMiddleware` — `routing:invoke` scope check; stores `ResolvedApiKey` on state (one inline
+4.  `createApiKeyAuthenticationMiddleware` — `routing:invoke` scope check; stores `ResolvedApiKey` on state (one inline
   policy, no per-route table).
-6.  `createCanonicalRequestMiddleware` — `detectOnce()` + adapter `parse()` into `state.canonicalRequest`.
-7.  `createProxyRoutePreparationMiddleware` — `ProxyRequestPreparer.prepare()` into `state.preparedRequest`.
+5.  `createCanonicalRequestMiddleware` — `detectOnce()` + adapter `parse()` into `state.canonicalRequest`.
+6.  `createProxyRoutePreparationMiddleware` — `ProxyRequestPreparer.prepare()` into `state.preparedRequest`.
+
+The per-IP abuse middleware is not in that chain: `mountRoot()` mounts it on the root `request` hook so it also covers
+`/v1/*` paths that match no route, and it resolves its own client identity because it runs ahead of the identity stage.
 
 -  **Body and state** — `readIngressBody()` reads the body exactly once, enforces `application/json` on JSON routes (415) and
   `content-length` + incremental size caps (413, default 1 MiB), and a JSON nesting-depth cap of
@@ -256,7 +258,13 @@ cannot fix, degrade the rest in a fixed least-impact order.
   provider rejects), and a builder putting a non-string where the wire requires one (an object as `image_url`, which the
   provider rejects with "expected an image URL, but got an object instead"). The single resolver is
   `resolveImageSource()` in `protocol/primitives.ts` — it accepts a bare URL/`data:` string, the Chat nested object, the
-  Responses `image_url`/`file_id`, and Anthropic's `source` — and every builder routes through it. Chat has no `file_id` form
+  Responses `image_url`/`file_id`, and Anthropic's `source` — and every builder routes through it, **including the Gemini
+  encoder** (`protocol/request/gemini.ts`), which resolved only its own two hand-rolled arms until a multimodal pass found
+  that a Responses-origin or bare-string image degraded to `[image]` there. A `data:` URL is split by
+  `splitDataUrl()` in the same module, never forwarded as a URI: the upstream cannot fetch bytes it already has, and the
+  image is lost while the request succeeds. Gemini takes inline bytes as `inlineData` and a reference as `fileData`
+  (`FileData.mimeType` is optional, so it is omitted rather than guessed — a hardcoded `image/png` on a remote JPEG is a
+  wire lie the upstream cannot detect). Chat has no `file_id` form
   for images and no document-URL field, so those two shapes degrade to a text reference naming the id; they must never emit
   an invalid block, because the provider rejects the *whole request* and the caller loses their text too. A new modality
   builder is added by extending the resolver and the per-wire projection together, then adding its row to the cross-protocol
@@ -295,8 +303,9 @@ router and planner filter on, defaulting `image`/`document`/`audio` to true on c
 them on its declared modalities; `routeCapabilitiesFor()` then narrows audio to `AUDIO_CAPABLE_WIRE_FAMILIES`, since the
 Messages schema defines no audio block);
 `resolveBypassProxy()` decides per-(tenant, provider) direct-vs-pool, defaulting to `DEFAULT_PROXY_BYPASS_PROVIDER_IDS`;
-`resolveMaxInflight()` prefers the account value over the routing-panel default, where `undefined` means unlimited rather than
-the deployment ceiling; `resolveNetworkPools()` lists the account tenant's active pools (ids, limits, weights) plus the
+`resolveMaxInflight()` resolves the provider-wide ceiling shared by every account of the provider — the tenant routing-panel
+row over the global `__global__` row — where `undefined` (null or absent) means unlimited rather than the deployment ceiling;
+per-account overrides are deliberately unsupported; `resolveNetworkPools()` lists the account tenant's active pools (ids, limits, weights) plus the
 tenant's `poolRouting` strategy, which dispatch applies as strict round-robin when set (`leases.ts` →
 `PoolRotation`) and weighted least-loaded otherwise; `cliMappingSourceKeys()` expands an enabled Claude family mapping row into
 all lookup keys.
@@ -318,8 +327,8 @@ capability filter → provider routing reorder. Returns a `RoutePlan` with order
 -  Combos — members resolve through aliases; nested combos flatten one level; `round_robin` combos rotate group heads via
   `RoundRobinState`. `candidateMatches()` — bare `model` matches any provider; `provider/model` pins one; multi-provider bare
   matches throw `ambiguousModelError` unless a combo disambiguates.
--  `EligibilityEvaluator` — single shared predicate (live routing, console, probes): `locked` / `cooldown` / `disabled` /
-  `unhealthy` filtered out. Zero eligible throws `accountsUnavailableError` (503, retryable), never 404. Capability filter —
+-  `EligibilityEvaluator` — single shared predicate (live routing, console, probes): `locked` / `disabled` filtered out; a
+  `cooldown` candidate stays eligible and `plan()` orders it behind every healthy sibling. Zero eligible throws `accountsUnavailableError` (503, retryable), never 404. Capability filter —
   `candidateSupportsRequest()` per variant; an empty result throws `capabilityUnsupportedError` for the planner's degrade
   loop. There is no model substitution: a request the chosen model cannot serve is degraded in place or rejected, never
   silently rerouted to a different model.
@@ -386,16 +395,11 @@ calls `retainLeases()` and hands ownership to the stream: `releaseStreamResource
 `resolveStreamStallTimeoutMs`). `createDispatchStreamEncoder()` wraps the surface encoders with per-surface error frames
 (chat/completion data frames, responses `response.error`, messages `error`).
 
-**Error frames inside a 200 OK.** A body that carries an explicit error envelope is an upstream failure that arrived after
-the status line, and it must surface as a typed error, not as a silent `failed` terminal. `stream-error-frames.ts`
-(`gatewayErrorFromStreamError`) is the one classifier the chat, responses, and codex decoders share; the Claude and Gemini
-decoders raise directly. Classification reads structured identifiers only (`error.type`, `error.code`, a numeric
-`error.status`), so a rate-limit identifier becomes `quota_exceeded` (429, provider-scoped), an overload identifier becomes
-`platform_unavailable`, an auth identifier becomes `authentication_failed` with `credentialEvidence`, and a named context
-overflow becomes `context_length_exceeded`. A frame that declares a failure with nothing recognizable becomes
-`platform_unavailable` — the upstream failed and we cannot say more. Prose is never matched: a substring rule like
-`{ text: "capacity" }` fires on any message containing the word, including text the client itself wrote. A decoder's own catch block must rethrow a
-`GatewayError` unchanged, or the classification is rewritten as a malformed-SSE failure.
+**Error frames inside a 200 OK.** An explicit error envelope must surface as a typed failure, not a silent `failed`
+terminal. Chat, Responses, and Codex frames use `gatewayErrorFromStreamError`; Claude, Gemini, Command Code, Devin,
+Qoder, and compatible JSON errors use the same structured identifier/status classifier at their adapter boundary. Exact
+codes/types distinguish auth, quota, capacity, policy (`11140`), validation, not-found, timeout, and server errors;
+message prose is never classified. Unknown in-stream failures remain `platform_unavailable`.
 
 ### Stream-stall boundary and retry semantics
 
@@ -444,29 +448,53 @@ bookkeeping goes in `completeAttempt`, after the idempotency guard.
 ## Error taxonomy
 
 `GatewayError(code, status, message, details, origin)` in `gateway-error.ts`, with allowlisted, size-bounded public details.
-`failure-policy.ts` owns the one status→code table (`statusToGatewayErrorCode`); adapters that deviate call it and override
-the result rather than restating it. A second, contradictory table (`statusToErrorCategory`) used to sit beside it and
-disagreed on 5xx and 529 — it is gone, and no adapter keeps a private copy of the mapping.
+`failure-policy.ts` owns the structured identifier + HTTP status classifier; `statusToGatewayErrorCode` is its status-only
+fallback. HTTP, Claude, Codex, Qoder, and in-stream errors use this policy so the same provider type does not become a
+client error on one route and a server error on another.
 
 ### Codes
 
 `origin` is the layer to blame, and it is the field that tells an operator whether to look at the router or the provider.
 `retry` is what `classifyUpstreamFailure` decides for that code; it drives the attempt loop's failover.
 
+### Message labels
+
+`origin` is machine-readable; the public `message` carries the same distinction in text so a client that only
+prints the message can still tell who failed. Every origin has its own prefix — `Cartethyia Error:`,
+`Upstream Error:`, `Network Error:` — applied by `labelGatewayMessage`, which prefixes **exactly once** so a value
+that crosses two shapers (the ingress normalizer, then the console error handler) is not doubled.
+
+Labelling the upstream is deliberate. The earlier behaviour emitted upstream messages bare to avoid blaming the
+gateway, but an unlabelled message is ambiguous rather than neutral: a provider rejection and a gateway defect
+were indistinguishable, so every one of them read as ours. Naming the real source is what removes the ambiguity;
+naming nothing does not.
+
+The prefix follows `origin`, never the code alone. A code that can arrive from more than one boundary —
+`transport_unavailable`, `deadline_exceeded`, `platform_unavailable` — must set `origin` to the boundary that
+actually failed at each construction site, because the label and the routing/health decisions both read it.
+
+Structured provider types may normalize the public code/status; the original HTTP status remains in diagnostic details.
+
 | Code | Status | Origin | Retry | Meaning |
 |---|---|---|---|---|
 | `capability_unsupported` | 400 | cartethyia | yes | the route does not support the requested capability |
 | `ambiguous_model` | 400 | cartethyia | no | the model id matched more than one route |
-| `model_not_found` | 404 | cartethyia | yes | no route serves this model, or the key may not use it |
+| `model_not_found` | 404 | cartethyia/upstream | yes | no route serves the model, or the provider explicitly named it |
+| `upstream_not_found` | 404 | upstream | no | an upstream resource or route was not found; not assumed to be a model |
 | `context_length_exceeded` | 413 | upstream | no | the request exceeded the model's context window |
-| `invalid_request` | 400/401/403/409/413/415 | cartethyia/upstream | no | an unclassified rejection; the client should not retry unchanged |
+| `request_too_large` | 413 | upstream | no | the upstream rejected the request size without naming a context overflow |
+| `invalid_request` | 400 | cartethyia/upstream | no | malformed or explicitly invalid request |
 | `unsupported_field` | 400 | cartethyia | no | the request carried a field this route rejects |
-| `internal_error` | 500 | cartethyia | no | a gateway wiring defect (e.g. an adapter/registration mismatch); the caller cannot fix it |
+| `unsupported_media_type` | 415 | upstream | no | the upstream does not accept the request media type |
+| `upstream_conflict` | 409 | upstream | no | the upstream rejected a conflicting request |
+| `upstream_unprocessable` | 422 | upstream | no | the upstream could not process the request content |
+| `internal_error` | 500 | cartethyia | no | an unexpected gateway exception; the client cannot fix it |
 | `invalid_pool_limits` | 400 | cartethyia | no | network-pool limits were rejected |
 | `slug_reserved` | 409 | cartethyia | no | the provider slug collides with a built-in |
 | `authentication_failed` | 401/403 | cartethyia/upstream | yes | the credential was rejected |
-| `quota_exceeded` | 429 | cartethyia/upstream | yes | rate limit or quota exhausted |
-| `capacity_exhausted` | 429/529 | cartethyia/upstream | yes | upstream capacity, not this key's quota |
+| `policy_rejected` | 403 | upstream | yes | the provider rejected the request under a content policy |
+| `quota_exceeded` | 402/429 | cartethyia/upstream | yes | payment, quota, or rate limit exhausted |
+| `capacity_exhausted` | 429/503/529 | cartethyia/upstream | yes | upstream capacity, not this key's quota |
 | `tenant_capacity_exhausted` | 429 | cartethyia | yes | the tenant's concurrency ceiling was reached |
 | `proxy_pool_capacity_exceeded` | 429 | cartethyia | yes | every pool is at its in-flight ceiling |
 | `proxy_pool_cooldown` | 503 | cartethyia | yes | all pools are cooling down for this provider |
@@ -475,22 +503,20 @@ disagreed on 5xx and 529 — it is gone, and no adapter keeps a private copy of 
 | `admission_unavailable` | 503 | cartethyia | yes | the admission store is unreachable |
 | `accounts_unavailable` | 503 | cartethyia | yes | no account is available for this route |
 | `shutting_down` | 503 | cartethyia | yes | the process is draining |
-| `platform_unavailable` | 502/503 | cartethyia/upstream | yes | the upstream failed or sent a corrupt response |
+| `platform_unavailable` | 5xx fallback | cartethyia/upstream | yes | the provider or gateway failed; the network pool is not blamed |
 | `transport_unavailable` | 502 | cartethyia/upstream/network | yes | the upstream stream failed or ended early |
 | `tool_call_loop_detected` | 502 | cartethyia | yes | the model repeated the same tool call |
-| `tunnel_setup_failed` | 502 | network | yes | the proxy tunnel could not be established |
+| `tunnel_setup_failed` | 502 | network | yes | the tunnel could not be established |
 | `tls_rejected` | 502 | network | yes | the upstream TLS handshake was rejected |
 | `proxy_auth_required` | 407 | network | yes | the proxy rejected its own credential |
-| `deadline_exceeded` | 504 | cartethyia | yes | the attempt outlived its deadline |
+| `deadline_exceeded` | 408/504 | cartethyia/upstream | yes | the request or upstream outlived its deadline |
 | `transport_closed` | 499 | cartethyia | no | the client cancelled, or the stream closed |
 | `max_connections_exceeded` | 500 | cartethyia | yes | the database connection ceiling was reached |
 | `proxy_unreachable` | 502 | network | yes | the proxy or its DNS was unreachable |
 
-`context_length_exceeded` is matched on the structured `error.code` / `error.type` identifiers
-(`isContextLengthFailure`), never on message prose: an upstream that reports overflow only in a sentence keeps its
-generic code, because a false "your prompt is too long" is worse than a missing one. `invalid_request` deliberately has no
-404→`model_not_found` sibling for the same reason — an upstream 404 also means "that route does not exist here", and the
-two are indistinguishable without reading free text.
+`context_length_exceeded` is matched on exact structured identifiers, never prose. The generic upstream 404 code is
+`upstream_not_found`; only an explicit `model_not_found` identifier becomes `model_not_found`, because the status alone
+cannot distinguish a missing model from a missing route.
 
 ### Backoff and cooldown evidence
 
@@ -508,3 +534,124 @@ absolute stamp the provider names always wins
 over the fallback: parking an account for 15 minutes when the provider said 10 hours meant it re-entered rotation and
 failed every request inside the stated window. Pool cooldown applies only on upstream 429 with provider scope; OAuth
 refresh only on evidence-based invalidation.
+
+## Unified API hardening task map
+
+The user-reported Responses 400s, stream stalls/disconnects, and missing reasoning are **not
+reproduced here**. They are investigation inputs, not verified defects. Keep the inbound client
+surface (`chat`, `responses`, `messages`, legacy `completion`) separate from the selected provider
+wire (`chat`, `responses`, `messages`, or a bespoke adapter). The task sequence below hardens the
+existing canonical route instead of making every provider speak one invented protocol.
+
+### P0 — Reproduce and classify the reported Responses failures
+
+- Capture one real request for each symptom: upstream 400, stalled/disconnected stream, and missing
+  reasoning. Retain request ID, client surface, selected provider/model/wire, terminal/status frame,
+  and redacted request/response bodies.
+- Decide where the 400 originates: ingress validation, capability projection, upstream HTTP status,
+  a `response.failed`/in-stream error event, SSE decoding, or client-side event interpretation.
+- For stalls, record whether upstream bytes/events continue, whether the TCP stream closes, and when
+  client-visible bytes/heartbeats occur. Do not treat HTTP 400 as a watchdog or heartbeat failure.
+
+**Acceptance:** each report has a minimal real-path fixture and a failure owner. No timeout increase,
+retry, or schema relaxation is made without a reproduction showing that it fixes the cause.
+
+### P1 — Establish the surface × provider-wire conformance matrix
+
+- Cover `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/completions` against each
+  eligible provider wire independently. A surface parser change does not imply a provider codec
+  change.
+- For request and response directions, cover text, tool calls/results, image/file/document, audio
+  where the selected upstream supports it, reasoning, usage, errors, and stream termination.
+- Keep tool IDs, output-item identity, assistant phase, prompt-cache markers, usage, and opaque
+  provider state across a surface switch. Test the real adapter/transport path, not only pure
+  serializer output.
+
+**Acceptance:** every matrix cell is lossless, explicitly capability-degraded, or returns a typed
+  unsupported error; no test passes by silently dropping a part or event.
+
+### P2 — Close modality and reasoning gaps at the canonical boundary
+
+- Compare the current `ContentPart`/`ReasoningIntent` union, `RouteCapabilities`, all four surface
+  parsers/encoders, and provider request/response codecs with the source contracts in
+  `src/protocol/PROTOCOL.md`.
+- Add a canonical video/frame representation only if an actual supported client/upstream wire needs
+  one; current canonical content has no video part. Track generated image/audio output separately
+  from input image/audio and preserve provider extensions until a typed common shape is justified.
+- Keep per-model capability truth: OpenAI reasoning effort and summaries differ between Chat and
+  Responses; Anthropic thinking/signatures are Messages-specific; raw/private reasoning is never
+  synthesized or exposed.
+
+**Acceptance:** cross-surface fixtures prove supported image/file/audio/reasoning behavior and prove
+  that unsupported Messages audio/video cannot vanish silently or be sent as invalid blocks.
+
+### P3 — Add protocol-native token counting, not a “count tokens” completion
+
+- Add explicit count operations for OpenAI Responses input tokens
+  (`POST /v1/responses/input_tokens`) and Anthropic Messages
+  (`POST /v1/messages/count_tokens`), preserving each endpoint's request/response contract.
+- Reuse routing, account credential resolution, SSRF-validated fetch, cancellation, typed upstream
+  errors, and model authorization, but do not run generation, commit output usage, or report the
+  existing `estimateInputTokens()` character heuristic as an exact count.
+- OpenAI Chat Completions has no exact count endpoint established by the sources reviewed; if a
+  Chat-facing estimate is exposed, label it as estimated and define its supported inputs. Do not
+  silently call the Responses counter with a Chat-shaped payload.
+
+**Acceptance:** input counts match the upstream response for text, tools, image/file inputs, and
+  protocol-specific structure; failures do not create completion telemetry or usage.
+
+### P4 — Separate compaction contracts and route ownership
+
+- Preserve the existing `/v1/responses/compact` Codex-native opaque-body behavior.
+- Add generic OpenAI Responses compaction only through a Responses-capable provider adapter, and
+  carry the complete returned compacted output into the next Responses request unchanged.
+- Implement Anthropic threshold/on-demand compaction as Messages request features with their own
+  beta negotiation, response `compaction` block/stop reason, replay rules, usage, and incompatibility
+  checks; it is not an alias for `/responses/compact`.
+
+**Acceptance:** tests cover Codex compact regression, OpenAI compact output replay, Anthropic
+  threshold append, Anthropic on-demand replacement, and rejection of incompatible mixed modes.
+
+### P5 — Harden Responses stream errors, liveness, and reasoning delivery
+
+- Keep HTTP 400 mapping, explicit in-stream failure envelopes, malformed/truncated SSE, client
+  cancellation, first-visible-chunk timeout, and inter-event stall timeout as distinct outcomes.
+- Current bounds are 200s to first client-visible chunk and 360s between upstream iterator events.
+  Once a streamed response is established, the gateway sends a downstream SSE `: keepalive`
+  comment every 15s when the reader has capacity, including during complete upstream silence.
+  These comments do not reset either watchdog or count as visible content. Cursor's native Connect
+  heartbeat is a separate provider-protocol mechanism (5s).
+- Preserve the current safe retry boundary: one Responses prelude retry only before client-visible
+  content. Reasoning summaries are client-visible output and commit the stream just like text/tools.
+  Once output is visible, do not retry a turn with possible duplicate content or tool side effects.
+- Preserve every `summary_index` across canonical reasoning, Responses part-added/delta/done events,
+  and the final output item. Test summary-only, interleaved multi-index streams, and summaries before
+  text.
+
+**Acceptance:** chunked real-path tests cover heartbeat, silent upstream, invisible reasoning,
+  summary-only output, explicit `response.failed`, missing terminal, malformed SSE, disconnect, and
+  exactly-once lease/telemetry cleanup. Change timeout policy only after the P0 trace identifies the
+  failing interval.
+
+### P6 — Validate Cursor Editor BYOK as a Chat client
+
+- Keep Cartethyia's built-in `cursor` OAuth/Connect+protobuf adapter separate from Cursor Editor
+  BYOK. The editor BYOK path is an OpenAI Chat Completions client; it is not the native Cursor
+  provider adapter and must not be routed through the protobuf path.
+- Test the installed Cursor version with `POST /v1/chat/completions`, a Cartethyia API key, and a
+  model ID returned by the gateway. Verify tool, image, stream, and error behavior only for features
+  that Cursor actually sends.
+- Cursor's current BYOK help says custom keys are for standard chat models and Tab completion stays
+  on Cursor's built-in models. Cursor staff describe `Override OpenAI Base URL` as global and warn
+  it can route Cursor-managed OpenAI models through the override; separate per-model endpoints are
+  not currently supported. Verify whether the installed build exposes that control and whether its
+  server-side request path can reach the configured Cartethyia origin before publishing a universal
+  setup claim.
+
+**Acceptance:** a real Cursor Editor request reaches the Chat Completions surface and a selected
+  Cartethyia route; the model/request path and the global override limitation are documented. Do not
+  claim that the custom route covers Cursor-managed models, Responses, reasoning models, or Tab
+  completion unless separately observed and tested.
+
+External protocol/API evidence and Cursor setup caveats are linked in `src/protocol/PROTOCOL.md`,
+`src/providers/PROVIDERS.md`, and the root `README.md`.

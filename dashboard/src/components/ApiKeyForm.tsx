@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Switch } from "./ui/switch";
 import { ModelPickerModal } from "./ModelPicker";
 import {
   CLIENT_ROUTER_IDS,
@@ -10,11 +11,9 @@ import {
 } from "../lib/contracts";
 
 /**
- * What each assignable scope actually permits, as a tooltip on the checkbox.
- *
- * The catalog scopes are spelled out because their separation from
- * `dashboard:write` is the point: a key minted to read usage must not thereby
- * be able to add an upstream or delete a model.
+ * Human-readable descriptions of the authority granted by each tenant scope.
+ * Keeping these beside their toggle rows makes the consequences of each
+ * permission visible while operators review access.
  */
 const SCOPE_DESCRIPTIONS: Record<TenantScope, string> = {
   "routing:invoke": "Call /v1/* gateway routes within this tenant.",
@@ -131,7 +130,6 @@ export interface KeyFormInput {
   keyPrefix?: string;
   key?: string;
   modelAllowlist: string[];
-  providerAllowlist: string[];
   clientRouterDenylist: string[];
   scopes: string[];
   requestsPerMinute?: number | null;
@@ -199,10 +197,6 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
     const m = (record as unknown as { modelAllowlist?: string[] | null })?.modelAllowlist;
     return m ? [...m] : [];
   });
-  const [providerAllowlist, setProviderAllowlist] = useState(() => {
-    const p = (record as unknown as { providerAllowlist?: string[] | null })?.providerAllowlist;
-    return p ? p.join(", ") : "";
-  });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [blockedRouters, setBlockedRouters] = useState<string[]>(() => {
     const list = (record as unknown as { clientRouterDenylist?: string[] | null })
@@ -228,16 +222,11 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
   const toggleScope = (scope: string) =>
     setScopes((cur) => (cur.includes(scope) ? cur.filter((s) => s !== scope) : [...cur, scope]));
   const submit = () => {
-    const providers = providerAllowlist
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
     onDone({
       label: label.trim(),
       ...keyCredentialFields(keyMode, customKey, prefix),
       scopes,
       modelAllowlist: models,
-      providerAllowlist: providers,
       clientRouterDenylist: blockedRouters,
       requestsPerMinute: parseLimitOrNull(rpm),
       maxConcurrentRequests: parseLimitOrNull(concurrent),
@@ -250,8 +239,8 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
     });
   };
   return (
-    <div className="modal-form-layout" style={{ paddingBottom: "4px" }}>
-      <section className="modal-form-section-wide" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+    <div className="api-key-form-layout" style={{ paddingBottom: "4px" }}>
+      <section style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         <h3 style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)" }}>Credential mode</h3>
         <div role="group" aria-label="Credential mode" style={{ display: "flex", gap: "8px" }}>
           {(["personal", "share"] as const).map((modeOption) => (
@@ -273,14 +262,14 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
         </p>
       </section>
       {mode === "create" && (
-        <section className="modal-form-section-wide" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <section style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
           <div>
             <h3 style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)" }}>Identity</h3>
             <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-tertiary)" }}>
               Give this credential a recognizable name.
             </p>
           </div>
-          <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <Input label="Name" value={label} onChange={(e) => setLabel(e.target.value)}
               placeholder="ci-key…" disabled={busy} autoFocus />
             <Input label="Key prefix" value={prefix} onChange={(e) => setPrefix(e.target.value)}
@@ -293,7 +282,7 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
         </section>
       )}
       {mode === "edit" && (
-        <section className="modal-form-section" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <section style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
           <div>
             <h3 style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)" }}>
               Identity
@@ -302,13 +291,7 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
               Update the label for this credential.
             </p>
           </div>
-          <div
-            style={{
-              display: "grid",
-              gap: "12px",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            }}
-          >
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <Input
               label="Name"
               value={label}
@@ -320,7 +303,7 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
           </div>
         </section>
       )}
-      <section className="modal-form-section" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <section style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         <div>
           <h3 style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)" }}>
             Limits
@@ -329,13 +312,7 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
             Keep this credential predictable under load.
           </p>
         </div>
-        <div
-          style={{
-            display: "grid",
-            gap: "12px",
-            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-          }}
-        >
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
           <Input
             label="Requests per minute"
             type="number"
@@ -431,13 +408,7 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
             disabled={busy}
           />
         ) : (
-          <div
-            style={{
-              display: "grid",
-              gap: "12px",
-              gridTemplateColumns: "1fr 1fr",
-            }}
-          >
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <TokenBudgetField
               label="Daily token limit"
               value={daily}
@@ -454,7 +425,6 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
         )}
       </section>
       <section
-        className="modal-form-section"
         style={{ display: "flex", flexDirection: "column", gap: "12px" }}
       >
         <div>
@@ -488,11 +458,10 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
         />
       </section>
       <section
-        className="modal-form-section-wide"
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: "12px",
+          gap: "16px",
           padding: "12px",
           borderRadius: "12px",
           border: "1px solid var(--inner-border)",
@@ -504,7 +473,7 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
             Access
           </h3>
           <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-tertiary)" }}>
-            Whitelist — if set, every other model is denied. Leave empty to allow all.
+            Choose which models this key can use and what it is allowed to access.
           </p>
         </div>
         <div>
@@ -544,7 +513,9 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
                   {m}
                   <button
                     type="button"
+                    aria-label={`Remove ${m} from allowed models`}
                     onClick={() => setModels((prev) => prev.filter((x) => x !== m))}
+                    disabled={busy}
                     style={{
                       background: "transparent",
                       border: "none",
@@ -579,77 +550,113 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
             multi
           />
         </div>
-        <Input
-          label="Provider allowlist (comma-separated)"
-          value={providerAllowlist}
-          onChange={(e) => setProviderAllowlist(e.target.value)}
-          placeholder="openai, anthropic"
-          disabled={busy}
-        />
-        {/* A key can refuse a downstream router it was resold to. The ids come
-            from the backend's own list, so the form cannot offer one the
-            gateway cannot fingerprint (it rejects an unknown id on write). */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-            Blocked client routers
-          </span>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <section aria-labelledby="blocked-routers-heading" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div>
+            <h4 id="blocked-routers-heading" style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>
+              Blocked client routers
+            </h4>
+            <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-tertiary)" }}>
+              Matching fingerprints are rejected with 403 before routing. Detection is best-effort; clients without a fingerprint are not matched.
+            </p>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             {CLIENT_ROUTER_IDS.map((routerId) => (
-              <label
+              <div
                 key={routerId}
-                title={`Refuse requests fingerprinted as ${routerId}`}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "6px",
-                  fontSize: "11px",
-                  cursor: "pointer",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  minHeight: "44px",
+                  padding: "8px 10px",
+                  border: "1px solid var(--inner-border)",
+                  borderRadius: "8px",
+                  background: blockedRouters.includes(routerId) ? "var(--accent-soft)" : "var(--surface-1)",
                 }}
               >
-                <input
-                  type="checkbox"
+                <div>
+                  <div style={{ fontSize: "12px", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
+                    {routerId}
+                  </div>
+                  <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-tertiary)" }}>
+                    Block requests identified as {routerId}.
+                  </p>
+                </div>
+                <Switch
                   checked={blockedRouters.includes(routerId)}
-                  onChange={() =>
+                  onChange={(checked) =>
                     setBlockedRouters((current) =>
-                      current.includes(routerId)
-                        ? current.filter((entry) => entry !== routerId)
-                        : [...current, routerId],
+                      checked
+                        ? [...current, routerId]
+                        : current.filter((entry) => entry !== routerId),
                     )
                   }
                   disabled={busy}
+                  aria-label={`Block client router ${routerId}`}
                 />
-                {routerId}
-              </label>
+              </div>
             ))}
           </div>
-          <span style={{ fontSize: "10.5px", color: "var(--text-tertiary)" }}>
-            A matched request is refused with 403 before routing. Detection is
-            best-effort: a client that sends no fingerprint is not matched.
-          </span>
-        </div>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          {TENANT_KEY_SCOPES.map((scope) => (
-            <label
-              key={scope}
-              title={SCOPE_DESCRIPTIONS[scope]}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                fontSize: "11px",
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={scopes.includes(scope)}
-                onChange={() => toggleScope(scope)}
-                disabled={busy}
-              />
-              {scope}
-            </label>
-          ))}
-        </div>
+        </section>
+        <section aria-labelledby="routing-scopes-heading" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <h4 id="routing-scopes-heading" style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>
+            Routing
+          </h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {TENANT_KEY_SCOPES.filter((scope) => scope.startsWith("routing:")).map((scope) => (
+              <div
+                key={scope}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  minHeight: "44px",
+                  padding: "8px 10px",
+                  border: "1px solid var(--inner-border)",
+                  borderRadius: "8px",
+                  background: scopes.includes(scope) ? "var(--accent-soft)" : "var(--surface-1)",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>{scope}</div>
+                  <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-tertiary)" }}>{SCOPE_DESCRIPTIONS[scope]}</p>
+                </div>
+                <Switch checked={scopes.includes(scope)} onChange={() => toggleScope(scope)} disabled={busy} aria-label={`Grant ${scope}`} />
+              </div>
+            ))}
+          </div>
+        </section>
+        <section aria-labelledby="dashboard-scopes-heading" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <h4 id="dashboard-scopes-heading" style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>
+            Dashboard / Resources
+          </h4>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {TENANT_KEY_SCOPES.filter((scope) => !scope.startsWith("routing:")).map((scope) => (
+              <div
+                key={scope}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "12px",
+                  minHeight: "44px",
+                  padding: "8px 10px",
+                  border: "1px solid var(--inner-border)",
+                  borderRadius: "8px",
+                  background: scopes.includes(scope) ? "var(--accent-soft)" : "var(--surface-1)",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>{scope}</div>
+                  <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-tertiary)" }}>{SCOPE_DESCRIPTIONS[scope]}</p>
+                </div>
+                <Switch checked={scopes.includes(scope)} onChange={() => toggleScope(scope)} disabled={busy} aria-label={`Grant ${scope}`} />
+              </div>
+            ))}
+          </div>
+        </section>
       </section>
       <div
         className="modal-form-actions"

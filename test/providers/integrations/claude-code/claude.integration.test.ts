@@ -167,13 +167,16 @@ describe("oauth.test.ts", () => {
       });
       process.env.CARTETHYIA_PUBLIC_ORIGIN = "https://example.test";
       try {
-        const result = await client.exchangeCode("code", "verifier");
+        const result = await client.exchangeCode("code", "verifier", "http://127.0.0.1:54545/callback");
         expect(result.access).toBe("access");
         expect(result.accountLabel).toBe("user@example.test");
         const body = JSON.parse(String(calls[0]?.body)) as Record<string, string>;
         expect(body.grant_type).toBe("authorization_code");
         expect(body.code_verifier).toBe("verifier");
-        expect(body.redirect_uri).toContain("/console/api/providers/claude/oauth/callback");
+        // Anthropic validates the redirect against the client's allowlist, so
+        // the exchange must send the loopback URI the authorize step used —
+        // not the gateway's console callback.
+        expect(body.redirect_uri).toBe("http://127.0.0.1:54545/callback");
       } finally {
         restoreOrigin();
       }
@@ -1487,7 +1490,7 @@ describe("Claude streaming HTTP failure mapping", () => {
     expect((failure as GatewayError).code).toBe("quota_exceeded");
   });
 
-  test("in-stream SSE 407/529/5xx share the HTTP status→code table", async () => {
+  test("in-stream SSE preserves typed error classes and explicit status", async () => {
     const cases: ReadonlyArray<{
       readonly status: number;
       readonly code: GatewayError["code"];
@@ -1495,7 +1498,7 @@ describe("Claude streaming HTTP failure mapping", () => {
     }> = [
       { status: 407, code: "proxy_auth_required", origin: "network" },
       { status: 529, code: "capacity_exhausted", origin: "upstream" },
-      { status: 503, code: "platform_unavailable", origin: "upstream" },
+      { status: 503, code: "capacity_exhausted", origin: "upstream" },
     ];
     for (const { status, code, origin } of cases) {
       const adapter = new ClaudeAdapter({

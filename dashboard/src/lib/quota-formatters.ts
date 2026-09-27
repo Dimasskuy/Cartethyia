@@ -94,6 +94,32 @@ export function quotaBarTone(remaining: number | null): QuotaBarTone {
   return { bar: "var(--green)", text: "var(--green)" };
 }
 
+/** Maximum quota windows shown together in an account card. */
+export const QUOTA_WINDOWS_PER_PAGE = 4;
+
+/** Returns a bounded quota-window slice and the normalized page position. */
+export function paginateQuotaWindows<T>(
+  windows: readonly T[],
+  requestedPage: number,
+): {
+  readonly items: readonly T[];
+  readonly page: number;
+  readonly pageCount: number;
+  readonly startIndex: number;
+} {
+  const pageCount = Math.ceil(windows.length / QUOTA_WINDOWS_PER_PAGE);
+  const lastPage = Math.max(0, pageCount - 1);
+  const safeRequestedPage = Number.isFinite(requestedPage) ? Math.trunc(requestedPage) : 0;
+  const page = Math.min(Math.max(0, safeRequestedPage), lastPage);
+  const startIndex = page * QUOTA_WINDOWS_PER_PAGE;
+  return {
+    items: windows.slice(startIndex, startIndex + QUOTA_WINDOWS_PER_PAGE),
+    page,
+    pageCount,
+    startIndex,
+  };
+}
+
 export interface AccountIdentity {
   readonly primary: string;
   readonly secondary: string | null;

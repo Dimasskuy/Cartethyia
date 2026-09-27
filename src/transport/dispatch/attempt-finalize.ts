@@ -11,6 +11,7 @@ import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer"
 import { CachedPreferencesReader, DrizzlePreferencesReader } from "../../persistence/tenant-preferences";
 import type { ProxyRequestOutcome, ProxyRequestState } from "../request/state";
 import { finalizeRequestTelemetry } from "../middleware/ingress";
+import { log } from "../../observability/logger";
 import {
   disablePoolForProxyHttpStatus,
   recordPoolDispatchOutcome,
@@ -185,6 +186,14 @@ async function resolvedProviderResponse(
 /**
  * Fire-and-forget terminal payload capture. Never throws, never blocks the
  * response path — telemetry must not fail requests.
+ *
+ * A failure here is *not* silent: capture is an operator-visible switch, so an
+ * opted-in tenant whose bodies never appear is a defect they cannot diagnose
+ * from the UI. The usual cause is a deployment one — the payload directory is
+ * not writable by the runtime user, which a bind-mounted `/app/data` produces
+ * when the host directory is owned by root. The error is reported once per
+ * process so a broken directory cannot flood the log per request, and the
+ * message names the directory and the fix.
  */
 function captureTerminalPayload(
   db: CartethyiaDatabase,
@@ -212,10 +221,34 @@ function captureTerminalPayload(
         scope: "tenant",
         tenantOptIn: true,
       });
-    } catch {
-      // Swallowed: see above.
+    } catch (error) {
+      reportCaptureFailure(error);
     }
   })();
+}
+
+let captureFailureReported = false;
+
+/**
+ * One warning per process for a failing payload capture. The cause is a
+ * deployment condition that does not change per request, so repeating it for
+ * every request would bury the rest of the log without adding information.
+ */
+export function reportCaptureFailure(error: unknown): void {
+  if (captureFailureReported) return;
+  captureFailureReported = true;
+  const directory = process.env.CARTETHYIA_TELEMETRY_PAYLOAD_DIR?.trim() || "./data/telemetry-payloads";
+  const reason = error instanceof Error ? error.message : String(error);
+  log.warn(
+    `[telemetry] payload capture is enabled for this tenant but the body was not stored ` +
+      `(${reason}). Check that "${directory}" exists and is writable by the runtime user; ` +
+      `a bind-mounted data directory is often owned by root while the container runs unprivileged.`,
+  );
+}
+
+/** Test-only: allow a later failure to be reported again. */
+export function resetCaptureFailureReportForTests(): void {
+  captureFailureReported = false;
 }
 
 /**
@@ -232,10 +265,21 @@ export function terminalFailure(
   options: { readonly truncated?: boolean } = {},
 ): GatewayError | undefined {
   if (terminal === undefined) {
-    return new GatewayError("transport_unavailable", 502, "upstream produced no terminal event");
+    // The upstream produced no terminal event: its own stream is what ended
+    // without a verdict, so this is an upstream failure, not ours.
+    return new GatewayError(
+      "transport_unavailable",
+      502,
+      "upstream produced no terminal event",
+      {},
+      "upstream",
+    );
   }
   if (terminal.state === "failed") {
-    return new GatewayError("transport_unavailable", 502, "upstream request failed");
+    // A terminal `failed` state is only ever written by the upstream decoders
+    // (a provider error envelope or a corrupt provider stream), so it carries
+    // the upstream's failure, not the gateway's.
+    return new GatewayError("transport_unavailable", 502, "upstream request failed", {}, "upstream");
   }
   if (terminal.state === "aborted") {
     // A client-initiated cancellation is not an upstream fault; the stream path
@@ -394,13 +438,33 @@ export async function completeAttempt(
     ...(completion.lastEventAtMs === undefined ? {} : { lastEventAtMs: completion.lastEventAtMs }),
   };
   if (completion.terminal) state.completed = true;
-  if (completion.lease?.commitUsage && completion.commitUsage)
-    await completion.lease.commitUsage(completion.commitUsage);
+  // Usage reconciliation is bookkeeping, and it is the last thing standing
+  // between the caller and its resource release. Letting a store failure
+  // propagate from here aborts the completion sequence *after* `completed` is
+  // claimed, so the caller's release never runs and the in-flight gauge climbs
+  // for the life of the process; the reservation is released unreconciled
+  // either way, so the slot is not what is at stake. Swallowed for the same
+  // reason the health and pool reports below are: a failed report must not
+  // decide the request's outcome.
+  if (completion.lease?.commitUsage && completion.commitUsage) {
+    try {
+      await completion.lease.commitUsage(completion.commitUsage);
+    } catch {
+      // Swallowed: usage reconciliation is non-critical bookkeeping.
+    }
+  }
   const responseHttpStatus =
     completion.error instanceof GatewayError ? completion.error.status : completion.httpStatus;
+  // Only a proxy-origin payment/auth response proves the pool itself is unusable;
+  // an upstream provider's 402 is a quota/billing response for that provider.
+  const errorOrigin =
+    completion.error instanceof GatewayError
+      ? completion.error.origin
+      : completion.errorOrigin;
   const disableProxy =
     completion.networkPoolId !== undefined &&
     completion.status !== "completed" &&
+    errorOrigin === "network" &&
     (responseHttpStatus === 402 || responseHttpStatus === 407);
   // Cancelled attempts write no health (client gone; outcome unknown) —
   // matches the historical `!cancelled` guards at every site. Health is

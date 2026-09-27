@@ -15,7 +15,11 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # `dev` is the integration branch that receives pushes. It has to be named
+    # explicitly: the repository's GitHub default branch is a separate branch
+    # that does not carry this workflow, so an unnamed push filter would verify
+    # neither the default branch nor the branch work actually lands on.
+    branches: [dev]
   pull_request:
 
 concurrency:

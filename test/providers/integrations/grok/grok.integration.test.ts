@@ -338,6 +338,20 @@ describe("Grok CLI OAuth", () => {
     expect(calls[0]?.body).toContain(encodeURIComponent(GROK_SCOPE).replace(/%20/g, "+"));
     expect(calls[3]?.headers.get("x-xai-token-auth")).toBe("xai-grok-cli");
   });
+
+  test("a 200 without a token fails instead of completing with an empty access", async () => {
+    // Reading this through the shared parser used to yield `access: ""` and a
+    // `complete` verdict, so the account was persisted with a credential the
+    // gateway would then send as an empty bearer.
+    const fetcher = (async () =>
+      new Response(JSON.stringify({ error: "invalid_grant", error_description: "expired" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const result = await new GrokOAuthClient(fetcher).pollDeviceAuth("device-1");
+    expect(result.status).toBe("failed");
+    expect(result.status === "failed" && result.reason).toContain("expired");
+  });
 });
   });
 

@@ -2,9 +2,14 @@
 // envelope with NDJSON stream transform — non-OpenAI wire; stays bespoke.
 import { GatewayError } from "../../transport/gateway-error";
 import { canContainToolResult, joinTextParts, toolCallParts, toolResultParts } from "../../transport/canonical-model";
-import { mapUpstreamHttpError } from "../../transport/failure-policy";
+import {
+  classifyUpstreamError,
+  extractUpstreamMessage,
+  mapUpstreamHttpError,
+  upstreamErrorIdentifier,
+} from "../../transport/failure-policy";
 import type { CanonicalEvent, CanonicalRequest, CanonicalStopReason } from "../../transport/canonical-model";
-import { readNumber, readString } from "../../protocol/primitives";
+import { isRecord, readNumber, readString } from "../../protocol/primitives";
 import { usageFromProvider } from "../usage";
 import { readCredentialSecret, type ProviderDispatchTarget, type ProviderAdapter, type ProviderDispatchContext } from "../provider-registry";
 import { providerBaseUrl } from "../provider-metadata";
@@ -210,9 +215,42 @@ export function transformLine(line: string, state: StreamState, seqBase: number)
     return events;
   }
   if (type === "error") {
-    const raw = (event["error"] ?? event["message"] ?? event) as unknown;
-    const rawMessage = typeof raw === "string" ? raw : JSON.stringify(raw);
-    throw new GatewayError("platform_unavailable", 502, rawMessage.slice(0, 500), {}, "upstream");
+    const raw = event["error"] ?? event["message"] ?? event;
+    const errorObject = isRecord(raw) ? raw : event;
+    const identifier = upstreamErrorIdentifier(raw) ?? upstreamErrorIdentifier(event);
+    const providerStatus = [
+      errorObject["status"],
+      errorObject["statusCode"],
+      errorObject["code"],
+      event["status"],
+      event["statusCode"],
+      event["code"],
+    ].find(
+      (value): value is number =>
+        typeof value === "number" &&
+        Number.isFinite(value) &&
+        value >= 400 &&
+        value < 600,
+    );
+    const classification = classifyUpstreamError(providerStatus, identifier);
+    const message =
+      extractUpstreamMessage(raw) ||
+      extractUpstreamMessage(event) ||
+      "Command Code stream error";
+    throw new GatewayError(
+      classification.code,
+      classification.status,
+      message.slice(0, 500),
+      {
+        ...(providerStatus === undefined ? {} : { providerStatus }),
+        ...(identifier ? { providerCode: identifier } : {}),
+        ...(classification.credentialEvidence ? { credentialEvidence: true } : {}),
+        ...(classification.rateLimitScope
+          ? { rateLimitScope: classification.rateLimitScope }
+          : {}),
+      },
+      classification.origin,
+    );
   }
   return [];
 }

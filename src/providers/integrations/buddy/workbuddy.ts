@@ -12,12 +12,14 @@ import { OpenAICompatibleAdapter } from "../../compatible-adapter";
 import { providerBaseUrl } from "../../provider-metadata";
 import { GatewayError } from "../../../transport/gateway-error";
 import type { CanonicalRequest } from "../../../transport/canonical-model";
-import type { ProviderAdapter, ProviderDispatchTarget } from "../../provider-registry";
+import type { ProviderAdapter, ProviderDispatchTarget, ModelDefinition } from "../../provider-registry";
+import type { DiscoveryInput } from "../../discovery/discovery-types";
 import {
   WORKBUDDY_CHAT_PATH,
   workbuddyAdapterConfig,
 } from "./workbuddy-shared";
-import { makeBuddyModel, type BuddyRawEntry } from "./buddy-catalog-shared";
+import { BUDDY_SHARED_RAW, makeBuddyModel, type BuddyRawEntry } from "./buddy-catalog-shared";
+import { BUDDY_INTL_MODELS_PATH, fetchBuddyDirectoryModels } from "./buddy-discovery-shared";
 import {
   applyBuddySystemPrompt,
   buddyPrePayloadCommon,
@@ -33,7 +35,21 @@ export const WORKBUDDY_BASE_URL = providerBaseUrl("workbuddy");
 // - reasoning_summary auto only when reasoning_effort requested
 // - leading WorkBuddy system prompt + typed user content normalization
 
-const WORKBUDDY_SYSTEM_PROMPT = "You are WorkBuddy AI.";
+/**
+ * Leading system turn for this variant.
+ *
+ * The upstream validates that the wire *opens* with a `system` turn but not its
+ * text, so this is a product choice rather than a wire contract — see the
+ * sibling in `codebuddy.ts`. The previous line named the vendor product, which
+ * made every request claim an identity the caller never chose and discarded the
+ * caller's own system prompt.
+ */
+export const WORKBUDDY_SYSTEM_PROMPT =
+  "You are a pragmatic and direct software engineering assistant. " +
+  "Be honest and truthful: state what you know, say plainly when you are unsure " +
+  "or do not know, and never claim to have done something you have not done. " +
+  "Prefer concrete answers over filler, and say so when a request is ambiguous " +
+  "instead of guessing silently.";
 
 /**
  * Reconstructs generic function declarations when a later tool-history turn
@@ -112,39 +128,29 @@ export function workbuddyPrePayload(
 // Static seed derived from the reference gateway's model.json (context/output
 // limits) plus its global effort table; `reasoning` marks models with a
 // declared reasoning-effort scale.
-const WORKBUDDY_RAW: readonly BuddyRawEntry[] = [
-  ["auto", "Auto", true, true, 168_000, null],
-  ["default-model", "Default Model", true, false, 128_000, 64_000],
-  ["fast-model", "Fast Model", true, false, 128_000, 64_000],
-  ["balanced-model", "Balanced Model", true, false, 128_000, 64_000],
-  ["deep-model", "Deep Model", true, false, 128_000, 64_000],
-  ["deepseek-v4.1-flash", "DeepSeek V4.1 Flash", true, false, 1_000_000, 384_000],
-  ["deepseek-v4-pro", "DeepSeek V4 Pro", true, false, 1_000_000, 384_000],
-  ["deepseek-v4-flash", "DeepSeek V4 Flash", true, false, 1_000_000, 384_000],
-  ["glm-5.1", "GLM-5.1", true, false, 200_000, 131_072],
-  ["glm-5.2", "GLM-5.2", true, false, 1_000_000, 131_072],
-  ["glm-5.3", "GLM-5.3", true, false, 1_000_000, 131_072],
-  ["glm-5.3-flash", "GLM-5.3 Flash", true, false, 1_000_000, 131_072],
-  ["glm-5v-turbo", "GLM-5V Turbo", true, true, 200_000, 131_072],
-  ["gpt-5.3-codex", "GPT-5.3 Codex", true, true, 400_000, 128_000],
-  ["gpt-5.4", "GPT-5.4", true, true, 1_050_000, 128_000],
-  ["gpt-5.5", "GPT-5.5", true, true, 1_050_000, 128_000],
-  ["gpt-5.6-luna", "GPT-5.6 Luna", true, true, 1_050_000, 128_000],
-  ["gpt-5.6-sol", "GPT-5.6 Sol", true, true, 1_050_000, 128_000],
-  ["gpt-5.6-terra", "GPT-5.6 Terra", true, true, 1_050_000, 128_000],
-  ["gpt-6-astra", "GPT-6 Astra", true, true, 1_050_000, 128_000],
-  ["gemini-3.5-flash", "Gemini 3.5 Flash", true, true, 1_048_576, 65_536],
-  ["hy3", "Hy3", true, false, 192_000, 64_000],
-  ["hy4-preview", "Hy4 Preview", true, false, 1_000_000, 64_000],
-  ["hy4-preview-f", "Hy4 Preview F", true, false, 1_000_000, 64_000],
-  ["kimi-k2.5", "Kimi K2.5", true, false, 164_000, 262_144],
-  ["kimi-k2.6", "Kimi K2.6", true, false, 256_000, 262_144],
-  ["kimi-k2.7", "Kimi K2.7", true, false, 256_000, 65_536],
-  ["kimi-k3", "Kimi K3", true, false, 1_048_576, 131_072],
-  ["minimax-m3", "MiniMax-M3", true, false, 512_000, 512_000],
-];
-
+const WORKBUDDY_RAW: readonly BuddyRawEntry[] = BUDDY_SHARED_RAW;
 export const WORKBUDDY_MODELS = WORKBUDDY_RAW.map((entry) => makeBuddyModel(entry, "workbuddy", WORKBUDDY_CHAT_PATH));
+
+/**
+ * Reads WorkBuddy's live console directory.
+ *
+ * The static `WORKBUDDY_MODELS` above is the fallback: this is what the "Fetch
+ * models" action persists, and it carries the upstream's own limits and
+ * capability flags rather than the seed's snapshot of them.
+ */
+export async function discoverWorkBuddyModels(
+  input: DiscoveryInput,
+): Promise<readonly ModelDefinition[] | null> {
+  return fetchBuddyDirectoryModels({
+    siteUrl: WORKBUDDY_BASE_URL,
+    providerId: WORKBUDDY_PROVIDER_ID,
+    credential: input.credential,
+    modelsPath: BUDDY_INTL_MODELS_PATH,
+    endpoint: WORKBUDDY_CHAT_PATH,
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.fetcher ? { fetcher: input.fetcher } : {}),
+  });
+}
 
 // Public factory — uses the OpenAI-compatible factory but forces provider semantics.
 // Supports both api_key and oauth via Authorization Bearer (factory handles both).

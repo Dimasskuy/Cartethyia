@@ -6,6 +6,7 @@ import {
   transformLine,
 } from "../../../src/providers/integrations/commandcode";
 import type { CanonicalEvent, CanonicalMessage } from "../../../src/transport/canonical-model";
+import { GatewayError } from "../../../src/transport/gateway-error";
 
 /**
  * CommandCode request framing and NDJSON stream transform.
@@ -228,6 +229,28 @@ describe("transformLine", () => {
     expect(transformLine("not json", streamState(), 1)).toEqual([]);
     expect(transformLine('{"no":"type"}', streamState(), 1)).toEqual([]);
     expect(transformLine('{"type":"unknown-frame"}', streamState(), 1)).toEqual([]);
+  });
+  test("classifies structured upstream error identifiers", () => {
+    let caught: unknown;
+    try {
+      transformLine(
+        JSON.stringify({
+          type: "error",
+          error: { code: "rate_limit_error", message: "slow down" },
+        }),
+        streamState(),
+        1,
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(GatewayError);
+    expect(caught).toMatchObject({
+      code: "quota_exceeded",
+      status: 429,
+      origin: "upstream",
+      details: { providerCode: "rate_limit_error", rateLimitScope: "provider" },
+    });
   });
 
   test("a tool-input-start registers the call and assigns an index", () => {

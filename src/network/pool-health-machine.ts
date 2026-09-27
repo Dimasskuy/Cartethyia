@@ -133,7 +133,7 @@ export async function recordPoolDispatchOutcome(
   if (statusChanged) await input.snapshotInvalidator?.invalidate();
 }
 
-/** Disables a proxy pool after an upstream payment or proxy-auth response. */
+/** Disables a proxy pool after a proxy-origin payment or authentication failure. */
 export async function disablePoolForProxyHttpStatus(
   db: CartethyiaDatabase,
   poolId: string,

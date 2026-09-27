@@ -30,6 +30,7 @@ import { isBundledProviderId } from "../../../src/providers/provider-registry";
 import type { AccessDecision } from "../../../src/security/access-control";
 import { OAuthFlowStore } from "../../../src/providers/authentication/oauth-flow-store";
 import type { OAuthLoginClient } from "../../../src/providers/authentication/oauth-flow-store";
+import { OAuthCallbackListener } from "../../../src/console/providers/oauth/callback-listener";
 import { parseProviderId, ProviderRegistry } from "../../../src/providers/provider-registry";
 import type { RedisClient } from "../../../src/persistence/redis";
 
@@ -536,6 +537,41 @@ function claudeClient(overrides: Partial<OAuthLoginClient> = {}): OAuthLoginClie
   };
 }
 
+/**
+ * A browser client whose redirect is loopback, like the real Codex/OpenRouter
+ * clients. `claudeClient` uses a remote host, which the listener correctly
+ * declines to bind, so this is the shape that exercises the bind path.
+ */
+function loopbackClient(): OAuthLoginClient {
+  return {
+    supportsDeviceCode: false,
+    supportsBrowserCode: true,
+    browserRedirectUri: "http://127.0.0.1:54549/callback",
+    buildAuthorizeUrl: ({ state, codeChallenge }) =>
+      `https://openrouter.ai/auth?state=${state}&code_challenge=${codeChallenge}`,
+    exchangeCode: async () => ({
+      access: "key",
+      refresh: "key",
+      expiresAt: new Date(),
+    }),
+  };
+}
+
+/**
+ * A callback listener that never binds a real socket.
+ *
+ * `claudeClient`'s redirect is a remote host, so `register` already declines to
+ * bind — but a test that later uses a loopback redirect must not grab a real
+ * port on the machine running the suite. The injected `serve` records the binds
+ * instead, which also lets a test assert that the port was claimed and released.
+ */
+function testCallbackListener(): OAuthCallbackListener {
+  return new OAuthCallbackListener({
+    completer: { complete: async () => ({ ok: true, message: "unused" }) },
+    serve: () => ({ port: 1, stop: () => undefined }),
+  });
+}
+
 function setup(client?: OAuthLoginClient) {
   const redis = fakeRedis();
   const oauthFlowStore = new OAuthFlowStore(redis);
@@ -546,6 +582,7 @@ function setup(client?: OAuthLoginClient) {
     oauthFlowStore,
     accountStore,
     accessResolver: () => fakeAccess(),
+      callbackListener: testCallbackListener(),
   });
   return { factory, accountStore, providerRegistry, oauthFlowStore };
 }
@@ -570,6 +607,33 @@ describe("OAuthLoginOperations.beginAuthorize", () => {
     const result = await factory.beginAuthorize(fakeAccess(), "claude", "label");
     expect(result.authorizeUrl).toContain(`state=${result.state}`);
     expect(result.authorizeUrl).toContain("code_challenge=");
+  });
+
+  test("binds the loopback port a browser redirect will arrive on", async () => {
+    // The redirect URI these clients advertise is loopback, so it names the
+    // operator's machine. Without binding it here the browser lands on a dead
+    // page and the code stays in the address bar — the defect that made every
+    // browser login require a manual paste.
+    const binds: { hostname: string; port: number }[] = [];
+    const listener = new OAuthCallbackListener({
+      completer: { complete: async () => ({ ok: true, message: "unused" }) },
+      serve: (options) => {
+        binds.push({ hostname: options.hostname, port: options.port });
+        return { port: options.port, stop: () => undefined };
+      },
+    });
+    const factory = createOAuthLoginOperations({
+      providerRegistry: registryWith("openrouter", loopbackClient()),
+      oauthFlowStore: new OAuthFlowStore(fakeRedis()),
+      accountStore: fakeAccountStore(),
+      accessResolver: () => fakeAccess(),
+      callbackListener: listener,
+    });
+
+    await factory.beginAuthorize(fakeAccess(), "openrouter", "label");
+    expect(binds.map((bind) => bind.port)).toEqual([54549, 54549]);
+    expect(binds.map((bind) => bind.hostname)).toEqual(["127.0.0.1", "::1"]);
+    listener.stop();
   });
 });
 
@@ -610,6 +674,7 @@ describe("OAuthLoginOperations full authorize -> callback round trip", () => {
       oauthFlowStore: new OAuthFlowStore(redis),
       accountStore: fakeAccountStore(),
       accessResolver: () => fakeAccess(),
+      callbackListener: testCallbackListener(),
       snapshotInvalidator: {
         invalidate: async () => {
           invalidations += 1;
@@ -783,6 +848,7 @@ describe("OAuthLoginOperations device-code flow", () => {
       oauthFlowStore: new OAuthFlowStore(fakeRedis()),
       accountStore: fakeAccountStore(),
       accessResolver: () => fakeAccess({ tenantId: "tenant-7" }),
+      callbackListener: testCallbackListener(),
     });
     await expect(
       factory.beginAuthorize(fakeAccess({ tenantId: "tenant-7" }), "muse", "device-account"),
@@ -802,6 +868,7 @@ describe("OAuthLoginOperations device-code flow", () => {
       oauthFlowStore: new OAuthFlowStore(redis),
       accountStore,
       accessResolver: () => fakeAccess({ tenantId: "tenant-7" }),
+      callbackListener: testCallbackListener(),
     });
     const started = await factory.startDevice(
       fakeAccess({ tenantId: "tenant-7" }),
@@ -857,6 +924,7 @@ describe("OAuthLoginOperations device-code flow", () => {
       oauthFlowStore: new OAuthFlowStore(fakeRedis()),
       accountStore: fakeAccountStore(),
       accessResolver: () => fakeAccess({ tenantId: "tenant-7" }),
+      callbackListener: testCallbackListener(),
       snapshotInvalidator: {
         invalidate: async () => {
           invalidations += 1;
@@ -895,6 +963,7 @@ describe("oauth routes — real Elysia schema validation", () => {
       oauthFlowStore: new OAuthFlowStore(redis),
       accountStore: fakeAccountStore(),
       accessResolver: () => fakeAccess(),
+      callbackListener: testCallbackListener(),
     });
     const response = await app.handle(
       new Request("http://localhost/providers/claude/oauth/device/poll", { method: "POST" }),
@@ -910,6 +979,7 @@ describe("oauth routes — real Elysia schema validation", () => {
       oauthFlowStore: new OAuthFlowStore(redis),
       accountStore: fakeAccountStore(),
       accessResolver: () => fakeAccess(),
+      callbackListener: testCallbackListener(),
     });
     const response = await app.handle(
       new Request("http://localhost/providers/claude/oauth/device/poll", {
@@ -929,6 +999,7 @@ describe("oauth routes — real Elysia schema validation", () => {
       oauthFlowStore: new OAuthFlowStore(redis),
       accountStore: fakeAccountStore(),
       accessResolver: () => fakeAccess(),
+      callbackListener: testCallbackListener(),
     });
     const response = await app.handle(
       new Request("http://localhost/providers/claude/oauth/authorize", {
@@ -948,6 +1019,7 @@ describe("oauth routes — real Elysia schema validation", () => {
       oauthFlowStore,
       accountStore: fakeAccountStore(),
       accessResolver: () => fakeAccess(),
+      callbackListener: testCallbackListener(),
     });
     const denied = await app.handle(
       new Request(`http://localhost/providers/claude/oauth/callback?state=${state}&error=access_denied`),

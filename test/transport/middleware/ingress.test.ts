@@ -404,13 +404,32 @@ dbDescribe("checks.test.ts", () => {
       expect(response.status).toBe(200);
     });
 
-    test("rejects conflicting Authorization and x-api-key headers as 400", async () => {
+    test("accepts the same key in Authorization and x-api-key", async () => {
+      // An Anthropic-compatible client presents one key in both headers so a
+      // gateway reading either one works. Rejecting the pair rejected the whole
+      // client — every request from an Antigravity IDE install pointed at this
+      // gateway through a DNS override failed with 400.
       const { token } = await createTenantWithKey(["routing:invoke"]);
       const stateStore = new ProxyRequestStateStore();
       const app = buildApp(stateStore);
       const req = requestFor("/v1/messages", {
         authorization: `Bearer ${token}`,
         "x-api-key": token,
+      });
+      stateStore.initialize(req, Date.now(), 30_000);
+      const response = await app.handle(req);
+      expect(response.status).toBe(200);
+    });
+
+    test("rejects two different credentials as 400", async () => {
+      // Tolerating the pair must not mean tolerating a mismatch: picking one
+      // would silently decide which identity the request runs as.
+      const { token } = await createTenantWithKey(["routing:invoke"]);
+      const stateStore = new ProxyRequestStateStore();
+      const app = buildApp(stateStore);
+      const req = requestFor("/v1/messages", {
+        authorization: `Bearer ${token}`,
+        "x-api-key": `${token}-different`,
       });
       stateStore.initialize(req, Date.now(), 30_000);
       const response = await app.handle(req);
@@ -428,7 +447,13 @@ describe("security header middleware", () => {
         throw new Error("boom");
       });
     const response = await app.handle(new Request("http://localhost/boom"));
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: "internal_error",
+        message: "Cartethyia Error: Internal server error",
+      },
+    });
     expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(response.headers.get("x-frame-options")).toBe("DENY");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");

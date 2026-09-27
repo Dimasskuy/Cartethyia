@@ -12,6 +12,7 @@ import {
   WORKBUDDY_MODELS,
   createWorkBuddyAdapter,
   workbuddyPrePayload,
+  WORKBUDDY_SYSTEM_PROMPT,
 } from "../../../../src/providers/integrations/buddy/workbuddy";
 import { makeBuddyModel } from "../../../../src/providers/integrations/buddy/buddy-catalog-shared";
 import { WORKBUDDY_CHAT_PATH } from "../../../../src/providers/integrations/buddy/workbuddy-shared";
@@ -28,6 +29,8 @@ import {
 } from "../../../../src/providers/integrations/buddy/buddy-oauth-shared";
 import { fetchWorkBuddyQuota } from "../../../../src/providers/integrations/buddy/workbuddy-quota";
 import type { CanonicalRequest } from "../../../../src/transport/canonical-model";
+import { canonicalToChatPayload } from "../../../../src/protocol/request/chat";
+import { parseResponsesRequest } from "../../../../src/transport/surface/responses/parse";
 import type { ProviderDispatchContext, ProviderDispatchTarget } from "../../../../src/providers/provider-registry";
 
 function responseSse(): Response {
@@ -157,7 +160,7 @@ describe("WorkBuddy integration", () => {
     workbuddyPrePayload(payload, request(), candidate());
     expect(payload.stream).toBe(true);
     expect(payload.messages).toEqual([
-      { role: "system", content: "You are WorkBuddy AI." },
+      { role: "system", content: WORKBUDDY_SYSTEM_PROMPT },
       { role: "user", content: [{ type: "text", text: "hello" }] },
     ]);
   });
@@ -230,6 +233,48 @@ describe("WorkBuddy integration", () => {
     expect(
       ((payload.tool_choice as Record<string, unknown>).function as Record<string, unknown>).name,
     ).toBe("badname");
+  });
+  test("replays reasoning once on a multi-call assistant turn from Responses input", () => {
+    const parsed = parseResponsesRequest({
+      model: "deepseek-v4.1-flash",
+      input: [
+        { role: "user", content: "check both" },
+        { type: "reasoning", content: [{ type: "reasoning_text", text: "use both tools" }] },
+        { type: "function_call", call_id: "call-a", name: "first", arguments: "{}" },
+        { type: "function_call", call_id: "call-b", name: "second", arguments: "{}" },
+        { type: "function_call_output", call_id: "call-a", output: "a" },
+        { type: "function_call_output", call_id: "call-b", output: "b" },
+        { role: "user", content: "continue" },
+      ],
+    });
+    const payload = canonicalToChatPayload(parsed);
+    workbuddyPrePayload(payload, parsed, candidate());
+    const wire = payload.messages as Array<Record<string, unknown>>;
+    const calls = wire.filter((message) => Array.isArray(message["tool_calls"]));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.["reasoning_content"]).toBe("use both tools");
+    expect((calls[0]?.["tool_calls"] as Array<Record<string, unknown>>).map((call) => call["id"]))
+      .toEqual(["call-a", "call-b"]);
+    expect(wire.filter((message) => message["role"] === "tool").map((message) => message["tool_call_id"]))
+      .toEqual(["call-a", "call-b"]);
+  });
+  test("keeps tool-result boundaries and does not fabricate missing reasoning", () => {
+    const payload: Record<string, unknown> = {
+      model: "deepseek-v4.1-flash",
+      messages: [
+        { role: "assistant", content: "working", reasoning_content: "step one" },
+        { role: "assistant", content: null, tool_calls: [{ id: "a" }] },
+        { role: "tool", tool_call_id: "a", content: "done" },
+        { role: "assistant", content: null, tool_calls: [{ id: "b" }] },
+        { role: "tool", tool_call_id: "b", content: "done" },
+      ],
+    };
+    buddyPrePayloadCommon(payload);
+    const wire = payload.messages as Array<Record<string, unknown>>;
+    expect(wire.map((message) => message["role"])).toEqual(["assistant", "tool", "assistant", "tool"]);
+    expect(wire[0]?.["content"]).toBe("working");
+    expect(wire[0]?.["reasoning_content"]).toBe("step one");
+    expect(wire[2]).not.toHaveProperty("reasoning_content");
   });
   test("restores declarations for historical tool calls when tools are omitted", () => {
     const payload: Record<string, unknown> = {
@@ -355,10 +400,32 @@ describe("WorkBuddy integration", () => {
 
   test("catalog covers the WorkBuddy international model set", () => {
     expect(WORKBUDDY_MODELS.length).toBeGreaterThan(20);
-    for (const id of ["glm-5.2", "kimi-k3", "deepseek-v4.1-flash", "gpt-6-astra"]) {
+    for (const id of [
+      "glm-5.3",
+      "kimi-k3",
+      "kimi-k2.8-preview",
+      "grok-4.6",
+      "grok-4.7",
+      "claude-sonnet-4.6",
+      "deepseek-v4.1-flash",
+      "gpt-6-astra",
+    ]) {
       expect(WORKBUDDY_MODELS.some((model) => model.modelId === id)).toBe(true);
     }
-    const glm = WORKBUDDY_MODELS.find((model) => model.modelId === "glm-5.2");
+    // The generic aliases and the superseded DeepSeek/GLM rows are retired.
+    for (const id of [
+      "default-model",
+      "fast-model",
+      "balanced-model",
+      "deep-model",
+      "deepseek-v4-flash",
+      "deepseek-v4-pro",
+      "glm-5.1",
+      "glm-5.2",
+    ]) {
+      expect(WORKBUDDY_MODELS.some((model) => model.modelId === id)).toBe(false);
+    }
+    const glm = WORKBUDDY_MODELS.find((model) => model.modelId === "glm-5.3");
     expect(glm?.contextLimit).toBe(1_000_000);
     expect(glm?.reasoning).toBe(true);
     // Every catalog row must carry the explicit `/v2/chat/completions`
@@ -481,5 +548,14 @@ describe("WorkBuddy integration", () => {
       const result = await fetchWorkBuddyQuota("   ", fetcher);
       expect(result.error).toBe("WorkBuddy credential not available.");
     });
+  });
+});
+
+/** See the sibling in `codebuddy.integration.test.ts` for why this is literal. */
+describe("WorkBuddy leading system prompt", () => {
+  test("states a neutral, honest assistant identity rather than the vendor brand", () => {
+    expect(WORKBUDDY_SYSTEM_PROMPT).toContain("pragmatic and direct");
+    expect(WORKBUDDY_SYSTEM_PROMPT.toLowerCase()).not.toContain("workbuddy");
+    expect(WORKBUDDY_SYSTEM_PROMPT.toLowerCase()).not.toContain("tencent");
   });
 });

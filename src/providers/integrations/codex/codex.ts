@@ -86,12 +86,20 @@ function codexResponsesModel(
 }
 
 export const CODEX_MODELS: readonly ModelDefinition[] = [
-  // SKU set and limits: the ChatGPT Codex backend serves the 6-generation and
-  // gpt-5.5 inside a 272k window while the 5.6 generation gets the full 1M;
-  // all cap output at 128k.
-  codexResponsesModel("gpt-6-astra", 272_000, 128_000),
-  codexResponsesModel("gpt-6-luna", 272_000, 128_000),
-  codexResponsesModel("gpt-6-sol", 272_000, 128_000),
+  // The 6-generation is served in a 272k *default* window that extends to
+  // 922k, not a hard 272k cap. Measured against the live registry
+  // (`/backend-api/codex/models`): `gpt-6-astra` reports `context_window`
+  // 272000 and `max_context_window` 872000, and OpenAI documents 1.05M total
+  // context for the generation — 922k input plus the 128k output ceiling — so
+  // 922k is the input capacity and the registry's 872k is the stale figure.
+  // Recording 272k here published a window less than a third of what the model
+  // accepts and made the routing alias rows understate it too.
+  //
+  // The 5.6 generation keeps the full 1M it was given when OpenAI raised it;
+  // the same registry still reports the pre-raise 272k for those ids.
+  codexResponsesModel("gpt-6-astra", 922_000, 128_000),
+  codexResponsesModel("gpt-6-luna", 922_000, 128_000),
+  codexResponsesModel("gpt-6-sol", 922_000, 128_000),
   codexResponsesModel("gpt-daybreak-blue-latest", 272_000, 128_000),
   codexResponsesModel("gpt-5.6-sol", 1_000_000, 128_000),
   codexResponsesModel("gpt-5.6-terra", 1_000_000, 128_000),

@@ -92,17 +92,19 @@ export async function bundledModelCatalog(
       ? await getCachedModels(registration.provider_id, registration.loadModels)
       : [];
     modelsByProvider.set(registration.provider_id, definitions);
-    const endpoints = {
-      ...(registration.endpoint_paths_by_wire_family ?? {}),
-    } as Partial<Record<WireFamily, string>>;
+    // Only a row that contradicts the registration map is a mistake. Two rows
+    // of the same wire family may legitimately serve different paths (Studio
+    // UltraSpeed is `/fastchat/open-apis/bot/chat` while flash/pro stay on
+    // `/open-apis/bot/chat`); dispatch always uses the row's own
+    // `ModelDefinition.endpointPath` via `candidate.endpoint_path`.
+    const registeredPaths = registration.endpoint_paths_by_wire_family ?? {};
     for (const definition of definitions) {
-      const existing = endpoints[definition.wireFamily];
-      if (existing !== undefined && existing !== definition.endpointPath) {
+      const registered = registeredPaths[definition.wireFamily];
+      if (registered !== undefined && registered !== definition.endpointPath) {
         throw new Error(
           `Conflicting endpoint paths for ${registration.provider_id}/${definition.wireFamily}`,
         );
       }
-      endpoints[definition.wireFamily] = definition.endpointPath;
     }
   }
   return { modelsByProvider };

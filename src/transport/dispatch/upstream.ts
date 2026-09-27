@@ -46,13 +46,17 @@ export function buildUpstreamDispatchContext(input: {
     ? undefined
     : input.userAgent;
   const sourceFetch = input.outboundFetch;
-  const outboundFetch = sourceFetch && userAgent
-    ? (request: RequestInfo | URL, init?: RequestInit) => {
-        const headers = new Headers(init?.headers);
-        headers.set("user-agent", userAgent);
-        return sourceFetch(request, { ...init, headers });
-      }
-    : sourceFetch;
+  const outboundFetch =
+    sourceFetch && userAgent
+      ? (request: RequestInfo | URL, init?: RequestInit) => {
+          const requestHeaders =
+            init?.headers ?? (request instanceof Request ? request.headers : undefined);
+          const headers = new Headers(requestHeaders);
+          // Provider identity is authoritative; route identity fills only a missing header.
+          if (!headers.has("user-agent")) headers.set("user-agent", userAgent);
+          return sourceFetch(request, { ...init, headers });
+        }
+      : sourceFetch;
   return {
     credential: input.credential,
     deadline: input.deadline,

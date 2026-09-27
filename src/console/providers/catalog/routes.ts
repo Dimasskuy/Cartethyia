@@ -45,7 +45,6 @@ const compatibilityProfileSchema = t.Object({
       enabled: t.Boolean(),
     }),
   ),
-  credentialUrl: t.Optional(t.String()),
 });
 const createProviderBody = t.Object({
   providerId: t.String(),

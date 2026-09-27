@@ -10,7 +10,8 @@ The console needs Redis (OAuth flow state and the quota cache are Redis-backed),
 it mounts only when a Redis client exists. Sessions are not: they live in
 `console_sessions` (Postgres), and CSRF is stateless. Under
 `REDIS_MODE=single_instance_local` the process serves `/v1/*`, `/health` and
-`/metrics` with no `/console/api/*` and no share surface; `ProductionAppDeps.consoleApi`
+`/metrics` with no `/console/api/*`; the share surface stays mounted, because
+the share router depends on Postgres alone. `ProductionAppDeps.consoleApi`
 is optional for exactly that reason.
 
 ## Layout
@@ -124,10 +125,11 @@ the adapter so the provider is dispatchable immediately. Shared (tenant-null) pr
 editable only through the `platform:admin` `/platform/global/:providerId` path, where built-ins
 accept enable/disable only. `POST /providers/:providerId/models/sync` is the one catalog
 operation that additionally requires `platform:admin` on a tenant-scoped provider, so a plain
-`dashboard:write` operator cannot resync their own provider's models. A provider response
-also carries `supportedWireFamilies` — the wires that provider declares, derived
-by the backend from the registry (built-ins) or the BYOK profile (custom). A model row's
-`source` column is the list's grouping key, and the dashboard renders four groups from it:
+`dashboard:write` operator cannot resync their own provider's models. A provider response also
+carries `supportedWireFamilies`, derived by the backend from the registry (built-ins) or the BYOK
+profile (custom), and `hasAdapterUserAgent`, derived from bundled adapter metadata so the dashboard
+can hide route User-Agent controls for adapters that own that header. A model row's `source` column
+is the list's grouping key, and the dashboard renders four groups from it:
 `builtin` (and a pre-column `null`), `auto_free` (a discovered free-tier row), `manual`, and
 `discovered`. `syncModels` writes `auto_free` for a row whose discovery definition is marked as
 a free tier and `discovered` for the rest, so the group survives the write rather than being
@@ -138,14 +140,23 @@ serve a protocol this gateway carries no bundled knowledge of, so every wire fam
 selectable and the upstream decides whether it answers. `setModelEnabled` is the hard routing invariant `route-catalog.ts`
 filters on: built-in models can be disabled per tenant (`tenantDisabledModels`) but never
 deleted (`builtin_model_immutable`). Accounts soft-revoke via `status: disabled` and export
-decrypted secrets as a downloaded file, never rendered. OAuth advertises the fixed loopback URI
-`http://127.0.0.1:59653/callback`; the server-side console callback remains the exchange
-endpoint, so token material never reaches the dashboard.
+decrypted secrets as a downloaded file, never rendered. A browser OAuth client advertises its
+authorization server's own loopback redirect (Codex `localhost:1455`, OpenRouter
+`127.0.0.1:54549`, Antigravity `127.0.0.1:51121`, Claude `127.0.0.1:54545`; the gateway default is
+`127.0.0.1:59653/callback`), and `callback-listener.ts` **binds that port for the life of the
+flow**, on both `127.0.0.1` and `::1`, so the redirect completes inside the gateway and the code
+never has to be pasted. Only a redirect the process cannot bind — a custom scheme such as
+`zcode://zai-auth/callback`, or a remote host — keeps the manual paste path. The listener's
+exchange runs `completeLogin`, the same function the hosted console callback uses, so token
+material still never reaches the dashboard.
 
 **Invariants.** Account responses never carry secrets; only the export path decrypts, via the
 refresh-aware `resolveCredential`, and only for tenant-owned accounts. Compatibility-profile
-writes reject unknown fields, adapter-owned headers, and control characters, endpoint paths must
-be absolute and CRLF-free, and SSRF-sensitive fields (`credentialUrl`) are presentation-only.
+writes reject unknown fields, adapter-owned headers, and control characters, and endpoint paths must
+be absolute and CRLF-free. A provider response carries `credentialUrl` and `credentialHint`
+projected from bundled metadata, not from the stored row, and the provider detail page renders
+them as an outbound link plus one line of guidance; a compatibility profile that tries to post
+either field is rejected as unknown, because only the bundled declaration is authoritative.
 
 ## Routing (`routing/`)
 
@@ -545,9 +556,11 @@ not ours, and a credential is never persisted in the clear.
 
 API-key rows have two modes. A personal key has an authentication hash and may be used directly;
 a share template has no hash or recoverable secret, so it can never authenticate. Only an active
-share template can mint an enrollment link. `share-store.ts` stores a SHA-256 token hash and the
-`enroll` kind; the bearer token is returned once with a URL built from the authenticated request
-origin.
+share template can mint an enrollment link. `share-store.ts` stores a SHA-256 token hash, which
+stays the lookup key, and retains the bearer token encrypted beside it so the console can show the
+stored link again; a row written before token retention carries NULL and simply cannot be
+re-displayed. The link's kind follows the key: a share template gets an `enroll` link that issues
+child keys, and a personal key gets a `handoff` link that reveals the key itself.
 
 The public `/share/:token` page is served by the single dashboard index. Its `/data` response
 contains only the template policy and notes, never a parent or child credential. The
@@ -558,10 +571,13 @@ Only the hash is persisted; plaintext is returned once to the recipient. A datab
 index enforces one active shared child per canonical client IP globally, including concurrent
 enrollment attempts through different parents.
 
-The owner-side share dialog, launched from a share-template row in Overview’s API Credentials
-panel, lists child-key prefixes and aggregate hits, errors, tokens, and masked IP addresses. It
+The owner-side share dialog, launched from any top-level key row in Overview's API Credentials
+panel, lists child-key prefixes and aggregate hits, errors, tokens, and masked IP addresses when the
+row is a share template. For a share template it
 polls metadata-only telemetry, shows top models and recent request details, and obeys the tenant’s
-client-IP privacy preference. Lifetime per-key totals are maintained in
+client-IP privacy preference. For a personal key the same dialog shows that key's own usage and its
+`handoff` link, and queries no recipients at all, because `/shared-keys` is a share-template route
+that answers 404 for it. Lifetime per-key totals are maintained in
 `telemetry_usage_totals`; model breakdowns and request details use retained telemetry and never
 include payloads or credentials.
 

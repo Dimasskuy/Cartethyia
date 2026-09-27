@@ -528,6 +528,34 @@ export interface ResolvedImageSource {
   detail?: string;
 }
 
+/** An RFC 2397 base64 `data:` URL split into the media type and bytes it carries. */
+export interface DataUrlPayload {
+  /** The declared media type (the `image/png` of `data:image/png;base64,…`). */
+  readonly mediaType: string;
+  /** The base64 payload, with the `data:` prefix and media type removed. */
+  readonly data: string;
+}
+
+/**
+ * Splits a base64 `data:` URL into its media type and payload.
+ *
+ * Returns `undefined` for a non-`data:` URL, and for a `data:` URL that is not
+ * base64-encoded: every wire this gateway speaks carries inline bytes as
+ * base64, so a percent-encoded payload has no transport to land in and the
+ * caller must fall back rather than forward bytes it cannot decode.
+ *
+ * This is the single home for the split. A codec that hand-rolls the regex
+ * instead tends to keep the whole `data:` string as a URI, which the upstream
+ * then cannot fetch — the attachment is lost while the request still succeeds.
+ */
+export function splitDataUrl(url: string): DataUrlPayload | undefined {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
+  const mediaType = match?.[1];
+  const data = match?.[2];
+  if (mediaType === undefined || data === undefined || data.length === 0) return undefined;
+  return { mediaType, data };
+}
+
 /**
  * Resolves an opaque canonical `image` content part into its URL/file-id/detail
  * triple, tolerating every origin shape this codebase produces:

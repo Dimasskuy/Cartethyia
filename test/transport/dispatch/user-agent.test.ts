@@ -8,14 +8,15 @@ function dispatchFetch(context: Record<string, unknown>): (input: RequestInfo | 
 }
 
 describe("provider route User-Agent dispatch", () => {
-  test("overrides adapter headers for non-OAuth dispatches at the bound fetch boundary", async () => {
+  test("fills an absent User-Agent for API-key dispatch at the bound fetch boundary", async () => {
     let sentHeaders: Headers | undefined;
+    const routeUserAgent = "codex_cli_rs/0.156.1";
     const context = buildUpstreamDispatchContext({
       credential: { credential_kind: "api_key" },
       deadline: Date.now() + 5_000,
       signal: new AbortController().signal,
       headers: {},
-      userAgent: "codex_cli_rs/0.156.1",
+      userAgent: routeUserAgent,
       outboundFetch: async (_input, init) => {
         sentHeaders = new Headers(init?.headers);
         return new Response(null, { status: 204 });
@@ -23,9 +24,36 @@ describe("provider route User-Agent dispatch", () => {
     });
 
     await dispatchFetch(context)("https://upstream.example/v1/chat/completions", {
-      headers: { "user-agent": "adapter-specific/1" },
+      headers: { accept: "application/json" },
     });
-    expect(sentHeaders?.get("user-agent")).toBe("codex_cli_rs/0.156.1");
+    expect(sentHeaders?.get("user-agent")).toBe(routeUserAgent);
+  });
+
+  test("preserves Qoder's API-key User-Agent over the route identity", async () => {
+    let sentHeaders: Headers | undefined;
+    const routeUserAgent = "codex_cli_rs/0.156.1";
+    const context = buildUpstreamDispatchContext({
+      credential: { credential_kind: "api_key" },
+      deadline: Date.now() + 5_000,
+      signal: new AbortController().signal,
+      headers: {},
+      userAgent: routeUserAgent,
+      outboundFetch: async (_input, init) => {
+        sentHeaders = new Headers(init?.headers);
+        return new Response(null, { status: 204 });
+      },
+    });
+    const qoderUserAgent = "Go-http-client/2.0";
+
+    await dispatchFetch(context)("https://upstream.example/qoder", {
+      headers: { "user-agent": qoderUserAgent },
+    });
+    expect(sentHeaders?.get("user-agent")).toBe(qoderUserAgent);
+
+    await dispatchFetch(context)(
+      new Request("https://upstream.example/qoder", { headers: { "User-Agent": qoderUserAgent } }),
+    );
+    expect(sentHeaders?.get("user-agent")).toBe(qoderUserAgent);
   });
 
   test("does not replace OAuth-native User-Agent headers", async () => {

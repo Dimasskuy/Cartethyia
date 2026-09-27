@@ -140,6 +140,8 @@ export function buddyPrePayloadCommon(
     delete payload["reasoning_summary"];
   }
   backfillDeepSeekReasoningContent(payload);
+  const messages = payload["messages"];
+  if (Array.isArray(messages)) coalesceConsecutiveAssistantMessages(messages);
   delete payload["agent"];
   delete payload["agent_mode"];
   delete payload["agent_prompt"];
@@ -182,6 +184,52 @@ export function coalesceConsecutiveUserMessages(messages: Array<Record<string, u
   }
   messages.length = 0;
   messages.push(...out);
+}
+
+/**
+ * Responses input can split one assistant turn into several adjacent items
+ * (text, reasoning, and parallel function calls). Chat wire needs a single
+ * assistant message so the reasoning trace accompanies every call in the
+ * batch; tool results or user turns always end the batch.
+ */
+export function coalesceConsecutiveAssistantMessages(messages: Array<Record<string, unknown>>): void {
+  let write = 0;
+  for (const message of messages) {
+    const previous = messages[write - 1];
+    if (message["role"] !== "assistant" || previous?.["role"] !== "assistant") {
+      messages[write++] = message;
+      continue;
+    }
+    const firstContent = previous["content"];
+    const nextContent = message["content"];
+    let content: unknown = firstContent ?? nextContent;
+    if (firstContent != null && nextContent != null) {
+      if (typeof firstContent === "string" && typeof nextContent === "string") {
+        if (firstContent.length === 0) content = nextContent;
+        else if (nextContent.length === 0) content = firstContent;
+        else content = `${firstContent}\n${nextContent}`;
+      } else content = [...contentParts(firstContent), ...contentParts(nextContent)];
+    }
+    const firstCalls = previous["tool_calls"];
+    const nextCalls = message["tool_calls"];
+    const firstReasoning = previous["reasoning_content"];
+    const nextReasoning = message["reasoning_content"];
+    const merged: Record<string, unknown> = { ...previous, ...message, content };
+    if (Array.isArray(firstCalls) || Array.isArray(nextCalls))
+      merged["tool_calls"] = [
+        ...(Array.isArray(firstCalls) ? firstCalls : []),
+        ...(Array.isArray(nextCalls) ? nextCalls : []),
+      ];
+    if (typeof firstReasoning === "string" && typeof nextReasoning === "string") {
+      if (firstReasoning.length === 0) merged["reasoning_content"] = nextReasoning;
+      else if (nextReasoning.length === 0) merged["reasoning_content"] = firstReasoning;
+      else merged["reasoning_content"] = `${firstReasoning}\n${nextReasoning}`;
+    } else if (typeof firstReasoning === "string" || typeof nextReasoning === "string") {
+      merged["reasoning_content"] = firstReasoning ?? nextReasoning;
+    }
+    messages[write - 1] = merged;
+  }
+  messages.length = write;
 }
 
 /**

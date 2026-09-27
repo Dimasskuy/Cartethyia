@@ -700,6 +700,23 @@ export function DashboardShell({
   useEffect(() => {
     setDrawerOpen(false);
   }, [location.pathname]);
+
+  // The app scrolls inside `.app-main-column`, not the document, so React
+  // Router's window-based restoration never applies and the previous page's
+  // offset carried into the next one — landing on a provider detail already
+  // scrolled past its header, for example.
+  //
+  // Reuses the pull hook's ref rather than re-querying the column, so the
+  // selector stays in one place. That ref is assigned in the hook's own effect;
+  // on the very first commit this layout effect runs before it, but a fresh
+  // load already starts at the top, and `DashboardShell` stays mounted across
+  // route changes, so every navigation this must correct has it set.
+  // Layout timing (not `useEffect`) because a post-paint reset would show the
+  // stale offset for one frame.
+  useLayoutEffect(() => {
+    const scroller = pull.scrollerRef.current;
+    if (scroller) scroller.scrollTop = 0;
+  }, [location.pathname, pull.scrollerRef]);
   const logout = async () => {
     setLoggingOut(true);
     try {

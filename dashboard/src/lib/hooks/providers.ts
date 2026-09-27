@@ -352,10 +352,15 @@ export function useStartOAuthAuthorize() {
 
 /**
  * Completes a browser OAuth login using a `code` copied by hand from the
- * provider's redirect URL. Required whenever that redirect points at the
- * fixed loopback address (`http://127.0.0.1:59653/callback`) the dashboard can
- * never reach directly — the code/state pair still round-trips through the
- * same server-side callback route the automatic redirect would have hit.
+ * provider's redirect URL.
+ *
+ * The fallback, not the normal path: the server binds the loopback port the
+ * redirect names, so the callback usually completes on its own and the dialog
+ * detects it by polling the account list. This exists for the redirects the
+ * server cannot bind — a custom scheme handed to an installed app, or a
+ * provider that sends the code to a remote host — where the operator pastes the
+ * URL back. The code/state pair round-trips through the same server-side
+ * callback route the automatic redirect uses.
  */
 export function useCompleteOAuthBrowserLogin() {
   const queryClient = useQueryClient();

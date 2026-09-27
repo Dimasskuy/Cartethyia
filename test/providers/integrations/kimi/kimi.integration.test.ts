@@ -66,6 +66,20 @@ describe("Kimi Code OAuth", () => {
     expect(two["X-Msh-Device-Id"]).toBe("tenant-b-device");
     expect(one["X-Msh-Device-Id"]).not.toBe(two["X-Msh-Device-Id"]);
   });
+
+  test("a 200 without a token fails instead of reporting pending forever", async () => {
+    // Reporting `pending` here polled until the flow expired with nothing
+    // actionable shown, because a pending verdict carries no reason.
+    const fetcher = (async () =>
+      jsonResponse({ error: "invalid_grant", error_description: "code expired" })) as unknown as typeof fetch;
+    const result = await new KimiCodeOAuthClient(fetcher).pollDeviceAuth("device-1", {
+      providerId: "kimi",
+      tenantId: null,
+      accountLabel: "x",
+    });
+    expect(result.status).toBe("failed");
+    expect(result.status === "failed" && result.reason).toContain("code expired");
+  });
 });
   });
 

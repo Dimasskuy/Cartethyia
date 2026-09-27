@@ -1,6 +1,8 @@
 import {
   Activity,
   CalendarCheck,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Clock3,
   EyeOff,
@@ -12,7 +14,7 @@ import {
   TriangleAlert,
   Zap,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Switch } from "../components/ui/switch";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
@@ -48,6 +50,7 @@ import {
   formatQuotaWindowLabel,
   formatResetDistance,
   quotaBarTone,
+  paginateQuotaWindows,
   accountIdentity,
 } from "../lib/quota-formatters";
 import { getErrorMessage } from "../lib/helpers";
@@ -273,6 +276,13 @@ function QuotaCard({
   const canReset = supportsAccountReset(account.provider);
   const resets = useAccountResets(account.id, canReset);
   const quota = account.quota;
+  const [quotaWindowPage, setQuotaWindowPage] = useState(0);
+  const quotaWindows = quota?.windows ?? [];
+  const pagination = paginateQuotaWindows(quotaWindows, quotaWindowPage);
+  const quotaPageCount = pagination.pageCount;
+  useEffect(() => {
+    setQuotaWindowPage((current) => Math.min(current, Math.max(0, quotaPageCount - 1)));
+  }, [quotaPageCount]);
   const busy = refresh.isPending || growth.isPending;
   const resetCreditsCount = resets.data?.availableCount ?? 0;
   // Manual trigger result wins while fresh; otherwise the sweep ledger tells
@@ -312,26 +322,27 @@ function QuotaCard({
 
   return (
     <div
-      className="overflow-hidden rounded-2xl border border-[var(--inner-border)] bg-[var(--glass-bg)] shadow-[0_8px_30px_rgba(0,0,0,.12)] backdrop-blur-xl"
+      className="overflow-hidden rounded-xl border border-[var(--inner-border)] bg-[var(--glass-bg)] shadow-[0_8px_30px_rgba(0,0,0,.12)] backdrop-blur-xl"
       style={{
         background: "var(--glass-bg)",
         borderColor: "var(--inner-border)",
-        borderRadius: "16px",
+        borderRadius: "14px",
       }}
       aria-busy={busy}
     >
       {/* Header: icon + provider name + plan + account hint + actions */}
       <div
-        className="flex items-center gap-3 px-4 py-3"
+        className="flex flex-wrap items-center gap-2.5 px-3.5 py-2"
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "12px",
-          padding: "12px 16px",
+          gap: "10px",
+          padding: "8px 14px",
+          flexWrap: "wrap",
         }}
       >
-        <ProviderIcon icon={account.providerIcon} name={account.providerName} size={36} />
-        <div className="min-w-0 flex-1" style={{ minWidth: 0, flex: 1 }}>
+        <ProviderIcon icon={account.providerIcon} name={account.providerName} size={32} />
+        <div className="min-w-0 flex-1" style={{ minWidth: "160px", flex: "1 1 160px" }}>
           <div
             className="flex min-w-0 items-center gap-2"
             style={{ display: "flex", alignItems: "center", gap: "8px" }}
@@ -443,7 +454,12 @@ function QuotaCard({
         </div>
         <div
           className="flex items-center gap-1"
-          style={{ display: "flex", alignItems: "center", gap: "6px" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            marginLeft: "auto",
+          }}
         >
           {canReset && (
             <Button
@@ -569,30 +585,32 @@ function QuotaCard({
       {/* Quota progress bars */}
       {quota?.windows.length ? (
         <div
-          className="space-y-3 border-t border-[var(--inner-border)] px-4 py-3"
+          className="quota-window-list"
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: "12px",
+            gap: "8px",
             borderTop: "1px solid var(--inner-border)",
-            padding: "12px 16px",
+            padding: "9px 14px",
           }}
         >
-          {quota.windows.map((window, index) => {
+          {pagination.items.map((window, index) => {
             const remaining = window.remainingPercent ?? null;
             const limit = window.limit ?? null;
             const colors = quotaBarTone(remaining);
             const quotaFillPct = remaining !== null ? Math.max(0, Math.min(100, remaining)) : 0;
             return (
-              <div key={`${window.kind ?? window.label}:${window.resetsAt ?? "none"}:${index}`}>
-                {/* Label + percentage */}
+              <div
+                className="quota-window-row"
+                key={`${window.kind ?? window.label}:${window.resetsAt ?? "none"}:${index}`}
+              >
                 <div
-                  className="mb-1.5 flex items-center justify-between"
+                  className="flex items-center justify-between"
                   style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    marginBottom: "6px",
+                    marginBottom: "4px",
                   }}
                 >
                   <span
@@ -615,37 +633,42 @@ function QuotaCard({
                     </span>
                   )}
                 </div>
-                {/* Pill progress bar */}
                 <div
-                  className="h-2 overflow-hidden rounded-full bg-[var(--inner-border)]"
+                  className="quota-bar-track"
+                  role="progressbar"
+                  aria-label={`${formatQuotaWindowLabel(window.label)} remaining quota`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={remaining === null ? undefined : quotaFillPct}
+                  aria-valuetext={remaining === null ? "Quota amount not reported" : `${remaining}% remaining`}
                   style={{
-                    height: "8px",
-                    borderRadius: "9999px",
+                    height: "10px",
+                    borderRadius: "4px",
                     background: "var(--inner-border)",
                     overflow: "hidden",
                   }}
                 >
                   <div
-                    className="h-full rounded-full transition-all duration-500"
+                    className="quota-bar-fill"
                     style={{
                       width: `${quotaFillPct}%`,
                       height: "100%",
-                      borderRadius: "9999px",
+                      borderRadius: "3px",
                       background: colors.bar,
                       transition: "width var(--dur-macro) var(--ease-spring)",
                     }}
                   />
                 </div>
-                {/* Used / limit + reset */}
                 <div
-                  className="mt-1 flex items-center justify-between text-[10px] text-[var(--text-tertiary)]"
+                  className="flex items-center justify-between text-[10px] text-[var(--text-tertiary)]"
                   style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
+                    gap: "8px",
                     fontSize: "10px",
                     color: "var(--text-tertiary)",
-                    marginTop: "4px",
+                    marginTop: "3px",
                   }}
                 >
                   {(window.usedPercent !== null || limit !== null) && (
@@ -657,7 +680,7 @@ function QuotaCard({
                     </span>
                   )}
                   {window.resetsAt && (
-                    <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ fontVariantNumeric: "tabular-nums", textAlign: "right" }}>
                       {formatResetDistance(window.resetsAt, window.recurring)}
                     </span>
                   )}
@@ -665,13 +688,58 @@ function QuotaCard({
               </div>
             );
           })}
+          {pagination.pageCount > 1 && (
+            <nav
+              aria-label={`Quota windows for ${account.name}`}
+              className="quota-window-pagination"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "8px",
+                borderTop: "1px solid var(--inner-border)",
+                paddingTop: "8px",
+              }}
+            >
+              <span
+                aria-live="polite"
+                style={{ fontSize: "10px", color: "var(--text-tertiary)" }}
+              >
+                Showing {pagination.startIndex + 1}–{pagination.startIndex + pagination.items.length} of {quotaWindows.length}
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Previous quota windows for ${account.name}`}
+                  disabled={pagination.page === 0}
+                  icon={<ChevronLeft size={13} />}
+                  onClick={() => setQuotaWindowPage(pagination.page - 1)}
+                  style={{ height: "28px", padding: "0 8px" }}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Next quota windows for ${account.name}`}
+                  disabled={pagination.page >= pagination.pageCount - 1}
+                  icon={<ChevronRight size={13} />}
+                  onClick={() => setQuotaWindowPage(pagination.page + 1)}
+                  style={{ height: "28px", padding: "0 8px" }}
+                >
+                  Next
+                </Button>
+              </div>
+            </nav>
+          )}
         </div>
       ) : !cardError ? (
         <div
-          className="border-t border-[var(--inner-border)] py-6 text-center text-[11px] text-[var(--text-tertiary)]"
+          className="border-t border-[var(--inner-border)] py-4 text-center text-[11px] text-[var(--text-tertiary)]"
           style={{
             borderTop: "1px solid var(--inner-border)",
-            padding: "24px 16px",
+            padding: "18px 14px",
             textAlign: "center",
             fontSize: "11px",
             color: "var(--text-tertiary)",
@@ -720,15 +788,18 @@ export default function Quota(): ReactNode {
       if (accountFilter === "disabled" && account.active) return false;
       return true;
     });
-    // Default order is A→Z by display name; "Expiring first" swaps to the
-    // soonest-resetting account, with the name as a stable tiebreaker so the
-    // grid does not reshuffle between polls.
-    const byName = (left: QuotaEntry, right: QuotaEntry): number =>
+    // Each card's prominent title is the provider name, so the grid is ordered
+    // by provider first and account second: sorting by the account label alone
+    // left the visible titles in an order that read as random, and split one
+    // provider's accounts across the page. A stable tiebreaker keeps the grid
+    // from reshuffling between polls.
+    const byProviderThenName = (left: QuotaEntry, right: QuotaEntry): number =>
+      left.providerName.localeCompare(right.providerName, undefined, { sensitivity: "base" }) ||
       left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
     return [...result].sort(
       expiringFirst
-        ? (left, right) => firstResetAt(left) - firstResetAt(right) || byName(left, right)
-        : byName,
+        ? (left, right) => firstResetAt(left) - firstResetAt(right) || byProviderThenName(left, right)
+        : byProviderThenName,
     );
   }, [accountFilter, accounts, expiringFirst, providerFilter]);
 

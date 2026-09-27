@@ -98,26 +98,36 @@ describe("upstream error contract", () => {
     });
   }
 
-  test("maps status to the gateway error code and origin", async () => {
+  test("maps HTTP statuses to distinct gateway error classes", async () => {
     expect(statusToGatewayErrorCode(401)).toBe("authentication_failed");
     expect(statusToGatewayErrorCode(403)).toBe("authentication_failed");
+    expect(statusToGatewayErrorCode(402)).toBe("quota_exceeded");
     expect(statusToGatewayErrorCode(429)).toBe("quota_exceeded");
+    expect(statusToGatewayErrorCode(404)).toBe("upstream_not_found");
     expect(statusToGatewayErrorCode(407)).toBe("proxy_auth_required");
-    // 5xx are an upstream platform outage. This used to resolve to
-    // `proxy_unreachable` through a second, contradictory table, which the
-    // dashboard renders as "network proxy was unreachable" — blaming the
-    // egress proxy for the provider's own failure.
+    expect(statusToGatewayErrorCode(408)).toBe("deadline_exceeded");
+    expect(statusToGatewayErrorCode(409)).toBe("upstream_conflict");
+    expect(statusToGatewayErrorCode(413)).toBe("request_too_large");
+    expect(statusToGatewayErrorCode(415)).toBe("unsupported_media_type");
+    expect(statusToGatewayErrorCode(422)).toBe("upstream_unprocessable");
     expect(statusToGatewayErrorCode(500)).toBe("platform_unavailable");
     expect(statusToGatewayErrorCode(502)).toBe("platform_unavailable");
     expect(statusToGatewayErrorCode(503)).toBe("platform_unavailable");
+    expect(statusToGatewayErrorCode(504)).toBe("deadline_exceeded");
     expect(statusToGatewayErrorCode(529)).toBe("capacity_exhausted");
     const cases: Array<{ status: number; code: GatewayErrorCode; origin: "upstream" | "network" }> = [
       { status: 400, code: "invalid_request", origin: "upstream" },
       { status: 401, code: "authentication_failed", origin: "upstream" },
       { status: 403, code: "authentication_failed", origin: "upstream" },
+      { status: 404, code: "upstream_not_found", origin: "upstream" },
       { status: 407, code: "proxy_auth_required", origin: "network" },
+      { status: 409, code: "upstream_conflict", origin: "upstream" },
+      { status: 413, code: "request_too_large", origin: "upstream" },
+      { status: 415, code: "unsupported_media_type", origin: "upstream" },
+      { status: 422, code: "upstream_unprocessable", origin: "upstream" },
       { status: 429, code: "quota_exceeded", origin: "upstream" },
       { status: 502, code: "platform_unavailable", origin: "upstream" },
+      { status: 504, code: "deadline_exceeded", origin: "upstream" },
     ];
     for (const { status, code, origin } of cases) {
       const error = (await captureUpstreamError(
@@ -125,6 +135,44 @@ describe("upstream error contract", () => {
       )) as GatewayError;
       expect(error).toMatchObject({ code, status, origin });
     }
+  });
+  test("uses structured upstream error types instead of the coarse HTTP bucket", async () => {
+    const cases = [
+      { type: "authentication_error", upstreamStatus: 400, code: "authentication_failed", status: 401 },
+      { type: "rate_limit_error", upstreamStatus: 500, code: "quota_exceeded", status: 429 },
+      { type: "overloaded_error", upstreamStatus: 400, code: "capacity_exhausted", status: 529 },
+      { type: "api_error", upstreamStatus: 400, code: "platform_unavailable", status: 502 },
+      { type: "invalid_request_error", upstreamStatus: 500, code: "invalid_request", status: 400 },
+    ] as const;
+    for (const example of cases) {
+      const error = (await captureUpstreamError(
+        new Response(
+          JSON.stringify({ error: { type: example.type, message: "upstream detail" } }),
+          { status: example.upstreamStatus },
+        ),
+      )) as GatewayError;
+      expect(error).toMatchObject({
+        code: example.code,
+        status: example.status,
+        origin: "upstream",
+      });
+      expect(error.details["providerStatus"]).toBe(example.upstreamStatus);
+    }
+  });
+
+  test("classifies CodeBuddy policy rejections without calling them auth failures", async () => {
+    const error = (await captureUpstreamError(
+      new Response(JSON.stringify({ error: { code: "11140", message: "request illegal" } }), {
+        status: 403,
+      }),
+    )) as GatewayError;
+    expect(error).toMatchObject({ code: "policy_rejected", status: 403, origin: "upstream" });
+    expect(error.details["credentialEvidence"]).toBeUndefined();
+    expect(classifyUpstreamFailure(error)).toMatchObject({
+      category: "policy_rejected",
+      scope: "account",
+      mutatesAccount: true,
+    });
   });
 
   test("bounds the raw upstream body", async () => {
@@ -210,14 +258,19 @@ describe("codex error mapper", () => {
     expect(error.details["retryAfterMs"]).toBe(120_000);
   });
 
-  test("preserves the extracted upstream message for non-rate-limit statuses", async () => {
+  test("preserves the provider message while classifying structured overload errors", async () => {
     const error = await captureAsync(() =>
       mapCodexErrorResponse(
         new Response(JSON.stringify({ error: { code: "overloaded_error" } }), { status: 400 }),
       ),
     );
     expect(error.message).toBe("overloaded_error");
-    expect(error).toMatchObject({ code: "invalid_request", status: 400, origin: "upstream" });
+    expect(error).toMatchObject({
+      code: "capacity_exhausted",
+      status: 529,
+      origin: "upstream",
+      details: { providerStatus: 400, providerCode: "overloaded_error" },
+    });
   });
 
   test("reports an upstream 5xx as a platform outage, not a client fault", async () => {

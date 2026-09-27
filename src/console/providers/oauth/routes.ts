@@ -1,4 +1,5 @@
 import { providerAccounts, providerOauthStates } from "../../../persistence/schema";
+import { and, eq, isNull } from "drizzle-orm";
 import { encryptCredential, hashSecret } from "../../../security/crypto";
 import type { CartethyiaDatabase } from "../../../persistence/postgres";
 import type { OAuthExchangeResult, OAuthLoginClient } from "../../../providers/authentication/oauth-flow-store";
@@ -11,13 +12,30 @@ import { Elysia, t } from "elysia";
 import { ConsoleDomainError, errorResponse, requireScope } from "../../shared/errors";
 import { generateOAuthState, generatePkcePair } from "../../../providers/authentication/oauth-flow-store";
 import type { OAuthFlowStore } from "../../../providers/authentication/oauth-flow-store";
+import type { OAuthCallbackListener } from "./callback-listener";
 import { validateIssuedAccessToken } from "../../../providers/authentication/jwt-validator";
 import { inlineScriptContentSecurityPolicy } from "../../../security/outbound-headers";
 import type { AccessDecision } from "../../../security/access-control";
 import { isUniqueViolation } from "../../../persistence/postgres";
 import type { ConsoleAccessResolver } from "../../auth/access";
-/** OAuth identity is not exposed by the current exchange contract; the refresh
- * token fingerprint prevents replaying the exact same OAuth credential only. */
+/**
+ * The identity a repeated OAuth login is matched on.
+ *
+ * The refresh token cannot be that identity: a fresh login mints a new one, so
+ * keying on it let the same account be added twice — the duplicate unique index
+ * only caught a replay of the *exact* credential. The label is the account
+ * identity the provider itself reports (an email or org name), which is stable
+ * across logins, so it is what a re-login replaces.
+ *
+ * A provider that reports no label falls back to the refresh-token fingerprint,
+ * which is the old behaviour and still catches an exact replay. Renaming an
+ * account in the console changes the stored label, so a later login is treated
+ * as a new account rather than silently overwriting the rename — the same
+ * tradeoff the unique index has always had, now stated where it is decided.
+ */
+function oauthIdentityFingerprint(input: { readonly label: string } & OAuthExchangeResult): string {
+  return hashSecret(input.label.trim().length > 0 ? input.label.trim() : input.refresh);
+}
 
 /** Drizzle-backed persistence for a newly completed OAuth login. */
 export class DrizzleOAuthAccountStore implements OAuthAccountStore {
@@ -28,8 +46,55 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
     providerId: string,
     input: { readonly label: string } & OAuthExchangeResult,
   ): Promise<PersistedOAuthAccount> {
+    const credentialFingerprint = oauthIdentityFingerprint(input);
+    const sameAccount = and(
+      eq(providerAccounts.providerId, providerId),
+      // The identity index coalesces a null tenant to a sentinel, so "same
+      // tenant" here means both null or both equal.
+      tenantId === null
+        ? isNull(providerAccounts.tenantId)
+        : eq(providerAccounts.tenantId, tenantId),
+      eq(providerAccounts.credentialFingerprint, credentialFingerprint),
+    );
+    const credentialCiphertext = encryptCredential(input.access);
+    const refreshCiphertext = encryptCredential(input.refresh);
     try {
       return await this.db.transaction(async (tx) => {
+        const existing = await tx
+          .select({ id: providerAccounts.id })
+          .from(providerAccounts)
+          .where(sameAccount)
+          .limit(1);
+        const existingId = existing[0]?.id;
+        if (existingId !== undefined) {
+          // A re-login replaces the account it belongs to rather than adding a
+          // second row: the same email is the same account, and the newer
+          // tokens are the ones that work. The health state is reset with them,
+          // because a fresh credential makes the old rejection — the
+          // `Disabled` / `Re-login required` row an operator was looking at —
+          // meaningless by definition.
+          await tx
+            .update(providerAccounts)
+            .set({
+              label: input.label,
+              credentialCiphertext,
+              credentialKind: "oauth",
+              status: "active",
+              consecutiveFailures: 0,
+              cooldownUntil: null,
+              modelCooldowns: {},
+              lastError: null,
+              lastErrorCategory: null,
+              lastErrorAt: null,
+              lastRecoveredAt: null,
+            })
+            .where(eq(providerAccounts.id, existingId));
+          await tx
+            .update(providerOauthStates)
+            .set({ refreshCiphertext, expiresAt: input.expiresAt })
+            .where(eq(providerOauthStates.providerAccountId, existingId));
+          return { accountId: existingId };
+        }
         const rows = await tx
           .insert(providerAccounts)
           .values({
@@ -37,8 +102,8 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
             tenantId,
             label: input.label,
             credentialKind: "oauth",
-            credentialCiphertext: encryptCredential(input.access),
-            credentialFingerprint: hashSecret(input.refresh),
+            credentialCiphertext,
+            credentialFingerprint,
             status: "active",
           })
           .returning({ id: providerAccounts.id });
@@ -46,12 +111,15 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
         if (!row) throw new Error("failed to persist OAuth account");
         await tx.insert(providerOauthStates).values({
           providerAccountId: row.id,
-          refreshCiphertext: encryptCredential(input.refresh),
+          refreshCiphertext,
           expiresAt: input.expiresAt,
         });
         return { accountId: row.id };
       });
     } catch (error) {
+      // Still reachable: two logins for the same identity racing each other
+      // both read "no row" and both insert, and the identity index rejects the
+      // second. A retry by the operator replaces rather than duplicates.
       if (isUniqueViolation(error)) {
         throw new ConsoleDomainError(
           "provider_account_duplicate",
@@ -68,8 +136,17 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
  * Console OAuth login domain: authorize-URL initiation, callback exchange,
  * and device-code start/poll — driven by whichever `OAuthLoginClient` is
  * registered for a given provider id.
- * Cartethyia hosts the callback itself (it's a server process, not a local
- * CLI), so there is no loopback-listener/port-selection problem.
+ *
+ * > **Koreksi.** An earlier comment here read "Cartethyia hosts the callback
+ * > itself (it's a server process, not a local CLI), so there is no
+ * > loopback-listener/port-selection problem." That was wrong, and it is the
+ * > premise that produced the bug. The redirect URIs these clients advertise
+ * > are loopback (`localhost:1455`, `127.0.0.1:54549`, …), which name the
+ * > machine the *operator's browser* is on — not this process. Advertising one
+ * > without binding the port leaves the code in the browser's address bar, so
+ * > every browser login needed the redirect pasted back by hand. The gateway
+ * > is a server process, but it is not *the* server the redirect arrives at;
+ * > `callback-listener.ts` is what makes those the same endpoint.
  */
 export interface PersistedOAuthAccount {
   readonly accountId: string;
@@ -89,6 +166,11 @@ export interface OAuthLoginConfig {
   readonly accountStore: OAuthAccountStore;
   readonly accessResolver: ConsoleAccessResolver;
   readonly snapshotInvalidator?: { invalidate(): Promise<number> };
+  /**
+   * Binds the loopback port a browser redirect names, so the callback delivers
+   * itself instead of waiting for the operator to paste the URL back.
+   */
+  readonly callbackListener: OAuthCallbackListener;
 }
 
 async function requireClient(
@@ -104,6 +186,78 @@ async function requireClient(
       { providerId },
     );
   return client;
+}
+
+/** The result of exchanging one authorization code, as the caller should report it. */
+export interface OAuthCompleteOutcome {
+  readonly ok: boolean;
+  readonly message: string;
+}
+
+/**
+ * Consumes the pending flow, exchanges the code, and persists the account.
+ *
+ * Shared by the hosted console callback and the loopback listener so both
+ * report the same failures: the listener renders `message` in the browser, and
+ * the hosted route turns it into a JSON or HTML page. Upstream token-endpoint
+ * bodies can echo credentials, so the message stays generic unless the error
+ * came from our own boundary (see {@link publicExchangeFailure}).
+ */
+export async function completeLogin(
+  config: OAuthLoginConfig,
+  providerId: string,
+  code: string,
+  state: string,
+): Promise<OAuthCompleteOutcome> {
+  // An empty `state` means the authorization server does not echo one
+  // (OpenRouter omits it from the callback entirely); correlate by provider in
+  // that case, and by state otherwise so the stronger check stays in force
+  // wherever the server supports it.
+  const flow = state
+    ? await config.oauthFlowStore.consumePending(state)
+    : await config.oauthFlowStore.consumePendingByProvider(providerId);
+  if (!flow || flow.providerId !== providerId) {
+    return { ok: false, message: "unknown or expired state" };
+  }
+  // The flow is spent, so its listener registration has nothing left to wait
+  // for; releasing it here keeps a manual paste from leaving the port bound.
+  config.callbackListener.release(flow.redirectUri, state);
+  const client = await requireClient(config.providerRegistry, providerId);
+  if (!client.exchangeCode) {
+    return { ok: false, message: "provider does not support browser authorization" };
+  }
+  try {
+    const result = await client.exchangeCode(code, flow.codeVerifier, flow.redirectUri);
+    const tokenCheck = await validateIssuedAccessToken(
+      result.access,
+      providerJwtVerification(providerId),
+    );
+    if (!tokenCheck.valid) {
+      throw new ConsoleDomainError(
+        "oauth_token_invalid",
+        400,
+        `Provider ${providerId} returned an access token that failed validation (${tokenCheck.reason})`,
+        { providerId },
+      );
+    }
+    await config.accountStore.persistAccount(flow.tenantId, providerId, {
+      label: result.accountLabel ?? flow.accountLabel,
+      ...result,
+    });
+    await config.snapshotInvalidator?.invalidate();
+    return { ok: true, message: `${providerId} account connected. You may close this tab.` };
+  } catch (error) {
+    // Upstream token-endpoint bodies can echo credentials or sensitive
+    // diagnostics — the browser gets a generic failure; the bounded detail
+    // stays server-side in the console log.
+    log.error(
+      `[oauth] token exchange failed for ${providerId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      error instanceof Error ? error : undefined,
+    );
+    return { ok: false, message: publicExchangeFailure(error) };
+  }
 }
 
 function successPage(providerId: string, wantsJson: boolean): Response {
@@ -198,7 +352,20 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
         }
         const state = generateOAuthState();
         const { codeVerifier, codeChallenge } = generatePkcePair();
-        const redirectUri = browserAuthorizeRedirectUri();
+        // A client that names its own allowlisted redirect URI wins over the
+        // gateway default: OpenAI registers exactly `http://localhost:1455/auth/callback`
+        // for the Codex client and answers any other value with
+        // `invalid_request` before consent, so the shared default cannot serve
+        // every provider.
+        const redirectUri = client.browserRedirectUri ?? browserAuthorizeRedirectUri();
+        // Bind the redirect's loopback port before the flow is recorded. The
+        // advertised URI names the operator's own machine, so a login that only
+        // advertises it leaves the browser on a dead page and the code stranded
+        // in the address bar. Binding first also means a port conflict throws
+        // here — with no pending flow saved — rather than leaving a flow whose
+        // callback can never arrive. A non-loopback redirect (a custom scheme, a
+        // remote host) returns false and keeps the manual paste path.
+        config.callbackListener.register(redirectUri, providerId, state);
         await config.oauthFlowStore.savePending(state, {
           providerId,
           codeVerifier,
@@ -206,6 +373,12 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
           tenantId: a.tenantId,
           redirectUri,
         });
+        // Bind the redirect's loopback port before handing the URL out. The
+        // advertised URI names the operator's own machine, so a login that only
+        // advertises it leaves the browser on a dead page and the code stranded
+        // in the address bar. Registering here is what makes the redirect
+        // deliver itself; a non-loopback redirect (a custom scheme, a remote
+        // host) returns false and keeps the manual path.
         return { authorizeUrl: client.buildAuthorizeUrl({ state, codeChallenge, redirectUri }), state };
       },
     async handleCallback(
@@ -214,45 +387,8 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
         state: string,
         wantsJson = false,
       ): Promise<Response> {
-        const flow = await config.oauthFlowStore.consumePending(state);
-        if (!flow || flow.providerId !== providerId)
-          return failurePage("unknown or expired state", wantsJson);
-        const client = await requireClient(config.providerRegistry, providerId);
-        if (!client.exchangeCode) {
-          return failurePage("provider does not support browser authorization", wantsJson);
-        }
-        try {
-          const result = await client.exchangeCode(code, flow.codeVerifier, flow.redirectUri);
-          const tokenCheck = await validateIssuedAccessToken(
-            result.access,
-            providerJwtVerification(providerId),
-          );
-          if (!tokenCheck.valid) {
-            throw new ConsoleDomainError(
-              "oauth_token_invalid",
-              400,
-              `Provider ${providerId} returned an access token that failed validation (${tokenCheck.reason})`,
-              { providerId },
-            );
-          }
-          await config.accountStore.persistAccount(flow.tenantId, providerId, {
-            label: result.accountLabel ?? flow.accountLabel,
-            ...result,
-          });
-          await config.snapshotInvalidator?.invalidate();
-          return successPage(providerId, wantsJson);
-        } catch (error) {
-          // Upstream token-endpoint bodies can echo credentials or sensitive
-          // diagnostics — the browser gets a generic failure; the bounded
-          // detail stays server-side in the console log.
-          log.error(
-            `[oauth] token exchange failed for ${providerId}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            error instanceof Error ? error : undefined,
-          );
-          return failurePage(publicExchangeFailure(error), wantsJson);
-        }
+        const outcome = await completeLogin(config, providerId, code, state);
+        return outcome.ok ? successPage(providerId, wantsJson) : failurePage(outcome.message, wantsJson);
       },
     async handleCallbackError(
         providerId: string,
@@ -401,7 +537,10 @@ export function createOAuthLoginRoutes(config: OAuthLoginConfig): Elysia {
       const providerError = typeof query["error"] === "string" ? query["error"] : "";
       if (providerError && state)
         return factory.handleCallbackError(params.providerId, state, wantsJson);
-      if (!code || !state) return failurePage("missing code or state", wantsJson);
+      if (!code) return failurePage("missing code", wantsJson);
+      // `state` is absent for authorization servers that do not echo it
+      // (OpenRouter). The flow is then correlated by provider instead — one
+      // browser login is in flight per provider at a time.
       return factory.handleCallback(params.providerId, code, state, wantsJson);
     })
     .post(

@@ -2,7 +2,7 @@
 // AES/RSA request signing, alphabet-scrambled binary body, enveloped SSE
 // frames — session/crypto protocol outside factory reach; stays bespoke.
 import { constants, createCipheriv, createHash, publicEncrypt, randomUUID } from "node:crypto";
-import { extractUpstreamMessage, mapUpstreamHttpError, statusToGatewayErrorCode } from "../../transport/failure-policy";
+import { classifyUpstreamError, extractUpstreamMessage, mapUpstreamHttpError, upstreamErrorIdentifier } from "../../transport/failure-policy";
 import { GatewayError } from "../../transport/gateway-error";
 import type { CanonicalEvent, CanonicalRequest, CanonicalStopReason, ContentPart } from "../../transport/canonical-model";
 import { toolResultParts } from "../../transport/canonical-model";
@@ -304,24 +304,26 @@ function qoderEnvelopeToFrames(data: string): Array<{ event: string | null; data
   const rec = envelope as Record<string, unknown>;
   if (rec["statusCodeValue"] !== undefined && rec["statusCodeValue"] !== 200) {
     const status = typeof rec["statusCodeValue"] === "number" ? (rec["statusCodeValue"] as number) : 502;
-    // Qoder reports the failure inside the stream envelope rather than as an
-    // HTTP status, so `mapUpstreamHttpError` never sees it. The code still comes
-    // from the one canonical status table, and the details carry the same
-    // evidence that function would have attached: a 401/403 is credential
-    // evidence (the account is flagged, not silently retried forever) and the
-    // envelope body is surfaced instead of a bare status line.
+    // Qoder reports failures inside the stream envelope instead of as HTTP
+    // responses, so classify its structured provider code and status through
+    // the same gateway error policy as the other dispatch paths.
     const detail = qoderEnvelopeMessage(rec);
+    const identifier = upstreamErrorIdentifier(rec["body"]) ?? upstreamErrorIdentifier(rec);
+    const classification = classifyUpstreamError(status, identifier);
     throw new GatewayError(
-      statusToGatewayErrorCode(status),
-      status,
+      classification.code,
+      classification.status,
       detail.length > 0 ? detail : `Qoder stream envelope returned HTTP ${status}`,
       {
         providerId: QODER_PROVIDER_ID,
         providerStatus: status,
-        ...(status === 401 || status === 403 ? { credentialEvidence: true } : {}),
-        ...(status === 429 ? { rateLimitScope: "provider" } : {}),
+        ...(identifier ? { providerCode: identifier } : {}),
+        ...(classification.credentialEvidence ? { credentialEvidence: true } : {}),
+        ...(classification.rateLimitScope
+          ? { rateLimitScope: classification.rateLimitScope }
+          : {}),
       },
-      "upstream",
+      classification.origin,
     );
   }
   const body = rec["body"];

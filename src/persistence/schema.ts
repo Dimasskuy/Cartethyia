@@ -109,7 +109,9 @@ export const telemetryStatus = pgEnum("telemetry_status", [
 // codex, opencodezen, ollamacloud, cerebras) or a custom/BYOK slug
 // rejected at the identity boundary when it collides case-insensitively with
 // a reserved ID — that rejection is application-layer, not a DB constraint
-// here. `capability_profile` carries the native JSONB/GIN index. `tenant_id`
+// here. `capability_profile` is a JSONB routing-capability map with no index:
+// it is read with the provider row the snapshot builder already loads, so a
+// separate index would only add write cost. `tenant_id`
 // null means the provider is global/built-in, matching the same convention
 // as `provider_accounts.tenant_id`; populated means tenant-owned/BYOK.
 // `base_url`/`compatibility_profile` are BYOK-only: `compatibility_profile`
@@ -469,7 +471,6 @@ export const apiKeys = pgTable(
       .notNull()
       .default(0),
     maxConcurrentRequests: integer("max_concurrent_requests"),
-    providerAllowlist: jsonb("provider_allowlist").$type<readonly string[]>(),
     modelAllowlist: jsonb("model_allowlist").$type<readonly string[]>(),
     modelDenylist: jsonb("model_denylist").$type<readonly string[]>(),
     /**

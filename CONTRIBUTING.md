@@ -20,7 +20,7 @@ cp .env.example .env
 # Edit DATABASE_URL and CARTETHYIA_ENCRYPTION_KEY in .env.
 bun run setup     # copies .env if missing, probes Postgres/Redis (the backend migrates at boot)
 bun run doctor    # re-checks the environment and /health/ready
-bun run dev       # supervisor proxy + backend (bun --hot) + dashboard (Vite); CTRL+R = restart in place
+bun run dev       # backend (bun --hot) + dashboard (Vite) under concurrently
 ```
 
 Useful endpoints once running (`http://localhost:12800` by default):
@@ -34,14 +34,11 @@ Useful endpoints once running (`http://localhost:12800` by default):
 ```
 
 `bun run dev:backend` and `bun run dashboard:dev` run each half separately.
-`bun run dev` itself is a supervisor (`scripts/ops-dev-supervisor.ts`): it
-binds the public port and reverse-proxies to the backend on an internal port,
-so **CTRL+R** restarts the whole stack in place while incoming requests are
-held until the backend is back — clients see latency, never a refused
-connection. **CTRL+C** stops everything; `bun run dev:stack` runs the raw
-stack without the supervisor. Advanced knobs (`DEV_PROXY_PORT`,
-`DEV_BACKEND_PORT`, `DEV_SUPERVISOR_CMD`, `DEV_HOLD_MS`) are documented in
-the script header.
+`bun run dev` runs both side by side under `concurrently`: the backend is
+`bun run --hot src/main.ts` on `PORT` (default 12800) and the dashboard is the
+Vite dev server on port 5173. There is no supervisor and no in-place restart —
+a client that reaches the backend while it is restarting sees a refused
+connection. **CTRL+C** stops both processes.
 `VITE_BACKEND_URL` (see `.env.example`) points the Vite dev server at the
 backend. Production serving is covered in `README.md` (Docker Compose).
 
@@ -65,7 +62,7 @@ bun run check:coverage       # coverage gate: 90% line coverage over src/
 bun run scripts/ops-run-tests.ts test/console                     # one subtree
 bun run scripts/ops-run-tests.ts test/providers/integrations/codex
 
-bun run dashboard:test        # dashboard (Vitest/bun) suite
+bun run dashboard:test        # dashboard suite (bun test inside dashboard/)
 ```
 
 ## Verification gate (required before every PR)

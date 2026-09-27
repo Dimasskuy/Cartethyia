@@ -25,7 +25,7 @@ src/protocol/
   registry.ts             dispatcher: encodeWireRequest / decodeWireResponse / decodeWireStream + CodecContext
   primitives.ts           shared guards, UTF-16 coercion, tool-id normalization, Codex ids/effort,
                           Harmony escaping, endpoint/header/auth helpers, image-source resolution
-  messages-errors.ts      Claude HTTP + SSE error mapping (single status→code table)
+  messages-errors.ts      Claude HTTP + SSE errors using the shared structured classifier
   stream-error-frames.ts  in-stream error frame → typed GatewayError, shared by chat/responses/codex
   request/chat.ts         canonical → OpenAI Chat payload
   request/responses.ts    canonical → OpenAI Responses payload
@@ -110,7 +110,14 @@ builders/parsers called directly by their adapters
   `functionDeclarations` with Gemini schema sanitizer (`const`→`enum`,
   `type:null`→`nullable`, prune unknown `required`, empty-array `items`),
   `generationConfig{maxOutputTokens, thinkingConfig}` with thinking output
-  floors.
+  floors. Media parts are projected through the shared `resolveImageSource` /
+  `splitDataUrl` primitives (`protocol/primitives.ts`): inline bytes →
+  `inlineData{Blob}`, a reference → `fileData{FileData}`. `FileData.mimeType`
+  is optional and is omitted when the origin declared none — a fabricated
+  `image/png` on a remote JPEG is a wire lie the upstream cannot detect. An
+  image carrying only a Files API `file_id` has no Gemini equivalent (the id
+  belongs to the originating provider's store), so it degrades to a text
+  reference naming the id rather than a `fileUri` the upstream cannot resolve.
 
 ## Response codecs (wire → canonical events)
 
@@ -141,23 +148,13 @@ never bills as success.
   `in_progress`/`queued` → `stop`, `completed` + tools → `tool_use`,
   `incomplete` + tools → `tool_use`, `failed`/`cancelled` → `error`/`aborted`;
   whitespace-loop guard → `tool_call_loop_detected`.
-- `messages-errors.ts`: `mapClaudeHttpError` (status + JSON envelope →
-  `GatewayError`; 429 gets `rateLimitScope: provider`, 401/403 get
-  `credentialEvidence`) and `mapClaudeStreamError` share one status→code table.
-- `stream-error-frames.ts`: `gatewayErrorFromStreamError` classifies an explicit
-  error envelope that arrives *inside* a `200 OK` body — the shape that is not a
-  transport failure because the status already committed. Shared by the chat,
-  responses, and codex decoders (the Claude and Gemini decoders raise on their
-  own). Reads structured identifiers only (`error.type`, `error.code`, a numeric
-  `error.status`): a rate-limit identifier → `quota_exceeded` (429,
-  provider-scoped), an overload identifier → `platform_unavailable`, an auth
-  identifier → `authentication_failed` with `credentialEvidence`, a named
-  overflow → `context_length_exceeded`. A frame that declares a failure with
-  nothing recognizable becomes `platform_unavailable`, never `invalid_request` —
-  blaming the client for the provider's problem invites an identical retry. A
-  frame discriminator (`type: "error"`, `response.failed`) is not read as an
-  error identifier, or it would shadow the real `code`. Prose is never matched;
-  a decoder's own `catch` must rethrow a `GatewayError` unchanged.
+- `messages-errors.ts`: `mapClaudeHttpError` and `mapClaudeStreamError` use one structured classifier,
+  preserving the raw upstream status and provider identifier for account-health decisions.
+- `stream-error-frames.ts`: `gatewayErrorFromStreamError` classifies explicit error envelopes inside
+  `200 OK` bodies, shared by chat/responses/codex. Exact identifiers distinguish quota, capacity,
+  authentication, policy (`11140`), and server failures; a numeric status is the fallback. Unknown
+  upstream failures remain `platform_unavailable`, never `invalid_request`. Frame discriminators such
+  as `type: "error"` are ignored as identifiers, and message prose is never classified.
 
 ## Shared primitives
 
@@ -176,7 +173,9 @@ Responses / Anthropic origin shapes — read by every builder that puts an image
 on a wire where `image_url` must be a **string**, including the Codex and
 Responses computer-screenshot renderers; forwarding the canonical payload
 verbatim put an object on the wire and the provider rejected the request with
-"expected an image URL, but got an object instead"), hash/JSON helpers.
+"expected an image URL, but got an object instead"), `splitDataUrl` (the single
+RFC 2397 split, so no builder forwards a `data:` URI as a URI the upstream
+cannot fetch), hash/JSON helpers.
 
 ## Upstream executors
 
@@ -196,3 +195,93 @@ verbatim put an object on the wire and the provider rejected the request with
 - **New shared helper**: put it in `primitives.ts` when two or more codecs
   need it; keep provider-identity-dependent helpers (e.g. Codex identity
   headers) with their provider.
+
+## Unified API hardening map
+
+### Client surface is not provider wire
+
+`SurfaceAdapterRegistry` selects the client's protocol from the explicit marker,
+request path, or unambiguous body shape. After canonical parsing, `RouteCandidate.wire_family`
+selects the provider codec. A Chat client can therefore route to a Responses provider, and vice
+versa, only through the documented canonical conversions below; matching path names does not make
+the payloads or stream envelopes interchangeable.
+
+| Client surface | Public route and native contract | Current codec boundary |
+|---|---|---|
+| OpenAI Chat Completions | `POST /v1/chat/completions`; `messages` request; streamed choices/deltas and optional final usage chunk | `surface/chat` → canonical → `protocol/request/chat.ts` and `protocol/response/chat.ts`; OpenAI documents model-dependent text/image/audio and PDF-file support. |
+| OpenAI Responses | `POST /v1/responses`; `input` items and typed `response.*` SSE lifecycle | `surface/responses` → canonical → `protocol/request/responses.ts` and `protocol/response/responses.ts`; summary reasoning is a requested summary, not raw reasoning. |
+| Anthropic Messages | `POST /v1/messages`; top-level `system`, user/assistant turns, typed content blocks, required `max_tokens` | `surface/messages` → canonical → `protocol/request/messages.ts` and `protocol/response/messages.ts`; image/document/thinking/tool blocks are wire-specific. |
+| Legacy Completions | `POST /v1/completions`; prompt/legacy completion envelope | `surface/completion` maps the prompt to canonical input and encodes legacy completion output; keep its text contract distinct from Chat. |
+
+The canonical content union currently includes text, image, file, document, audio, refusal,
+reasoning, tool-call/result, and opaque extension parts. It has **no video content type** and no
+generic typed image-generation result. `RouteCapabilities` tracks image/document/audio, while audio
+is denied to Messages because that wire has no audio block. Chat's OpenAI file part is PDF-only in
+the upstream contract; Responses accepts a broader file set. Audio support is model- and endpoint-
+specific: OpenAI's current audio-chat guide directs bounded audio input/output to Chat Completions,
+so do not infer that every Responses model accepts it from the gateway parser accepting
+`input_audio`. Unsupported modality data must be explicitly re-encoded, capability-degraded under
+the declared policy, or rejected; it must not disappear silently.
+
+Input and output are separate contracts. Chat audio output currently travels as a wire-specific
+`audio` extension, not a canonical audio-generation result; generated-image calls and video frames
+also have no common typed output/content part. The hardening matrix must cover output items and
+stream events as well as input attachments, and only add a canonical type when at least two supported
+surfaces/adapters need the same semantics.
+
+### Reasoning visibility and replay
+
+OpenAI reasoning tokens/private chain-of-thought are not a client-visible API contract. Responses
+can return an optional reasoning summary and opaque encrypted reasoning state for supported
+stateless replay; preserve encrypted state without decoding it. Chat's `reasoning_effort` and
+provider `reasoning_content` side channel are separate from Responses `reasoning` items. Anthropic
+Messages thinking blocks/signatures are likewise wire-native replay state. Cross-surface adapters
+must preserve only what the source API actually returned and what the destination contract can
+represent; never invent a reasoning summary.
+
+The current Responses decoder handles `response.reasoning_summary_text.delta` and the Responses
+surface encoder emits the summary-part lifecycle. The reported missing-reasoning symptom is still
+an un-reproduced report: P0 in `TRANSPORT.md` requires a captured request/event/client transcript
+before assigning cause.
+
+### Token counting and compaction are protocol-specific
+
+- OpenAI Responses exposes `POST /v1/responses/input_tokens`; it counts the Responses request input,
+  including provider-side structure and multimodal items accepted by the endpoint, not just visible
+  text. The reviewed sources establish no equivalent exact Chat Completions count endpoint.
+- Anthropic exposes `POST /v1/messages/count_tokens`; it counts a Messages-shaped input, including
+  tools, images, and documents, without generating a reply.
+- The gateway's `estimateInputTokens()` currently counts text parts in `request.messages` only,
+  using `ceil(characters / 4)` with a minimum of 1. It omits system/instructions, tools, and
+  non-text parts, so it is an admission/accounting estimate, not an exact token-count API.
+- Responses `context_management` is already preserved through the normal Responses parser/encoder,
+  subject to upstream/model support. The standalone compact route at `/v1/responses/compact` is
+  still the native Codex opaque-body transport. Generic OpenAI compact dispatch must keep the
+  complete upstream compacted output intact for the next Responses request.
+- Anthropic `context_management` is currently carried as a Messages extension (with the existing
+  thinking-request default); the separate on-demand `compaction` field, returned compaction block,
+  and `stop_reason: "compaction"` need an explicit end-to-end contract. Unknown Messages response
+  blocks remain `messages:*` extensions, not a complete compaction implementation.
+
+### Primary-source references
+
+- OpenAI: [Chat Completions](https://developers.openai.com/api/reference/resources/chat),
+  [Responses create](https://developers.openai.com/api/reference/resources/responses/methods/create),
+  [streaming](https://developers.openai.com/api/docs/guides/streaming-responses),
+  [reasoning](https://developers.openai.com/api/docs/guides/reasoning),
+  [input token counting](https://developers.openai.com/api/docs/guides/token-counting),
+  [input-token endpoint](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count),
+  [compaction guide](https://developers.openai.com/api/docs/guides/compaction),
+  [compact endpoint](https://developers.openai.com/api/reference/resources/responses/methods/compact),
+  [image inputs](https://developers.openai.com/api/docs/guides/images-vision),
+  [file inputs](https://developers.openai.com/api/docs/guides/file-inputs),
+  [audio in Chat Completions](https://developers.openai.com/api/docs/guides/audio-chat-completions).
+- Anthropic: [Messages](https://platform.claude.com/docs/en/api/messages),
+  [count tokens](https://platform.claude.com/docs/en/api/messages/count_tokens),
+  [vision](https://platform.claude.com/docs/en/build-with-claude/vision),
+  [PDF support](https://platform.claude.com/docs/en/build-with-claude/pdf-support),
+  [threshold compaction](https://platform.claude.com/docs/en/build-with-claude/compaction-threshold),
+  [on-demand compaction](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand).
+
+These upstream contracts were checked on 2026-09-26. Model-specific support and beta availability
+can differ; re-check the selected model's current reference when implementing a task.

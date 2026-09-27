@@ -48,7 +48,7 @@ test("capacity and availability are not defects, even though they are 5xx", () =
   for (const code of CAPACITY_HTTP_STATUSES) {
     expect({ code, verdict: isGatewayError("failed", code) }).toEqual({ code, verdict: false });
   }
-  expect(isGatewayError("truncated", 503)).toBe(false);
+  expect(isGatewayError("truncated", 529)).toBe(false);
 });
 
 test("the class rule and the explicit floor agree", () => {
@@ -99,7 +99,7 @@ test("a status outside the enum is not claimed as a gateway error", () => {
  */
 test("the row predicate and the SQL predicate agree on every combination", () => {
   const statuses = ["completed", "failed", "cancelled", "truncated", null, "unknown_future"];
-  const httpStatuses = [200, 301, 401, 404, 429, 499, 500, 502, 503, 504, null];
+  const httpStatuses = [200, 301, 401, 404, 429, 499, 500, 502, 503, 504, 529, null];
   const capacity = new Set<number>(CAPACITY_HTTP_STATUSES);
   for (const status of statuses) {
     for (const httpStatus of httpStatuses) {
@@ -120,6 +120,6 @@ test("the row predicate and the SQL predicate agree on every combination", () =>
 
 test("the exported rule constants are the ones the predicate implements", () => {
   expect([...GATEWAY_ERROR_STATUSES]).toEqual(["failed", "truncated"]);
-  expect([...CAPACITY_HTTP_STATUSES]).toEqual([503]);
+  expect([...CAPACITY_HTTP_STATUSES]).toEqual([503, 529]);
   expect(GATEWAY_ERROR_HTTP_MIN).toBe(500);
 });

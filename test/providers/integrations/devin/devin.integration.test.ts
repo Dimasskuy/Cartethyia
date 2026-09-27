@@ -9,6 +9,7 @@ import { DEVIN_MODELS } from "../../../../src/providers/integrations/devin/catal
 import { providerUsesBespokeWire } from "../../../../src/providers/provider-metadata";
 import type { CanonicalRequest, CanonicalMessage } from "../../../../src/transport/canonical-model";
 import type { ProviderDispatchTarget, ProviderDispatchContext } from "../../../../src/providers/provider-registry";
+import { GatewayError } from "../../../../src/transport/gateway-error";
 import { CONNECT_COMPRESSED_FLAG, CONNECT_END_STREAM_FLAG, frameConnectMessage } from "../../../../src/providers/integrations/connect";
 
 describe("Devin Integration", () => {
@@ -232,6 +233,48 @@ describe("Devin dispatch over mocked Connect upstream", () => {
     expect(seen.filter((url) => url.endsWith("GetUserJwt"))).toHaveLength(1);
     expect(second.at(-1)).toMatchObject({ type: "terminal", state: "complete" });
     _resetDevinAuthCache();
+  });
+
+  test("classifies a structured quota error from Connect trailers", async () => {
+    _resetDevinAuthCache();
+    const authBytes = toBinary(
+      GetUserJwtResponseSchema,
+      create(GetUserJwtResponseSchema, { userJwt: "jwt-1", customApiServerUrl: "" }),
+    );
+    const trailer = new TextEncoder().encode(
+      JSON.stringify({ error: { code: "rate_limit_error", message: "slow down" } }),
+    );
+    const fetcher = (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/exa.auth_pb.AuthService/GetUserJwt"))
+        return new Response(authBytes, { status: 200 });
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(frameConnectMessage(trailer, CONNECT_END_STREAM_FLAG));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const adapter = createDevinAdapter({ fetch: fetcher });
+    let caught: unknown;
+    try {
+      for await (const _event of adapter.dispatch(request(), candidate, context())) {
+        // drain
+      }
+    } catch (error) {
+      caught = error;
+    } finally {
+      _resetDevinAuthCache();
+    }
+    expect(caught).toBeInstanceOf(GatewayError);
+    expect(caught).toMatchObject({
+      code: "quota_exceeded",
+      status: 429,
+      origin: "upstream",
+      details: { providerCode: "rate_limit_error", providerStatus: 500 },
+    });
   });
 
   test("rejects non-function tools and accepts API-key credential kind", async () => {

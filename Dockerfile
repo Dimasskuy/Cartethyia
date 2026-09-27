@@ -22,9 +22,9 @@ COPY dashboard ./dashboard
 # plugin rewrites TypeBox into statically wired imports, and bundling the raw
 # source instead leaves Elysia's lazy `require("typebox/type")` unresolved in
 # the standalone binary. `scripts/build-binary.ts` also bakes `NODE_ENV` to
-# production, which the binary needs to find `/app/migrations` and to avoid the
-# development-only `pino-pretty` transport whose worker cannot load in a
-# standalone executable. `bun run build` performs the same three steps.
+# production, which the binary needs to avoid the development-only `pino-pretty`
+# transport whose worker cannot load in a standalone executable. `bun run build`
+# performs the same three steps.
 RUN bun run dashboard:build
 RUN bun run build:aot
 RUN bun run build:binary --outfile /build/dist/cartethyia
@@ -40,8 +40,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a dedicated non-root runtime identity.
-RUN groupadd -r cartethyia && useradd -r -g cartethyia cartethyia && \
+# Create a dedicated non-root runtime identity. The UID/GID are pinned so an
+# operator can chown a bind-mounted data directory to a known id instead of
+# discovering the allocator's choice; `docker-entrypoint.sh` refers to the same
+# numbers and reports the value to use when the mount is not writable.
+RUN groupadd -r -g 10001 cartethyia && useradd -r -u 10001 -g cartethyia cartethyia && \
     mkdir -p /app/data && chown -R cartethyia:cartethyia /app
 
 COPY --from=builder --chown=cartethyia:cartethyia /build/migrations ./migrations

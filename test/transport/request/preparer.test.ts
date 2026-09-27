@@ -12,7 +12,6 @@ const authorization: ResolvedApiKey = {
   snapshot: {
     api_key_id: "key-tenant-a",
     tenant_id: "tenant-a",
-    provider_allowlist: ["codex"],
   },
 };
 
@@ -85,20 +84,6 @@ describe("native compact routing preparation", () => {
     });
   });
 
-  test("rejects a key whose provider policy excludes Codex before route planning", async () => {
-    const preparer = new ProxyRequestPreparer({
-      snapshotService: { getSnapshot: async () => ({ revision: 1 }) } as never,
-      routingEngine: { plan: async () => { throw new Error("must not plan"); } } as never,
-      admissionService: {} as never,
-    });
-    await expect(preparer.prepareNativeCompact({
-      model: "gpt-5.6-sol",
-      authorization: {
-        ...authorization,
-        snapshot: { ...authorization.snapshot, provider_allowlist: ["openai"] },
-      },
-    })).rejects.toMatchObject({ code: "invalid_request", status: 403 });
-  });
 });
 
 describe("canonical request preparation", () => {

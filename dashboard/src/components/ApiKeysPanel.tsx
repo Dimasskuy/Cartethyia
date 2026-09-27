@@ -65,7 +65,7 @@ export function ApiKeysPanel(): ReactNode {
     <Card>
       <CardHeader
         title="API Credentials"
-        subtitle="Manage routing client keys, budgets, allow lists, and share links"
+        subtitle="Manage tenant API keys, model access, budgets, and sharing."
         icon={<KeyRound size={16} />}
         action={
           <Button
@@ -237,7 +237,13 @@ export function ApiKeysPanel(): ReactNode {
         )}
       </CardBody>
 
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="Create API Key" width={680}>
+      <Dialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Create API Key"
+        description="Create a tenant-scoped credential. Choose model access, permissions, limits, and optional blocked client routers."
+        width={760}
+      >
         <ApiKeyForm
           mode="create"
           record={null}
@@ -259,6 +265,7 @@ export function ApiKeysPanel(): ReactNode {
         open={editTarget !== null}
         onClose={() => setEditTarget(null)}
         title="Edit API Key"
+        description="Update the key's model access, permissions, limits, and share notes."
         width={760}
       >
         <ApiKeyForm

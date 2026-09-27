@@ -22,6 +22,16 @@ export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
 export const CODEX_DEVICE_REDIRECT_URI = "https://auth.openai.com/deviceauth/callback";
+/**
+ * The one redirect URI OpenAI allowlists for this client.
+ *
+ * Not interchangeable with the gateway-wide loopback default: OpenAI validates
+ * the exact string at the authorize step and answers a mismatch with
+ * `invalid_request` before any consent screen, which is why the browser flow
+ * could never complete. `localhost` (not `127.0.0.1`) and the port are part of
+ * the registered value.
+ */
+export const CODEX_BROWSER_REDIRECT_URI = "http://localhost:1455/auth/callback";
 export const CODEX_SCOPE =
   "openid profile email offline_access api.connectors.read api.connectors.invoke";
 
@@ -117,6 +127,7 @@ async function exchangeCodeForToken(
 export class CodexOAuthClient extends OAuthDeviceFlow {
   override readonly supportsDeviceCode = true;
   override readonly supportsBrowserCode = true;
+  override readonly browserRedirectUri = CODEX_BROWSER_REDIRECT_URI;
 
   protected override readonly providerLabel = "Codex";
   protected override readonly clientId = CODEX_CLIENT_ID;
@@ -143,8 +154,17 @@ export class CodexOAuthClient extends OAuthDeviceFlow {
   }
 
   protected override extraAuthorizeParams(): Record<string, string> | undefined {
+    // `originator` identifies the calling client to OpenAI. The Codex CLI value
+    // is deliberate: this gateway presents the Codex client id and the Codex
+    // device flow, so claiming a different originator would describe a client
+    // that is not running. The two `true` flags are what the reference client
+    // sends — `id_token_add_organizations` makes the id token carry the
+    // organization claim the account label reads, and
+    // `codex_cli_simplified_flow` selects the reduced consent screen.
     return {
       originator: "codex_cli_rs",
+      id_token_add_organizations: "true",
+      codex_cli_simplified_flow: "true",
     };
   }
 

@@ -59,7 +59,6 @@ const expectedColumns: Record<string, readonly ExpectedColumn[]> = {
     column("lifetime_token_budget", "bigint", "int8", "YES"),
     column("lifetime_tokens_consumed", "bigint", "int8", "NO"),
     column("max_concurrent_requests", "integer", "int4", "YES"),
-    column("provider_allowlist", "jsonb", "jsonb", "YES"),
     column("model_allowlist", "jsonb", "jsonb", "YES"),
     column("model_denylist", "jsonb", "jsonb", "YES"),
     column("client_router_denylist", "jsonb", "jsonb", "YES"),

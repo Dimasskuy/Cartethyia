@@ -34,7 +34,15 @@ Three layers combine in `default-registry.ts: BUNDLED_PROVIDER_MODULES`, then `c
 1. **Metadata** (`provider-metadata.ts: RAW_BUNDLED_PROVIDER_METADATA`): `id`, `displayName`, `baseUrl` are
    the only required fields. Optionals: `wireFamilyDefault` (default `chat`; `messages` for
    `anthropic`/`claude`, `responses` for `codex`), `requiresAccount` (only `opencodeft: false`),
-   `defaultBypassProxy` (only `inferhub`), `credentialUrl` (only `groq`), `jwtVerification` (only `grok`).
+   `defaultBypassProxy` (only `inferhub`), `jwtVerification` (only `grok`/`xai`), and the
+   presentation-only pair `credentialUrl` + `credentialHint`: where an operator obtains the
+   provider's credential, and one line of guidance when the flow is not a plain paste. The
+   credential pair reaches the dashboard through `providerCredentialUrl()` /
+   `providerCredentialHint()`, never through the persisted provider row, so a stale or hostile
+   record cannot redirect the link. Three providers declare neither (`muse`, `opencodeft`,
+   `inferhub`); a provider whose sign-in runs through its own login flow (Claude, Codex, Grok,
+   Cursor, Devin, Antigravity, Qoder) carries the hint and the site URL, and the dashboard
+   labels its action "Sign in" rather than "Get API Key".
    `providerBaseUrl()` is the single declaration of origin; `providerUpstreamHost()` carries the SSRF
    binding, so dispatch needs no second map. `DEFAULT_PROXY_BYPASS_PROVIDER_IDS` derives the one
    proxy-bypass default that console routing, provider detail, and domain registration all read.
@@ -64,13 +72,17 @@ Custom/BYOK providers are derived from their persisted base URL, compatibility p
 default, then registered through `registerByokProviders()` / `syncByokProvider()` as an
 `OpenAICompatibleAdapter`; model protocol selection is independent from route-level identity. A custom
 provider may serve Anthropic Messages or OpenAI Chat/Responses according to its wire profile.
+The registry updates custom providers without a backend restart. Their upstream hosts are validated
+at registration and on each network-bound dispatch. This existing BYOK path is separate from the
+Cursor Editor BYOK setup documented in `README.md` and the CLI Tools guide.
 
-The per-(tenant, provider) `provider_routing_settings.user_agent` value configures User-Agent for
-built-in API-key provider dispatch only. It defaults to `codex_cli_rs/0.156.1`; the provider-detail
-Routing Strategy card can select Codex, Claude Code, or a custom header value. Providers with OAuth
-login flows do not show this setting and retain adapter-native identities. Custom providers continue
-using their compatibility profile's client identity selection; the route-level setting never overrides
-their selected identity or wire behavior.
+The per-(tenant, provider) `provider_routing_settings.user_agent` value defaults to
+`codex_cli_rs/0.156.1` and is offered only for built-in API-key providers whose adapter does not
+build its own User-Agent. `BUNDLED_PROVIDER_METADATA.hasAdapterUserAgent` is the source of truth:
+the route catalog omits route identity for providers marked true, and the provider response carries
+the capability so the dashboard hides the setting. At dispatch, any User-Agent already supplied
+by an adapter or account remains authoritative. OAuth/scoped credentials and custom-provider
+identity settings remain independent.
 
 **Derived wire contract** (`operations/byok-wire-profile.ts`) keeps the custom adapter and probe/model-sync
 fallback aligned. A custom row persists a base URL, compatibility profile, and `wire_family_default`;
@@ -134,10 +146,88 @@ stay in `integrations/<name>/*-oauth.ts`.
   120 attempts, ~16 minutes) and makes the dialog's own interval meaningless. Device state is deleted only
   *after* the exchange succeeds — an authorization code is single-use, so dropping it first strands a failed
   exchange with no way to retry.
+- **`pending` means "not approved yet" and nothing else.** A poll verdict is either a completed exchange or
+  a failure with a reason; there is no third state, because a `pending` result carries no reason to show.
+  Returning `pending` for an unrecognized error or a 2xx body that carries no token makes a permanent
+  upstream rejection look like a login that never finished: the dialog spins until its own expiry and the
+  operator sees nothing actionable. Two live bugs had exactly this shape — GitHub Copilot answered
+  `pending` for any error it did not name, and Kimi did so for a token body with no `access_token`. A poll
+  therefore **returns** `failed` with the upstream's reason rather than letting the shared parser throw: the
+  dashboard's poll error path stops polling but displays no reason, so a throw would recreate the spinner.
+  `parseTokenResponse` still refuses a body with no `access_token` — that guard covers the direct callers
+  (the exchange path and any client reading a token body outside `pollGenericDeviceAuth`), and an
+  access-only credential stays valid because only the access value is required.
 - **Publish the complete verification URI when the provider sends one.** A device start returns
   `verification_uri_complete` (WorkOS, Cline) or `verification_uri`. Preferring the complete form is what
   makes the flow one click: it carries the user code in its query string, so opening the page enters the
   code automatically instead of asking the operator to read it from the dialog and type it into the form.
+- **A redirect URI is per-client, not per-gateway.** Authorization servers allowlist redirect URIs exactly,
+  so `browserRedirectUri` on the login client overrides the gateway default. OpenAI registers only
+  `http://localhost:1455/auth/callback` for the Codex client and answers any other value with
+  `invalid_request` *before* a consent screen, which is why the Codex browser flow could never complete
+  against the shared loopback default; Z.AI rejects every loopback URI for the ZCode client and accepts only
+  its own `zcode://` scheme; Google registers `http://127.0.0.1:51121/oauth-callback` for Antigravity and
+  Anthropic `http://127.0.0.1:54545/callback` for Claude Code, and both answer
+  `redirect_uri_mismatch` (Google, 400) or an equivalent rejection for the gateway's console URL. The
+  console route reads the client's value when it states one and the gateway default otherwise, and the same
+  string is reused at exchange because the token endpoint compares it against what the authorize step sent —
+  a client that hardcoded a different URI in `exchangeCode` therefore failed the exchange while its
+  authorize step looked correct, so the two must come from one declaration.
+- **A loopback redirect URI must be bound, or the browser is left on a dead page.** The URI these
+  clients advertise names the machine the *operator's browser* is on, not the gateway, so advertising it
+  is not the same as answering it. `callback-listener.ts` binds that port when a login starts — on
+  `127.0.0.1` and `::1`, because `localhost` resolves to either and a browser may pick the one that is
+  not bound — and releases it once the flow settles, so an idle gateway holds no extra sockets. A port
+  that cannot be bound fails the login immediately rather than advertising an address nothing answers.
+  This is the other half of the redirect-URI rule below: matching the registered string is necessary but
+  not sufficient, because a string that nothing listens on still delivers no code. A redirect the process
+  cannot bind (a custom scheme, a remote host) keeps the manual paste path.
+- **A callback without `state` is correlated by provider.** Some servers do not echo `state` (OpenRouter
+  omits it entirely), so `handleCallback` falls back to `consumePendingByProvider`, which follows a
+  per-provider pointer written alongside the state key. The pointer is last-write-wins — a second console
+  login for one provider repoints it, and the operator's newest attempt is the one they are watching — while
+  the state key is still consumed atomically, so a callback can never inherit a spent verifier. The
+  loopback listener applies the same rule per port: a state-less redirect is matched to the one flow
+  waiting on that port, and the flow is claimed before the exchange so a retried redirect cannot spend the
+  code twice.
+- **A credential may carry the endpoint, not just the token.** GitHub Copilot's
+  API host is per-account: the Copilot token carries a `proxy-ep` claim naming
+  the account's host, and an enterprise account is served from a different host
+  than an Individual one. A declarative `ApiKeyProviderSpec` cannot express
+  that — its `base_url` is fixed at registration and routing resolves one base
+  URL per provider, not per account — so `github` is a bespoke adapter
+  that reads the host out of the stored `{access, apiHost}` envelope and issues
+  the request itself while leaving payload translation, SSE decoding, and error
+  mapping with the shared pipeline. Its client identity headers are a protocol
+  requirement (the API rejects a request that does not identify a Copilot
+  client), not cloaking, and they are stamped after the shared pipeline so a
+  route-level User-Agent cannot displace them. Its directory is the account's
+  own `/models`, whose entries are OpenAI-shaped in the envelope but not in the
+  rows: the surface a SKU answers on is `supported_endpoints` (some SKUs answer
+  only on `/responses`) and the window is nested under
+  `capabilities.limits.max_context_window_tokens`, so a reader that assumed the
+  flat shape would pin every row to chat at the default window. A row whose
+  window reaches 500k also carries the Copilot-only `contextTier: "long_context"`
+  request extension, injected only on the chat and responses wires — the native
+  Anthropic surface validates against its own schema and rejects an unknown
+  top-level key. Its quota comes from the same token endpoint that mints the
+  inference token, which authenticates with the *GitHub* token rather than the
+  minted one, so the credential envelope carries both.
+- **An OAuth grant that ends in a durable key stores the key, not the token.** Z.AI's Coding Plan sign-in
+  exchanges the authorization code for a short-lived access token and then trades that token through the
+  provider's business APIs for a durable `<apiKey>.<secretKey>`; the coding endpoint accepts only the key.
+  Storing the OAuth token instead produces a credential that authenticates nowhere, and the failure would
+  surface at first dispatch rather than at login. Both that provider and OpenRouter therefore register no
+  refresher, and their clients return the durable value in `refresh` only to satisfy the NOT NULL column.
+- **A repeated login is the same account.** The account a login persists is identified by the label the
+  provider reports (an email or org name), hashed into `credential_fingerprint`; a second login for that
+  identity replaces the stored row and its `provider_oauth_states` row rather than inserting beside them,
+  and clears the health state so a `Disabled` / `Re-login required` account comes back `Active` with the
+  newer tokens. Keying on the refresh token instead is what let one email appear twice: a fresh login
+  mints a new token, so the identity index never fired and the duplicate unique index only caught a replay
+  of the exact same credential. A provider that reports no label falls back to that refresh-token
+  fingerprint, which still rejects an exact replay. Renaming an account in the console changes the stored
+  label, so a later login is treated as a new account rather than overwriting the rename.
 - **Base class and lifecycle.** `oauth-client.ts` encapsulates PKCE authorize-URL building, form token
   exchange, normalized token parsing, and refresh, with protected hooks for scopes, extras, and field
   mapping; its `FetchLike` seam keeps tests off the network. `oauth-device-flow.ts` owns the generic device
@@ -153,6 +243,16 @@ stay in `integrations/<name>/*-oauth.ts`.
   lease (`lease_owner` / `lease_expires_at`) acquired by conditional `UPDATE`; `persistRefreshed` /
   `disableAccount` are lease-fenced, so a loser whose lease expired writes zero rows instead of clobbering
   its peer. `loadAccountWithFreshness` supplies the skew-adjusted `dueAt` (`OAUTH_REFRESH_SKEW_MS`, 5 minutes).
+- **A provider with no refresh grant registers no refresher.** Kilo Code and Devin issue a token with no
+  refresh endpoint, so their clients declare `refresh` as a throw and the registry wires them without
+  `withRefresher`. That is load-bearing rather than cosmetic: `resolveRefresher` returning `undefined` is
+  what makes the credential path (`if (refresher)`) and the 401 retry use the stored token as issued,
+  instead of calling a method that always throws and turning a recoverable auth failure into a permanent
+  one. `provider_oauth_states.refresh_ciphertext` is `NOT NULL`, so such a client returns the access secret
+  in the `refresh` field purely to satisfy the identity fingerprint that keys a repeated login to one
+  account; nothing sends it to a token endpoint. Because the issuer advertises no lifetime either, the
+  stored `expires_at` is a far-future fallback — a nearer value would mark a working token as due for a
+  refresh that cannot happen.
 - **Typed refresh failures.** `DEFINITIVE_PATTERN`
   (`invalid_grant|invalid_token|unauthorized_client|revoked|refresh_token.*expired`) marks permanently dead
   credentials; a bare 401 with no body match is still definitive, while timeouts, 5xx, 429, and
@@ -174,6 +274,21 @@ for key-only providers. Provider specifics (endpoint URLs, field names, plan der
   `used`/`limit` and `recurring`), and `error`. Every collector returns it, so console surfaces never branch on
   provider identity. The shared guards coerce unknown upstream JSON without throwing (`isoDate` accepts epoch
   seconds/millis and date strings), and `cleanError` redacts `Bearer` material and caps messages at 240 chars.
+- **A quota row must name a model the catalog serves.** Antigravity's
+  `v1internal:fetchAvailableModels` returns every deployment the account can reach — internal
+  ones, and one entry per effort tier (`gemini-3.8-flash-low`/`-medium`/`-high`). The collector
+  collapses each key with `collapseAntigravityVariant` and keeps it only when the catalog serves
+  the result, so a deployment the catalog dropped cannot report a quota row for a model the
+  operator cannot select. The set is derived from `ANTIGRAVITY_MODELS`, so removing a catalog
+  model removes its quota row in the same change; a permissive id pattern in its place is what
+  let a retired deployment keep reporting.
+- **Both quota endpoints are read and merged.** For Antigravity, `fetchAvailableModels` carries
+  the per-model windows and `retrieveUserQuotaSummary` carries the weekly ones — and the weekly
+  summary is the *only* quota a free-tier account has, because the upstream omits per-model quota
+  for it. A collector that calls one endpoint and parses the other's shape reports nothing, so
+  each is parsed by its own function and either may fail without discarding the other's windows.
+  The family row takes the *worst* tier in its family, because that is the one the operator runs
+  out of first.
 - **Dispatch through the registry.** `fetchProviderQuota` lowercases the caller id, canonicalizes it with
   `resolveProviderId`, and resolves the handler via `registry.resolveQuotaCollector()`; a provider with no
   collector gets `unsupportedQuota(providerId)`. `QuotaFetcher` is the
@@ -250,6 +365,28 @@ database. Per-provider entry points live in `integrations/`, registered as each 
   their `providerId` so limits and pricing come from the row for
   the provider actually serving the model. Non-OK responses
   return `null`; the request carries a 10s timeout composed with the caller's signal.
+- **A provider whose directory is not the OpenAI shape reads it directly.** The tolerant fetcher assumes
+  `{data|models|items:[{id, context_length, modality}]}`. Three bundled providers publish something else.
+  Kilo Code sends an OpenRouter-shaped catalog: limits under
+  `top_provider.{context_length, max_completion_tokens}`, modality as an
+  `architecture.input_modalities` array (`file` and `pdf` both meaning the canonical `document`), and
+  capability as a `supported_parameters` list. Hugging Face's router sends an OpenAI-shaped *envelope*
+  whose *entries* are not OpenAI-shaped: a model's limits live under a nested `providers[]` array (the
+  router brokers to several backends at different prices), capability under
+  `architecture.input_modalities` plus a per-backend `supports_tools`, and a row may have no live backend
+  at all. GitHub Copilot's entries name the request surface each SKU answers on (`supported_endpoints`,
+  where some SKUs answer only on `/responses`) and nest the window under
+  `capabilities.limits.max_context_window_tokens`. Running any of them through the generic fetcher does
+  not fail — it silently publishes every row at the `200_000/64_192` floors with `toolCall: false`, and
+  `toolCall: false` makes capability preflight strip `tools` from the request.
+  `kilo/kilo-discovery.ts`, `integrations/huggingface.ts`, and
+  `github/github-discovery.ts` therefore derive each row from the provider's own
+  declaration and return `null` on any failure so a broken sync leaves the static catalog in place. Two
+  judgement calls are worth stating: Hugging Face's window and price come from the **cheapest live
+  backend** (that is the rate the operator can expect), and `supports_tools` is **ANDed across backends**
+  because a model routed to a backend without tool support cannot call tools. A row whose surface the
+  provider does not serve over the OpenAI wire is **skipped**, not defaulted to chat: publishing a route
+  the upstream rejects is worse than publishing none.
 - **Provider id → models.dev filing name.** A Cartethyia provider id is not always the key models.dev uses:
   `opencodeft` serves `opencode.ai`, whose rows models.dev files under `opencode`. `MODELS_DEV_PROVIDER_IDS`
   in `models-dev-catalog.ts` maps those ids, and `resolve` tries the id as given first, then the mapped name —
@@ -457,9 +594,12 @@ and `loadModelDiscovery` is a dynamic import — so nothing here may run at star
 `gatewayUserAgent`.
 `createApiKeyAdapter(spec)` builds the `OpenAICompatibleAdapter`, and `base_url` defaults to
 `providerBaseUrl(provider_id)` so the origin has exactly one declaration. `GENERIC_API_KEY_SPECS` (in
-`integrations/configured-openai-providers.ts`) covers seven
-zero-hook hosts (`groq`, `mistral`, `siliconflow`, `fireworks`, `nvidia`, `gmi`, `ollamacloud`); other
-single-file specs add hooks only where needed. `zai/spec.ts` shows the credential-codec variant
+`integrations/configured-openai-providers.ts`) covers eight
+zero-hook hosts (`groq`, `mistral`, `sifo`, `fireworks`, `nvidia`, `gmi`, `ollamacloud`,
+`deepseek`); other single-file specs add hooks only where needed. A zero-hook host declares no
+`loadModels`, so any model list it offers is live discovery only — `ollamacloud` and `deepseek`
+both pair the shared spec with an `openAIModelDiscovery` loader for exactly that reason.
+`zai/spec.ts` shows the credential-codec variant
 (`extractAccessTokenOrRaw` + `credential_forwarding: "never"`).
 
 **Bespoke adapters** stay hand-written classes implementing `ProviderAdapter` when the wire is outside the
@@ -467,9 +607,24 @@ factory's reach, each carrying a `Factory-blocked` or `Bespoke by wire protocol`
 reason: `anthropic.ts` (Messages envelope + `x-api-key`), `gemini.ts` (per-model `:generateContent` RPC +
 `x-goog-api-key`), `claude-code/claude.ts` (the assistant CLI fingerprint: Stainless identity headers, beta negotiation, CCH billing, and a persisted per-install `device_id` in `metadata.user_id`), `codex/codex.ts`
 (Responses envelope + session headers; `protocol/request/codex.ts` emits tool results from both Chat `tool` and Messages `user` turns as `function_call_output` with the matching `call_id`), `cursor/` and `devin/` (Connect+protobuf), `qoder.ts` (COSY AES/RSA
-signing + enveloped SSE), `commandcode.ts` (NDJSON thread/config envelope), `agentrouter.ts`, `cloudflare.ts`
-(composite `{apiKey, accountId}` credential), `kimi/kimi.ts` (Messages envelope reusing the shared Claude
-pipeline).
+signing + enveloped SSE), `commandcode.ts` (NDJSON thread/config envelope), `agentrouter.ts`, `kimi/kimi.ts`
+(Messages envelope reusing the shared Claude pipeline).
+
+**Cursor's native integration is not its Editor BYOK path.** The bundled `cursor` adapter uses
+Cursor's OAuth credential and Connect/protobuf `AgentService/Run` wire; it rejects API-key
+credentials and does not support tools. Cursor Editor BYOK is a client of the gateway's OpenAI
+Chat Completions surface instead: configure the OpenAI-compatible Cartethyia base URL (`/v1`),
+Cartethyia API key, and a model ID exposed by `/v1/models`.
+
+Cursor's [BYOK help](https://cursor.com/help/models-and-usage/api-keys) currently describes
+third-party API keys for standard, non-reasoning chat models and says Tab completion continues to
+use Cursor's built-in models. Its own API-key requests are routed through Cursor's backend for
+prompt building, so a local-only Cartethyia URL must not be assumed reachable. Cursor staff state
+that the OpenAI Base URL override is global and can affect Cursor-managed OpenAI models, and that
+per-model base URLs are not currently supported ([global override behavior](https://forum.cursor.com/t/does-adding-a-custom-model-override-cursor-s-native-models/157521),
+[per-model endpoint status](https://forum.cursor.com/t/custom-base-urls-for-each-custom-model/147219)).
+The editor setup guide therefore requires verification against the installed Cursor build and must
+not promise that this BYOK path supports Responses, reasoning models, or Tab completion.
 
 A bespoke adapter frames its own protocol, so no canonical wire codec serves its rows. That fact is
 declared once per provider as `bespokeWire` in `provider-metadata.ts` (Cursor and Devin are the bundled
@@ -490,11 +645,9 @@ families, which made it an operator-selectable wire choice that died inside the 
 `unsupported wire family: native`. The marker now lives on the provider, where it describes the adapter
 rather than the wire, and the operator vocabulary is the three real protocols.
 
-Qoder's enveloped SSE status codes are normalized inside `qoder.ts` at the integration boundary through the shared
-`statusToGatewayErrorCode` table, tagged `origin: "upstream"` because the status came from the provider's own envelope.
-The adapter used to keep a private copy of that table which mapped every 5xx to `proxy_unreachable`; that both mislabelled
-an upstream outage in the public envelope and parked the network pool, since `pool-health-machine.ts` treats
-`proxy_unreachable` as a pool fault.
+Qoder's enveloped SSE failures use the same structured identifier/status classifier as ordinary upstream responses.
+The original provider status and code are preserved in error details, while `origin: "upstream"` prevents a provider
+failure from being misreported as a network-pool fault.
 
 | Directory | Shape | Contents |
 |---|---|---|
@@ -503,8 +656,63 @@ an upstream outage in the public envelope and parked the network pool, since `po
 | `codex/` | `codex.ts` + `codex-{device-code,errors,headers,identity,oauth,quota}.ts` | Identity + headers + error + OAuth/refresh split; one turn-metadata serialization is reused in the header and request body |
 | `cursor/`, `devin/` | dispatch + `catalog.ts` + `*-oauth.ts` + `*-quota.ts` + `generated/` | Protobuf wire; hand-written wiring only outside `generated/` |
 | `antigravity/`, `cline/`, `kimi/`, `grok/`, `muse/` | `<name>.ts` + `<name>-{oauth,quota}.ts` (+ `shared`/extra splits where the provider needs them) | OAuth login, quota parser beside the adapter |
+| `xai/` | `xai.ts` + `xai-{oauth,discovery}.ts` | The **paid** xAI subscription surface at `api.x.ai/v1` (SuperGrok / X Premium+), separate from `grok/` (the free Grok Build CLI at `cli-chat-proxy.grok.com`). Plain OpenAI Responses wire, so the shared adapter serves it; the device flow and client id are xAI's, shared with `grok/` because they are facts about the authorization server rather than about either product |
+| `kilo/` | `kilo.ts` + `kilo-{oauth,discovery}.ts` | OAuth login with no refresh grant; its own directory reader because the catalog is OpenRouter-shaped, not OpenAI `/models` |
+| `github/` | `github.ts` + `github-{oauth,discovery,quota}.ts` | Device-code login that mints a short-lived Copilot token from the GitHub one; bespoke adapter because the API host comes from the credential; its own directory reader (per-SKU `supported_endpoints`, nested limits) and a quota reader off the token endpoint |
 | `buddy/` | `codebuddy.ts` + `codebuddy-{cn,oauth,quota,shared}.ts`, `workbuddy.ts` + `workbuddy-{oauth,quota,shared}.ts`, `buddy-{catalog,chat,oauth,quota}-shared.ts` | Tencent buddy family (provider IDs `cb`, `cbcn`, `workbuddy`): cn variant split, per-brand headers, shared Tencent payload/quota/oauth/catalog kernels, plus `buddy-checkin.ts` (daily check-in + growth activity report) for the `daily-checkin` worker |
 | `zai/` | `spec.ts` + `zai-quota.ts` | Minimal pair: declarative spec plus one quota parser |
+| `xiaomi-mimo/` | `xiaomi.ts`, `mimodesktop-{oauth,quota,sso}.ts` + `mimodesktop.ts`, `mimostudio-{auth,oauth,quota}.ts` + `mimostudio.ts`, `think-stream.ts` | Four provider IDs with independent credentials and wire contracts: `xiaomipg`/`xiaomitp` use API-key OpenAI chat, Desktop exchanges a local passToken for an SSO cookie and uses native `reasoning_content`, and Studio uses browser cookies and its own SSE parser with the think-tag splitter. Desktop and Studio retain separate models and quota collectors. |
+
+MiMo Desktop acquires its inference cookie from a stored passToken at dispatch time, reuses
+the SSO session while cached, and renews it when the cache expires or a credential-evidenced
+401 enters the OAuth refresh path. The passToken is never forwarded as an inference bearer;
+`User-Agent: miNative …`, `X-Mimo-Source: mimocode-cli-free`, and `X-Client-Version` remain provider-owned.
+Streamed Chat dispatch sends `stream: true` and `Accept: text/event-stream`;
+non-stream calls use `Accept: application/json`. The normal OpenAI chat decoder
+forwards SSE reasoning/text deltas as they arrive rather than buffering until completion.
+
+**Known upstream characteristic.** MiMo Desktop's `/api/route/chat/completions` sits behind
+Xiaomi's `MiFE` edge proxy, which batches the SSE body into a few large bursts instead of
+flushing per token (the native desktop client hides this by dropping `mimo:chatReason`).
+The gateway forwards each burst as it arrives, so the stream is live but chunky, and a short
+answer can land in one or two frames. MiMo Studio's bot endpoint flushes per token and stays
+smooth. This is an upstream property, not a gateway buffering defect — do not add a
+gateway-side delay or re-chunking to mask it.
+MiMo Studio instead replays pasted browser cookies with `Origin`, `Referer`, a browser
+User-Agent, and `x-timezone`; a pasted Studio cookie is **not** a renewable OAuth grant.
+Its SSE dispatch streams text and thinking deltas as frames arrive and marks EOF without
+an upstream finish marker as failed. The Studio quota URL currently answers 404 upstream;
+do not treat that response as evidence the session expired or as proof of a refresh grant.
+The `conversationId` in the bot-chat body is resolved per provider account rather than
+minted per request: an inbound session id (see `resolveInboundSessionId`) pins one upstream
+conversation, and otherwise a history that extends a tracked turn range continues that
+conversation. Two callers on one account therefore never share a thread, and a chat keeps
+its own across turns. Because the upstream keeps the conversation's history server-side, a
+resumed turn sends only the turns the upstream has not received — which is also what keeps
+a long chat inside the endpoint's limit. The affinity is in-process with a TTL and a bounded
+LRU, so a restart starts new conversations; the pasted cookie has no refresh grant to
+persist against anyway.
+
+The bot-chat endpoint has no structured tool protocol: it ignores a `tools` field and takes
+one `query` string. Tool use therefore travels in the prompt, and the gateway adopts the
+convention MiMo models already emit
+(`<tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>`) rather
+than teaching a different one, which they ignore. Closed blocks become canonical
+`tool_call_delta` events with `stop_reason: tool_use`, history tool calls and results are
+replayed as the same blocks (a `tool` turn travels as `user`, the only non-assistant role the
+endpoint accepts), and with no declared tools a block stays prose so the gateway never
+invents a call. The `query` field is capped at the measured upstream limit of 50 000
+characters — above it the endpoint answers HTTP 200 with an in-band `query is too long` error
+— by dropping the oldest turns and marking the omission; the model's own context window is
+far larger, so this is a property of the request envelope, not of the model. An in-band
+`error` frame is surfaced as a typed gateway error (413 for the length rejection, 409 for the
+duplicate-submit rejection) instead of ending the stream without a terminal event.
+Studio UltraSpeed (`mimo-v2.6-pro-ultraspeed`, wire id `mimo-v2.6-pro-ultraspeed-studio`)
+is **not** on `/open-apis/bot/chat` — that path answers `模型名称错误`. The `#/ultra` UI
+calls `/fastchat/open-apis/…`, so UltraSpeed models declare endpoint
+`/fastchat/open-apis/bot/chat` and the adapter builds the URL from the routed
+`endpoint_path`. Flash/pro stay on `/open-apis/bot/chat`.
+
 
 The CodeBuddy family (`buddy/`, provider IDs `cb`, `cbcn`, `workbuddy`) shares `buddy-chat-shared.ts`, `buddy-quota-shared.ts`,
 `buddy-oauth-shared.ts`, and `buddy-catalog-shared.ts`. The last owns the seven-field `BuddyRawEntry` tuple
@@ -512,9 +720,12 @@ and `makeBuddyModel`, because the intl/CN/WorkBuddy static catalogs describe the
 differ only in the wire endpoint the row targets (WorkBuddy's base URL carries no version segment, so it
 passes `WORKBUDDY_CHAT_PATH` explicitly). Identity headers stay per provider — `codebuddyHeaders` and
 `workbuddyHeaders` send genuinely different bytes. All three variants (`cb`, `cbcn`, `workbuddy`) share the upstream chat contract —
-mandatory `stream`, `reasoning_summary` only with a `reasoning_effort`, agent-field stripping — and run the same
-message-envelope tail (`finalizeBuddyMessages`: coalesce consecutive `user` turns, drop empty-content turns the
-upstream rejects with `11151`, guarantee a leading `system` turn for `11128`), so those rules live once. A request
+mandatory `stream`, `reasoning_summary` only with a `reasoning_effort`, agent-field stripping, and
+coalescing adjacent assistant items (including parallel function calls) into one Chat turn so
+replayed `reasoning_content` stays on that turn. Tool outputs and user turns remain boundaries;
+missing reasoning is never fabricated. The shared message-envelope tail (`finalizeBuddyMessages`)
+coalesces consecutive `user` turns, drops empty-content turns the upstream rejects with `11151`,
+and guarantees a leading `system` turn for `11128`. A request
 bound for any of the three additionally drops incomplete tool rounds in the preparer (`dropIncompleteToolRounds`):
 the buddy gateway rejects a partial batch outright with `11148`, where the generic policy synthesizes an
 error-labeled placeholder result for strict Anthropic/Gemini wires. They share the Tencent billing-meter

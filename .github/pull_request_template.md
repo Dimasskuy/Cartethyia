@@ -38,6 +38,6 @@
 - [ ] Updated: <!-- e.g. src/transport/TRANSPORT.md, .env.example -->
 - [ ] `ARCHITECTURE.md` map updated (only if a layer doc was added/renamed)
 - [ ] New procedure/debugging fact folded into `.skills/cartethyia-engineering/references/` (no competing skill files)
-- [ ] No `file:line` refs added outside `.skills/cartethyia-engineering/references/debugging.md`; touched debug line refs re-verified
+- [ ] No `file:line` refs added to any committed doc (anchor citations to symbols and paths — line numbers drift)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

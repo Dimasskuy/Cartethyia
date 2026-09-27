@@ -7,7 +7,9 @@ export type GatewayErrorCode =
   | "capability_unsupported"
   | "ambiguous_model"
   | "model_not_found"
+  | "upstream_not_found"
   | "context_length_exceeded"
+  | "request_too_large"
   | "accounts_unavailable"
   | "capacity_exhausted"
   | "proxy_pool_capacity_exceeded"
@@ -19,8 +21,12 @@ export type GatewayErrorCode =
   | "slug_reserved"
   | "quota_exceeded"
   | "authentication_failed"
+  | "policy_rejected"
   | "invalid_request"
   | "unsupported_field"
+  | "unsupported_media_type"
+  | "upstream_conflict"
+  | "upstream_unprocessable"
   | "internal_error"
   | "transport_unavailable"
   | "tunnel_setup_failed"
@@ -64,11 +70,43 @@ export class GatewayError extends Error {
   }
 }
 
+/**
+ * The public prefix each origin carries, so a client reading the message alone
+ * can tell which side failed.
+ *
+ * Every origin is labelled, including `upstream`. Leaving the upstream message
+ * bare (the previous behaviour) was meant to keep the gateway from being
+ * blamed, but it produced the opposite problem: an unlabelled message is
+ * ambiguous, so a provider rejection and a gateway rejection looked identical
+ * and every one of them read as ours. A distinct label per origin keeps the
+ * blame accurate *and* legible — the fix is to name the real source, not to
+ * name nothing.
+ */
+const ORIGIN_LABELS: Readonly<Record<GatewayErrorOrigin, string>> = {
+  cartethyia: "Cartethyia Error:",
+  upstream: "Upstream Error:",
+  network: "Network Error:",
+};
+
+const ORIGIN_LABEL_PREFIXES: readonly string[] = Object.values(ORIGIN_LABELS);
+
+/**
+ * Prefixes a message with its origin label, exactly once.
+ *
+ * A message that already carries any origin label is returned unchanged, so a
+ * value that passed through more than one boundary is not double-prefixed.
+ * Exported because the ingress normalizer and the console error shaper both
+ * need the same mapping; deriving it independently in each is how the two
+ * envelopes drift.
+ */
+export function labelGatewayMessage(origin: GatewayErrorOrigin, message: string): string {
+  if (ORIGIN_LABEL_PREFIXES.some((prefix) => message.startsWith(prefix))) return message;
+  return `${ORIGIN_LABELS[origin]} ${message}`;
+}
+
 /** Formats a gateway error for public/internal clients without mutating it. */
 export function explainGatewayError(error: GatewayError): string {
-  if (error.origin === "upstream") return error.message;
-  if (error.message.startsWith("Cartethyia Error:")) return error.message;
-  return `Cartethyia Error: ${error.message}`;
+  return labelGatewayMessage(error.origin, error.message);
 }
 
 const PUBLIC_ERROR_DETAIL_KEYS = new Set([

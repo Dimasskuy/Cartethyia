@@ -57,6 +57,45 @@ describe("trusted proxy boundary", () => {
     ).toBe("2001:db9::1");
   });
 
+  // A PaaS edge (Railway, Fly, Render) terminates TLS and gives the container
+  // no public address, so every request arrives through it and the peer is an
+  // edge node whose CIDR is neither published nor stable. `platform` mode is
+  // the opt-in that trusts the forwarded headers without an allowlist; without
+  // it the raw edge address is what gets stored, which is the bug this mode
+  // exists to fix.
+  test("platform mode trusts forwarded identity from a peer outside any allowlist", () => {
+    const request = new Request("https://gateway.test/v1/chat/completions", {
+      headers: { "x-forwarded-for": "203.0.113.9" },
+    });
+    expect(
+      resolveClientIdentity(request, { mode: "platform" } as TrustedProxyBoundary, "10.200.4.7"),
+    ).toBe("203.0.113.9");
+  });
+
+  test("platform mode is not a fallback for disabled mode", () => {
+    // The whole point of `disabled` is that the peer is the client. A platform
+    // boundary is opt-in, so an unconfigured deployment must still ignore the
+    // headers a caller could have forged.
+    const request = new Request("https://gateway.test/v1/chat/completions", {
+      headers: { "x-forwarded-for": "203.0.113.9" },
+    });
+    expect(
+      resolveClientIdentity(request, { mode: "disabled" } as TrustedProxyBoundary, "10.200.4.7"),
+    ).toBe("10.200.4.7");
+  });
+
+  test("platform mode still prefers a single-valued edge header over the chain", () => {
+    const request = new Request("https://gateway.test/v1/chat/completions", {
+      headers: {
+        "cf-connecting-ip": "198.51.100.8",
+        "x-forwarded-for": "203.0.113.9, 10.0.0.4",
+      },
+    });
+    expect(
+      resolveClientIdentity(request, { mode: "platform" } as TrustedProxyBoundary, "10.200.4.7"),
+    ).toBe("198.51.100.8");
+  });
+
   // Bun reports an IPv4 loopback peer as `::ffff:127.0.0.1` on Windows, which
   // `isIP` classifies as IPv6. Before the mapped form was unwrapped, a
   // cloudflared peer on 127.0.0.1 failed the `127.0.0.1/32` trust check and

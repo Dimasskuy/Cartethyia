@@ -78,7 +78,6 @@ function shareRow(overrides: Partial<ShareApiKeyRow> = {}): ShareApiKeyRow {
     monthlyTokenLimit: null,
     lifetimeTokenBudget: null,
     maxConcurrentRequests: null,
-    providerAllowlist: null,
     modelAllowlist: null,
     modelDenylist: null,
     modelPrefix: null,

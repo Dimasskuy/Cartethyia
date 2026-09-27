@@ -215,7 +215,7 @@ const ANTIGRAVITY_DISCOVERY_DENYLIST: Readonly<Record<string, true>> = {
  * is the inverse: it resolves the logical id to a live wire deployment at
  * dispatch time. Unmapped ids are already logical ids and pass through.
  */
-function collapseAntigravityVariant(modelId: string): string {
+export function collapseAntigravityVariant(modelId: string): string {
   if (modelId === "claude-opus-4-6-thinking") return "claude-opus-4-6";
   if (modelId === "gemini-pro-agent") return "gemini-3.1-pro";
   if (modelId === "gemini-3-flash-agent") return "gemini-3.5-flash";

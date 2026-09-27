@@ -83,22 +83,32 @@ function matchesCidr(address: string, cidr: string): boolean {
 }
 
 function isTrustedPeer(peer: string, boundary: TrustedProxyBoundary): boolean {
+  // `platform` mode has no allowlist to match: the PaaS edge is the only way
+  // in, which is what the mode asserts. See `TrustedProxyMode`.
+  if (boundary.mode === "platform") return true;
   return boundary.allowlist?.some((entry) => matchesCidr(peer, entry)) ?? false;
 }
 
 /** Whether the TCP peer may vouch for forwarded headers (reverse-proxy trust). */
 export function isTrustedProxyPeer(peer: string, boundary: TrustedProxyBoundary): boolean {
-  return boundary.mode === "trusted" && isTrustedPeer(peer, boundary);
+  return boundary.mode !== "disabled" && isTrustedPeer(peer, boundary);
 }
 
 /**
  * Client IP resolution behind a reverse proxy. `"disabled"` (default) always
- * trusts the raw TCP peer. `"trusted"` trusts proxy identity headers only
- * when the TCP peer itself matches `allowlist` (CIDR or exact address).
+ * trusts the raw TCP peer. `"trusted"` trusts proxy identity headers only when
+ * the TCP peer itself matches `allowlist` (CIDR or exact address). `"platform"`
+ * trusts them from any peer, for a PaaS edge that cannot be allowlisted.
  *
- * Cloudflare's `CF-Connecting-IP` is preferred over the forwarded chain,
- * followed by `True-Client-IP`, `X-Forwarded-For`, and `X-Real-IP`. This keeps
- * the original address when cloudflared/Railway rewrites the ordinary chain.
+ * `CF-Connecting-IP` and `True-Client-IP` are preferred: both are single-valued
+ * and overwritten by the edge, so they cannot carry a caller-supplied value.
+ * The forwarded chain is read from its left end, which assumes the edge
+ * *prepends* the address it observed — cloudflared's behavior, and the reason
+ * the loopback allowlist works. An edge that instead *appends* leaves whatever
+ * the caller sent at the left end, where it would be selected; a deployment
+ * behind such an edge should send `CF-Connecting-IP`/`True-Client-IP` (both
+ * overwritten) or a trusted-peer allowlist narrow enough that direct callers
+ * cannot reach it. Which one Railway does is not established here.
  */
 export function resolveClientIdentity(
   request: Request,
@@ -106,7 +116,7 @@ export function resolveClientIdentity(
   peer: string,
 ): string {
   const fallback = unwrapMappedIpv4(peer);
-  if (boundary.mode === "disabled" || !isTrustedPeer(peer, boundary)) return fallback;
+  if (!isTrustedPeer(peer, boundary)) return fallback;
   const headerNames = ["cf-connecting-ip", "true-client-ip", "x-forwarded-for", "x-real-ip"];
   for (const name of headerNames) {
     const values = (request.headers.get(name) ?? "")

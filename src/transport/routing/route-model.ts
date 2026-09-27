@@ -13,7 +13,7 @@ export interface RouteCandidate {
   readonly wire_family: WireFamily;
   readonly endpoint: string;
   readonly capability_profile: CapabilityProfile;
-  /** Resolved outbound User-Agent; OAuth adapters retain their native identity. */
+  /** Route-selected User-Agent fallback; provider-supplied identities remain authoritative. */
   readonly user_agent?: string;
   readonly max_inflight?: number;
   readonly provider_account_id?: string;

@@ -4,7 +4,7 @@ import { VERSION_SOURCES, buildCodeBuddyUserAgent, _resetCodeBuddyVersionCache }
 import { buddyPrePayloadCommon, coalesceConsecutiveUserMessages, dropEmptyBuddyMessages, ensureBuddyLeadingSystem } from "../../../../src/providers/integrations/buddy/buddy-chat-shared";
 import type { CanonicalRequest } from "../../../../src/transport/canonical-model";
 import type { ProviderDispatchTarget, ProviderDispatchContext } from "../../../../src/providers/provider-registry";
-import { CODEBUDDY_PROVIDER_ID, CODEBUDDY_MODELS, createCodeBuddyAdapter } from "../../../../src/providers/integrations/buddy/codebuddy";
+import { CODEBUDDY_PROVIDER_ID, CODEBUDDY_MODELS, CODEBUDDY_SYSTEM_PROMPT, createCodeBuddyAdapter } from "../../../../src/providers/integrations/buddy/codebuddy";
 import { CODEBUDDY_CN_PROVIDER_ID, CODEBUDDY_CN_MODELS, codeBuddyCnPrePayload, createCodeBuddyCnAdapter } from "../../../../src/providers/integrations/buddy/codebuddy-cn";
 import {
   BuddyOAuthClient,
@@ -148,8 +148,7 @@ describe("CodeBuddy adapter contracts", () => {
   afterEach(() => {
     _resetCodeBuddyVersionCache();
   });
-  test("intl forces upstream streaming, injects the CodeBuddy system prompt, and types user content", async () => {
-    let body: Record<string, unknown> = {};
+  test("intl forces upstream streaming, injects the CodeBuddy system prompt, and types user content", async () => {    let body: Record<string, unknown> = {};
     let seenUrl = "";
     let seenHeaders = new Headers();
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -170,7 +169,7 @@ describe("CodeBuddy adapter contracts", () => {
     expect(seenHeaders.get("x-ide-type")).toBe("IDE");
     expect(body.stream).toBe(true);
     expect(body.messages).toEqual([
-      { role: "system", content: "You are CodeBuddy Code." },
+      { role: "system", content: CODEBUDDY_SYSTEM_PROMPT },
       { role: "user", content: [{ type: "text", text: "hello" }] },
     ]);
     expect(events.at(-1)).toMatchObject({ type: "terminal", state: "complete" });
@@ -238,12 +237,21 @@ describe("CodeBuddy adapter contracts", () => {
   });
 
   test("catalogs match the current CodeBuddy provider split", () => {
-    expect(CODEBUDDY_MODELS).toHaveLength(26);
-    expect(CODEBUDDY_MODELS).toHaveLength(26);
+    // The two international sites share one roster (`BUDDY_SHARED_RAW`); only
+    // the endpoint differs. CN keeps its own table.
+    expect(CODEBUDDY_MODELS).toHaveLength(36);
+    expect(CODEBUDDY_MODELS).toHaveLength(36);
     expect(CODEBUDDY_CN_MODELS).toHaveLength(12);
     expect(CODEBUDDY_MODELS.some((model) => model.modelId === "deepseek-v4.1-flash")).toBe(true);
     expect(CODEBUDDY_MODELS.some((model) => model.modelId === "glm-5.3")).toBe(true);
     expect(CODEBUDDY_CN_MODELS.some((model) => model.modelId === "glm-5.3-flash")).toBe(true);
+    // The retired GLM rows are gone from every buddy catalog, and the newest
+    // Kimi preview is served by all three.
+    for (const catalog of [CODEBUDDY_MODELS, CODEBUDDY_CN_MODELS]) {
+      expect(catalog.some((model) => model.modelId === "glm-5.1")).toBe(false);
+      expect(catalog.some((model) => model.modelId === "glm-5.2")).toBe(false);
+      expect(catalog.some((model) => model.modelId === "kimi-k2.8-preview")).toBe(true);
+    }
   });
 
   test("hy3 and hy4-preview are tool- and reasoning-capable, text-only, 1M ctx", () => {
@@ -286,7 +294,7 @@ describe("CodeBuddy adapter contracts", () => {
     }
 
     expect(body.messages).toEqual([
-      { role: "system", content: "You are CodeBuddy Code." },
+      { role: "system", content: CODEBUDDY_SYSTEM_PROMPT },
       {
         role: "user",
         content: [image, { type: "text", text: "coba liat ini" }],
@@ -543,5 +551,21 @@ describe("chat SSE null-usage tolerance", () => {
     const terminal = events.at(-1) as { state: string; usage: { input_tokens: number } };
     expect(terminal.state).toBe("complete");
     expect(terminal.usage.input_tokens).toBe(3);
+  });
+});
+
+/**
+ * The leading system turn is a product identity, not a wire value: the upstream
+ * checks that the wire opens with a `system` turn (`11128`), never its text —
+ * which is why the CN variant installs a plain engineering-assistant sentence in
+ * the same slot. These assertions are deliberately literal rather than reading
+ * the exported constant, so a regression back to a vendor-branded identity fails
+ * here instead of silently shipping.
+ */
+describe("CodeBuddy leading system prompt", () => {
+  test("states a neutral, honest assistant identity rather than the vendor brand", () => {
+    expect(CODEBUDDY_SYSTEM_PROMPT).toContain("pragmatic and direct");
+    expect(CODEBUDDY_SYSTEM_PROMPT.toLowerCase()).not.toContain("codebuddy");
+    expect(CODEBUDDY_SYSTEM_PROMPT.toLowerCase()).not.toContain("tencent");
   });
 });

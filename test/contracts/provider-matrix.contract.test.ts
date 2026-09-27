@@ -12,7 +12,7 @@ import { BAI_SPEC } from "../../src/providers/integrations/bai";
 import { TOKENHARBOR_SPEC } from "../../src/providers/integrations/tokenharbor";
 import { HERMES_SPEC } from "../../src/providers/integrations/hermes";
 import { OPENROUTER_SPEC } from "../../src/providers/integrations/openrouter";
-import { XIAOMIPG_SPEC, XIAOMITP_SPEC } from "../../src/providers/integrations/xiaomi";
+import { XIAOMIPG_SPEC, XIAOMITP_SPEC } from "../../src/providers/integrations/xiaomi-mimo/xiaomi";
 import { ZAI_SPEC } from "../../src/providers/integrations/zai/spec";
 import { CEREBRAS_SPEC } from "../../src/providers/integrations/cerebras";
 import { createInferhubAdapter } from "../../src/providers/integrations/inferhub";
@@ -265,7 +265,7 @@ describe("provider matrix composition", () => {
 /**
  * One row per declarative api-key spec: the wire contract each spec row
  * actually produces (host, endpoint family, auth shape). Bespoke adapters
- * (Gemini, Qoder, CommandCode, Cloudflare, Perplexity, AgentRouter, the
+ * (Gemini, Qoder, CommandCode, Perplexity, AgentRouter, the
  * Claude Messages legs) are covered by their own suites.
  */
 describe("spec-driven api-key matrix", () => {
@@ -426,7 +426,7 @@ describe("spec-driven api-key matrix", () => {
       [
         ["groq", "api.groq.com"],
         ["mistral", "api.mistral.ai"],
-        ["siliconflow", "api.siliconflow.cn"],
+        ["sifo", "api.siliconflow.cn"],
         ["fireworks", "api.fireworks.ai"],
         ["nvidia", "integrate.api.nvidia.com"],
         ["gmi", "api.gmi-serving.com"],

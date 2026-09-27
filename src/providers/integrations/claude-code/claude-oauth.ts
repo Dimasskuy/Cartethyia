@@ -1,6 +1,5 @@
 import { nonEmptyString as nonEmpty, readJsonResponse } from "../../authentication/oauth-flow-store";
 import { postJsonTokenRequest } from "../../authentication/oauth-flow-store";
-import { oauthCallbackUrl } from "../../../config";
 import type { OAuthExchangeResult } from "../../authentication/oauth-flow-store";
 import type { OAuthTokenRefreshResult } from "../../authentication/oauth-refresh-service";
 import { OAuthClient, type FetchLike } from "../../authentication/oauth-client";
@@ -94,15 +93,24 @@ export class ClaudeOAuthClient extends OAuthClient {
     super(fetchFn);
   }
 
-  protected override providerIdForCallback(): string {
-    return "claude";
-  }
+  /**
+   * Loopback callback the Claude Code OAuth client registers.
+   *
+   * Anthropic validates `redirect_uri` against the client's allowlist, so the
+   * gateway's own console callback is rejected; the dashboard dialog relays the
+   * code back from this landing URL and the server performs the exchange.
+   */
+  override readonly browserRedirectUri = "http://127.0.0.1:54545/callback" as const;
 
   protected override extraAuthorizeParams(): Record<string, string> | undefined {
     return { code: "true" };
   }
 
-  override async exchangeCode(code: string, codeVerifier: string): Promise<OAuthExchangeResult> {
+  override async exchangeCode(
+    code: string,
+    codeVerifier: string,
+    redirectUri: string,
+  ): Promise<OAuthExchangeResult> {
     const response = await this.fetchFn(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -111,7 +119,7 @@ export class ClaudeOAuthClient extends OAuthClient {
         client_id: CLIENT_ID,
         code,
         code_verifier: codeVerifier,
-        redirect_uri: oauthCallbackUrl("claude"),
+        redirect_uri: redirectUri,
       }),
       signal: AbortSignal.timeout(30_000),
     });

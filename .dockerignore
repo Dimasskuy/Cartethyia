@@ -15,8 +15,9 @@ yarn-error.log
 /dist
 scripts/*.test.ts
 
-# Local dev artifacts: platform-specific proxy binaries (the image downloads
-# its own in the binary-downloader stage) and generated runtime configs.
+# Local dev artifacts. `bin` holds vendored platform-specific proxy binaries for
+# local development; the image ships none, so the entry only keeps them out of
+# the build context. `.cache` holds generated runtime configs.
 bin
 .cache
 

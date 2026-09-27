@@ -144,7 +144,7 @@ export interface ProviderDispatchContext {
   readonly deadline: number;
   readonly abort_signal: AbortSignal;
   readonly outbound_fetch?: ValidatedOutboundFetch | undefined;
-  /** Built-in API-key route-selected User-Agent; custom providers leave this unset. */
+  /** Built-in API-key route-selected fallback User-Agent; custom providers leave this unset. */
   readonly user_agent?: string | undefined;
   /** Internal origin marker for provider probes; adapters must not forward it. */
   readonly probe_marker?: typeof CARTETHYIA_PROBE_MARKER;
@@ -152,7 +152,18 @@ export interface ProviderDispatchContext {
   readonly request_headers?: Readonly<Record<string, string>> | undefined;
 }
 
-/** Applies the configured route identity without changing OAuth-native headers. */
+const USER_AGENT_HEADER_NAME = /^user-agent$/i;
+const USER_AGENT_HEADER_LENGTH = "user-agent".length;
+
+function hasUserAgentHeader(headers: Record<string, string>): boolean {
+  for (const headerName in headers) {
+    if (headerName.length !== USER_AGENT_HEADER_LENGTH) continue;
+    if (Object.hasOwn(headers, headerName) && USER_AGENT_HEADER_NAME.test(headerName)) return true;
+  }
+  return false;
+}
+
+/** Uses the route identity as a fallback without replacing provider-supplied headers. */
 export function applyRouteUserAgent(
   headers: Record<string, string>,
   credential: ResolvedCredential,
@@ -165,6 +176,7 @@ export function applyRouteUserAgent(
   ) {
     return;
   }
+  if (hasUserAgentHeader(headers)) return;
   headers["user-agent"] = userAgent;
 }
 

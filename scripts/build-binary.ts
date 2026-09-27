@@ -15,12 +15,12 @@
  *    it into the binary.** `bun build --compile` replaces `process.env.NODE_ENV`
  *    with a literal, so the value present when this runs is the value the
  *    binary reports forever after — a runtime `NODE_ENV=production` cannot
- *    change it. That matters beyond log formatting: `resolveMigrationsFolder()`
- *    picks `<cwd>/migrations` only when `NODE_ENV === "production"`, and the
- *    development path it otherwise takes is resolved relative to
- *    `import.meta.dir`, which inside a standalone executable is Bun's virtual
- *    `/~BUN` root and can never contain the migrations. A binary built without
- *    this line therefore fails to boot with `Migrations folder not found`.
+ *    change it. What depends on it is the logger: the `pino-pretty` transport
+ *    is attached only in development, and that transport spawns a worker thread
+ *    loading `real-require`, which a standalone executable does not carry. A
+ *    binary built without this line therefore bundles a logger that crashes on
+ *    first use. The migrations folder is not part of this decision —
+ *    `resolveMigrationsFolder()` resolves `<cwd>/migrations` unconditionally.
  *
  * Usage: `bun run scripts/build-binary.ts [--outfile dist/cartethyia]`
  */

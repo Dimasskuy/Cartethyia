@@ -354,6 +354,50 @@ describe("Responses event lifecycle", () => {
     expect(failed.at(-1)?.type).toBe("response.failed");
   });
 
+  test("preserves separate reasoning summary indices through terminal output", () => {
+    const encoder = new ResponsesEventEncoder({ model: "m" });
+    const events = [
+      ...encoder.push({
+        type: "content_delta",
+        sequence_number: 1,
+        content: { kind: "reasoning", payload: null, summary: "first", summary_index: 0 },
+      }),
+      ...encoder.push({
+        type: "content_delta",
+        sequence_number: 2,
+        content: { kind: "reasoning", payload: null, summary: "second", summary_index: 1 },
+      }),
+      ...encoder.push({ type: "terminal", sequence_number: 3, state: "complete" }),
+    ];
+    const partsAdded = events.filter(
+      (event) => event.type === "response.reasoning_summary_part.added",
+    );
+    expect(partsAdded.map((event) => event.summary_index)).toEqual([0, 1]);
+    const summaryDone = events.filter(
+      (event) => event.type === "response.reasoning_summary_text.done",
+    );
+    expect(summaryDone.map((event) => [event.summary_index, event.text])).toEqual([
+      [0, "first"],
+      [1, "second"],
+    ]);
+    const summaryPartsDone = events.filter(
+      (event) => event.type === "response.reasoning_summary_part.done",
+    );
+    expect(
+      summaryPartsDone.map((event) => [event.summary_index, event.part]),
+    ).toEqual([
+      [0, { type: "summary_text", text: "first" }],
+      [1, { type: "summary_text", text: "second" }],
+    ]);
+    const outputItem = events.find((event) => event.type === "response.output_item.done")?.item;
+    expect(outputItem).toMatchObject({
+      summary: [
+        { type: "summary_text", text: "first" },
+        { type: "summary_text", text: "second" },
+      ],
+    });
+  });
+
   test("surfaces readable reasoning payload as reasoning_text content", () => {
     const events = adapter.encode([
       { type: "response_start", sequence_number: 1, model: "m" },

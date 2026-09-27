@@ -184,9 +184,17 @@ export async function resolveAllAddresses(
     // A deadline/abort surfaces as 499 (client cancelled), never 400 — the
     // same contract the dispatch layer uses for a timed-out upstream dial.
     if (signal.aborted) throw new GatewayError("transport_closed", 499, "request was cancelled");
-    throw new GatewayError("invalid_request", 400, "upstream DNS resolution failed", {
-      cause: String(error),
-    });
+    // The hostname belongs to the provider's configuration, not to the
+    // caller's request: a resolver that cannot answer is a network failure,
+    // and reporting it as the caller's 400 `invalid_request` blamed the
+    // request for an upstream host that does not resolve.
+    throw new GatewayError(
+      "transport_unavailable",
+      502,
+      "upstream DNS resolution failed",
+      { cause: String(error) },
+      "network",
+    );
   }
 }
 

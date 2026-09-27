@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { getDb, type CartethyiaDatabase } from "../../../src/persistence/postgres";
 import { dbDescribe } from "../../helpers/db-gate";
-import { tenants, providers, healthEvents, providerAccounts, providerRoutingSettings } from "../../../src/persistence/schema";
+import { tenants, providers, healthEvents, providerAccounts, providerOauthStates, providerRoutingSettings } from "../../../src/persistence/schema";
 import { DrizzleProviderCatalogStore } from "../../../src/console/providers/catalog/store";
+import { DrizzleOAuthAccountStore } from "../../../src/console/providers/oauth/routes";
 import { DrizzleProviderDetailStore } from "../../../src/console/providers/detail/store";
 import { CLINE_MODELS } from "../../../src/providers/integrations/cline/cline";
 import { createDefaultProviderRegistry } from "../../../src/providers/default-registry";
@@ -582,3 +583,118 @@ describe("create persists the operator's wire family (fake db)", () => {
   });
 });
 
+
+describe("OAuth account identity", () => {
+  dbDescribe("a re-login for the same email replaces the account instead of adding a second", () => {
+    let db: CartethyiaDatabase;
+    const tenantId = randomUUID();
+    const providerId = `oauth-identity-test-${randomUUID().slice(0, 8)}`;
+    const email = "gaw4@downaria.web.id";
+
+    beforeAll(async () => {
+      db = getDb();
+      await db
+        .insert(tenants)
+        .values({ id: tenantId, name: "oauth-identity-test", status: "active" })
+        .onConflictDoNothing();
+      await db.insert(providers).values({ id: providerId, tenantId, enabled: true });
+    });
+
+    afterAll(async () => {
+      // `provider_oauth_states` and `health_events` cascade from the account.
+      await db.delete(providerAccounts).where(eq(providerAccounts.providerId, providerId));
+      await db.delete(providers).where(eq(providers.id, providerId));
+      await db.delete(tenants).where(eq(tenants.id, tenantId));
+    });
+
+    test("the same email with a new refresh token is one account, re-enabled", async () => {
+      // Regression: identity was the refresh-token fingerprint, so a fresh
+      // login minted a new fingerprint and the unique index never fired — the
+      // same email appeared twice, one `Disabled` / `Re-login required` and one
+      // `Active`. The email the provider reports is the identity.
+      const store = new DrizzleOAuthAccountStore(db);
+      const first = await store.persistAccount(tenantId, providerId, {
+        label: email,
+        access: "access-1",
+        refresh: "refresh-1",
+        expiresAt: new Date(Date.now() + 3_600_000),
+      });
+      // The first account is left needing a re-login, which is what the
+      // operator sees before they log in again.
+      await db
+        .update(providerAccounts)
+        .set({ status: "disabled", lastError: "invalid_grant", lastErrorCategory: "auth_invalidated" })
+        .where(eq(providerAccounts.id, first.accountId));
+
+      const second = await store.persistAccount(tenantId, providerId, {
+        label: email,
+        access: "access-2",
+        refresh: "refresh-2",
+        expiresAt: new Date(Date.now() + 7_200_000),
+      });
+
+      expect(second.accountId).toBe(first.accountId);
+      const rows = await db
+        .select()
+        .from(providerAccounts)
+        .where(eq(providerAccounts.providerId, providerId));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.status).toBe("active");
+      expect(rows[0]?.lastError).toBeNull();
+      expect(rows[0]?.lastErrorCategory).toBeNull();
+      expect(rows[0]?.label).toBe(email);
+
+      // The refreshed credential is the one stored, not the first login's.
+      const state = await db
+        .select()
+        .from(providerOauthStates)
+        .where(eq(providerOauthStates.providerAccountId, first.accountId));
+      expect(state).toHaveLength(1);
+      expect(state[0]?.expiresAt.getTime()).toBeGreaterThan(Date.now() + 3_600_000);
+    });
+
+    test("a different email is a different account", async () => {
+      const store = new DrizzleOAuthAccountStore(db);
+      const other = await store.persistAccount(tenantId, providerId, {
+        label: "someone-else@downaria.web.id",
+        access: "access-3",
+        refresh: "refresh-3",
+        expiresAt: new Date(Date.now() + 3_600_000),
+      });
+      const rows = await db
+        .select()
+        .from(providerAccounts)
+        .where(eq(providerAccounts.providerId, providerId));
+      expect(rows).toHaveLength(2);
+      expect(rows.map((row) => row.label)).toContain("someone-else@downaria.web.id");
+      expect(rows.find((row) => row.label === "someone-else@downaria.web.id")?.id).toBe(
+        other.accountId,
+      );
+    });
+
+    test("a provider that reports no email still catches an exact replay", async () => {
+      // Without a label the identity falls back to the refresh token, which is
+      // the old behaviour and still rejects replaying the same credential.
+      const store = new DrizzleOAuthAccountStore(db);
+      const expiresAt = new Date(Date.now() + 3_600_000);
+      const first = await store.persistAccount(tenantId, providerId, {
+        label: "",
+        access: "access-4",
+        refresh: "refresh-4",
+        expiresAt,
+      });
+      const replay = await store.persistAccount(tenantId, providerId, {
+        label: "",
+        access: "access-4",
+        refresh: "refresh-4",
+        expiresAt,
+      });
+      expect(replay.accountId).toBe(first.accountId);
+      const rows = await db
+        .select()
+        .from(providerAccounts)
+        .where(eq(providerAccounts.providerId, providerId));
+      expect(rows).toHaveLength(3);
+    });
+  });
+});

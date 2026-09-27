@@ -275,6 +275,41 @@ describe("sanitizeProviderResponse", () => {
     }
   });
 
+  test("derives adapter User-Agent ownership from bundled metadata", () => {
+    expect(sanitizeProviderResponse({ providerId: "qoder" }).hasAdapterUserAgent).toBe(true);
+    expect(sanitizeProviderResponse({ providerId: "openai" }).hasAdapterUserAgent).toBe(false);
+    expect(
+      sanitizeProviderResponse({ providerId: "custom-qoder", hasAdapterUserAgent: true })
+        .hasAdapterUserAgent,
+    ).toBe(false);
+  });
+
+  test("projects the credential page and hint from bundled metadata, never from the record", () => {
+    const groq = sanitizeProviderResponse({ providerId: "groq" });
+    expect(groq.credentialUrl).toBe("https://console.groq.com/keys");
+    expect(groq.credentialHint).toBeUndefined();
+
+    // A provider whose sign-in is not a plain paste carries guidance too.
+    const studio = sanitizeProviderResponse({ providerId: "mimostudio" });
+    expect(studio.credentialUrl).toBe("https://aistudio.xiaomimimo.com");
+    expect(studio.credentialHint).toContain("browser cookies");
+
+    // The record cannot supply or override either field: they are canonical
+    // metadata, so a stale or hostile row cannot point the dashboard elsewhere.
+    const spoofed = sanitizeProviderResponse({
+      providerId: "groq",
+      credentialUrl: "https://attacker.test/keys",
+      credentialHint: "Paste your key here",
+    });
+    expect(spoofed.credentialUrl).toBe("https://console.groq.com/keys");
+    expect(spoofed.credentialHint).toBeUndefined();
+
+    // A provider with no published page and a BYOK row omit both.
+    expect(sanitizeProviderResponse({ providerId: "inferhub" }).credentialUrl).toBeUndefined();
+    expect(sanitizeProviderResponse({ providerId: "vendor" }).credentialUrl).toBeUndefined();
+    expect(sanitizeProviderResponse({ providerId: "vendor" }).credentialHint).toBeUndefined();
+  });
+
   test("applies defaults and omits label/timestamps that are absent or the wrong type", () => {
     const response = sanitizeProviderResponse({
       providerId: "vendor",
@@ -287,6 +322,7 @@ describe("sanitizeProviderResponse", () => {
       enabled: true,
       isBuiltIn: false,
       requiresAccount: true,
+      hasAdapterUserAgent: false,
       supportsModelDiscovery: true,
     });
   });

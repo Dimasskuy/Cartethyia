@@ -1,14 +1,19 @@
 /**
  * Claude upstream error → canonical GatewayError mapping.
  *
- * Both transport paths share one status→code table: non-2xx HTTP responses
- * (`mapClaudeHttpError`) and in-stream SSE `type: error` frames
+ * Both transport paths use the shared structured classifier for non-2xx HTTP
+ * responses (`mapClaudeHttpError`) and in-stream SSE `type: error` frames
  * (`mapClaudeStreamError`). Each path keeps its own envelope extraction; the
- * classification below is the single authority for codes, retry hints, and
- * credential evidence.
+ * classifier is the single authority for codes, retries, and credential
+ * evidence.
  */
 import { GatewayError } from "../transport/gateway-error";
-import { extractUpstreamMessage, statusToGatewayErrorCode, upstreamRequestId } from "../transport/failure-policy";
+import {
+  classifyUpstreamError,
+  extractUpstreamMessage,
+  upstreamErrorIdentifier,
+  upstreamRequestId,
+} from "../transport/failure-policy";
 import { isRecord } from "./primitives";
 
 interface ClaudeErrorExtras {
@@ -16,29 +21,31 @@ interface ClaudeErrorExtras {
   readonly requestId?: string;
 }
 
-/** Shared status→code classification for both the HTTP and SSE error paths. */
+/** Shared structured classification for both the HTTP and SSE error paths. */
 function claudeErrorFromStatus(
   status: number,
   message: string,
   extras: ClaudeErrorExtras = {},
 ): GatewayError {
+  const classification = classifyUpstreamError(status, extras.providerCode);
   const details = {
     upstreamStatus: status,
     ...(extras.providerCode ? { providerCode: extras.providerCode } : {}),
     ...(extras.requestId ? { upstreamRequestId: extras.requestId } : {}),
     raw: message,
-    ...(status === 429 ? { rateLimitScope: "provider" } : {}),
-    ...(status === 401 || status === 403 ? { credentialEvidence: true } : {}),
+    ...(classification.rateLimitScope
+      ? { rateLimitScope: classification.rateLimitScope }
+      : {}),
+    ...(classification.credentialEvidence ? { credentialEvidence: true } : {}),
   };
-  const code = statusToGatewayErrorCode(status);
-  if (code === "proxy_auth_required") {
-    return new GatewayError(code, status, message, details, "network");
-  }
-  const enrichedDetails =
-    code === "capacity_exhausted" ? { ...details, rateLimitScope: "provider" } : details;
-  return new GatewayError(code, status, message, enrichedDetails, "upstream");
+  return new GatewayError(
+    classification.code,
+    classification.status,
+    message,
+    details,
+    classification.origin,
+  );
 }
-
 /**
  * Maps Claude HTTP failures to canonical gateway errors so handler
  * retry/account-health logic matches on codes, never message text.
@@ -55,17 +62,7 @@ export function mapClaudeHttpError(status: number, body: string, headers?: Heade
   }
   const extracted = extractUpstreamMessage(parsedBody ?? body);
   const message = extracted.length > 0 ? extracted : `claude error ${status}`;
-  let providerCode: string | undefined;
-  try {
-    const parsedRecord = isRecord(parsedBody) ? parsedBody : undefined;
-    const envelope =
-      parsedRecord !== undefined && "error" in parsedRecord
-        ? parsedRecord.error
-        : parsedBody;
-    if (isRecord(envelope) && typeof envelope.code === "string") providerCode = envelope.code;
-  } catch {
-    // The bounded body remains available as the safe upstream detail.
-  }
+  const providerCode = upstreamErrorIdentifier(parsedBody);
   const requestId = upstreamRequestId(headers);
   return claudeErrorFromStatus(status, message, {
     ...(providerCode ? { providerCode } : {}),
@@ -81,8 +78,7 @@ export function mapClaudeHttpError(status: number, body: string, headers?: Heade
 export function mapClaudeStreamError(error: unknown, headers?: Headers): GatewayError {
   const status =
     isRecord(error) && typeof error.status === "number" ? error.status : 502;
-  const providerCode =
-    isRecord(error) && typeof error.code === "string" ? error.code : undefined;
+  const providerCode = upstreamErrorIdentifier(error);
   const message =
     isRecord(error) && typeof error.message === "string"
       ? error.message

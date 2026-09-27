@@ -432,31 +432,47 @@ describe("OpenAICompatibleAdapter credential_forwarding", () => {
     expect(seenHeaders[0]?.authorization).toBe("Bearer secret");
   });
 
-  test("applies route User-Agent to API-key traffic and leaves OAuth identity untouched", async () => {
-    const seenHeaders: Record<string, string>[] = [];
-    const adapter = new OpenAICompatibleAdapter(
-      baseConfig(
-        (async (_url: string, init?: RequestInit) => {
-          seenHeaders.push({ ...(init?.headers as Record<string, string> | undefined) });
-          return new Response(
-            JSON.stringify({ id: "resp_1", object: "chat.completion", choices: [] }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        }) as unknown as typeof fetch,
-        { buildExtraHeaders: () => ({ "user-agent": "adapter-native/1" }) },
-      ),
+  test("preserves provider User-Agent headers and uses route identity only as fallback", async () => {
+    const seenUserAgents: Array<string | null> = [];
+    const fakeFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      seenUserAgents.push(new Headers(init?.headers).get("user-agent"));
+      return new Response(
+        JSON.stringify({ id: "resp_1", object: "chat.completion", choices: [] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    const nativeAdapter = new OpenAICompatibleAdapter(
+      baseConfig(fakeFetch, {
+        buildExtraHeaders: () => ({ "uSeR-aGeNt": "adapter-native/1" }),
+      }),
     );
+    const genericAdapter = new OpenAICompatibleAdapter(baseConfig(fakeFetch));
     const routeUserAgent = "claude-cli/2.1.280 (external, cli)";
-    for await (const _event of adapter.dispatch(
+
+    for await (const _event of nativeAdapter.dispatch(
       fakeCanonicalRequest(),
       fakeProviderDispatchTarget(),
       { ...dispatchContext(), user_agent: routeUserAgent },
+    ));
+    for await (const _event of genericAdapter.dispatch(
+      fakeCanonicalRequest(),
+      fakeProviderDispatchTarget(),
+      { ...dispatchContext(), user_agent: routeUserAgent },
+    ));
+    const customCredential: ResolvedCredential = {
+      ...credential(),
+      custom_headers: { "User-Agent": "account-native/1" },
+    };
+    for await (const _event of genericAdapter.dispatch(
+      fakeCanonicalRequest(),
+      fakeProviderDispatchTarget(),
+      { ...dispatchContext(), credential: customCredential, user_agent: routeUserAgent },
     ));
     const oauthCredential: ResolvedCredential = {
       ...credential(),
       credential_kind: "oauth",
     };
-    for await (const _event of adapter.dispatch(
+    for await (const _event of nativeAdapter.dispatch(
       fakeCanonicalRequest(),
       fakeProviderDispatchTarget(),
       {
@@ -465,8 +481,13 @@ describe("OpenAICompatibleAdapter credential_forwarding", () => {
         user_agent: routeUserAgent,
       },
     ));
-    expect(seenHeaders[0]?.["user-agent"]).toBe(routeUserAgent);
-    expect(seenHeaders[1]?.["user-agent"]).toBe("adapter-native/1");
+
+    expect(seenUserAgents).toEqual([
+      "adapter-native/1",
+      routeUserAgent,
+      "account-native/1",
+      "adapter-native/1",
+    ]);
   });
 });
 
@@ -638,9 +659,40 @@ describe("streaming e2e — incremental delivery of upstream chunks", () => {
     }
     expect(caught).toBeInstanceOf(GatewayError);
     const gateway = caught as GatewayError;
-    expect(gateway.code).toBe("transport_unavailable");
+    expect(gateway.code).toBe("platform_unavailable");
+    expect(gateway.status).toBe(502);
     expect(gateway.origin).toBe("upstream");
     expect(gateway.details.providerCode).toBe("11148");
     expect(gateway.message).toContain("tool_call_sequence_broken");
+  });
+  test("classifies a structured 2xx rate-limit envelope", async () => {
+    const fakeFetch = (async () =>
+      new Response(
+        JSON.stringify({ error: { code: "rate_limit_error", message: "slow down" } }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      )) as unknown as typeof fetch;
+    const adapter = new OpenAICompatibleAdapter(baseConfig(fakeFetch));
+    let caught: unknown;
+    try {
+      for await (const _event of adapter.dispatch(
+        fakeCanonicalRequest(),
+        fakeProviderDispatchTarget("chat"),
+        dispatchContext(),
+      )) {
+        // drain
+      }
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(GatewayError);
+    expect(caught).toMatchObject({
+      code: "quota_exceeded",
+      status: 429,
+      origin: "upstream",
+      details: { providerCode: "rate_limit_error", rateLimitScope: "provider" },
+    });
   });
 });
