@@ -224,6 +224,7 @@ function AliasesSection(): ReactNode {
                 label="Target model"
                 id="target-model-input"
                 value={targetModel}
+                onChange={(e) => setTargetModel(e.target.value)}
                 placeholder="e.g. codex/gpt-5.5, claude/claude-sonnet-5"
                 required
               />

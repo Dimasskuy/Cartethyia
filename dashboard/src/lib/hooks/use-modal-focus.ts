@@ -28,6 +28,12 @@ export interface ModalFocusOptions {
  */
 export function useModalFocus({ open, mounted, panelRef, onClose }: ModalFocusOptions): void {
   const openerRef = useRef<Element | null>(null);
+  // Read through a ref so the keydown effect does not depend on `onClose`.
+  // Call sites pass an inline arrow, so a dependency here made the effect
+  // re-run on every parent render — and the initial-focus step it re-ran
+  // yanked focus back to the panel's first field mid-typing.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   // Capture the opener while it still has focus.
   useEffect(() => {
@@ -74,7 +80,7 @@ export function useModalFocus({ open, mounted, panelRef, onClose }: ModalFocusOp
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || !panel) return;
@@ -96,5 +102,5 @@ export function useModalFocus({ open, mounted, panelRef, onClose }: ModalFocusOp
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mounted, onClose, panelRef]);
+  }, [mounted, panelRef]);
 }
