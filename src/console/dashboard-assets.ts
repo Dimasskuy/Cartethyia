@@ -35,6 +35,87 @@ export const DEFAULT_ENTRY_DOCUMENTS: Readonly<Record<string, string>> = {
   "/console": "index.html",
 };
 
+/**
+ * Open Graph / Twitter card values injected into a served document. The shared
+ * index document ships the landing card, so the public share routes swap in
+ * their own card here — crawlers do not run the client bundle, so a
+ * `document.title` set at runtime cannot reach them.
+ */
+export interface SocialMeta {
+  title: string;
+  description: string;
+  image: string;
+  imageWidth: number;
+  imageHeight: number;
+  imageAlt: string;
+}
+
+/** Social card for the public enrollment page (`/share/*`). */
+export const SHARE_SOCIAL_META: SocialMeta = {
+  title: "Cartethyia — Bansos Token",
+  description:
+    "Come and save your tokens 💖 Shared Cartethyia API key — Bansos Token with live quota, usage and model allowlist.",
+  image: "/og_bansos.webp",
+  imageWidth: 1760,
+  imageHeight: 576,
+  imageAlt: "Cartethyia Bansos Token — Come and save your tokens",
+};
+
+/** Sentinel-delimited block in the shared index document that carries the card. */
+const SOCIAL_META_BLOCK =
+  /<!-- cartethyia:social-meta:start -->[\s\S]*?<!-- cartethyia:social-meta:end -->/;
+
+/** Escapes a value for use inside an HTML double-quoted attribute. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Renders the sentinel block for one social card. */
+function renderSocialMeta(meta: SocialMeta): string {
+  const title = escapeHtml(meta.title);
+  const description = escapeHtml(meta.description);
+  const image = escapeHtml(meta.image);
+  const imageAlt = escapeHtml(meta.imageAlt);
+  return [
+    "<!-- cartethyia:social-meta:start -->",
+    '<meta property="og:type" content="website" />',
+    `<meta property="og:title" content="${title}" />`,
+    `<meta property="og:description" content="${description}" />`,
+    `<meta property="og:image" content="${image}" />`,
+    '<meta property="og:image:type" content="image/webp" />',
+    `<meta property="og:image:width" content="${meta.imageWidth}" />`,
+    `<meta property="og:image:height" content="${meta.imageHeight}" />`,
+    `<meta property="og:image:alt" content="${imageAlt}" />`,
+    '<meta name="twitter:card" content="summary_large_image" />',
+    `<meta name="twitter:title" content="${title}" />`,
+    `<meta name="twitter:description" content="${description}" />`,
+    `<meta name="twitter:image" content="${image}" />`,
+    `<meta name="twitter:image:alt" content="${imageAlt}" />`,
+    "<!-- cartethyia:social-meta:end -->",
+  ].join("\n    ");
+}
+
+/**
+ * Rewrites the document's social card and title for a public share route.
+ * Non-share paths and documents without the sentinel are returned unchanged.
+ */
+function applySocialMeta(html: string, pathname: string): string {
+  if (pathname !== "/share" && !pathname.startsWith("/share/")) return html;
+  const meta = SHARE_SOCIAL_META;
+  return html
+    .replace(SOCIAL_META_BLOCK, renderSocialMeta(meta))
+    .replace(
+      /<meta\s+name="description"\s+content="[^"]*"\s*\/>/,
+      `<meta name="description" content="${escapeHtml(meta.description)}" />`,
+    )
+    .replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(meta.title)}</title>`);
+}
+
+
 /** Longest-prefix match of an SPA route against the configured entry documents. */
 function entryDocumentFor(pathname: string, entries: Readonly<Record<string, string>>): string | undefined {
   let matched: string | undefined;
@@ -69,14 +150,15 @@ export function createStaticHandler(
   const buildDirNorm = normalizePathSeparators(buildDirResolved);
   const entries = config.entries ?? DEFAULT_ENTRY_DOCUMENTS;
 
-  const serveDocument = async (document: string): Promise<StaticServeResult> => {
+  const serveDocument = async (document: string, pathname: string): Promise<StaticServeResult> => {
     const file = Bun.file(resolve(buildDirResolved, document));
     if (!(await file.exists())) {
       return { status: 404, body: undefined, headers: {} };
     }
+    const html = applySocialMeta(await file.text(), pathname);
     return {
       status: 200,
-      body: await file.bytes(),
+      body: new TextEncoder().encode(html),
       headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-cache, must-revalidate",
@@ -165,7 +247,7 @@ export function createStaticHandler(
 
     // No file on disk: hand the route to its SPA document when one owns it.
     if (entryDocument !== undefined && !isAssetLike) {
-      return serveDocument(entryDocument);
+      return serveDocument(entryDocument, normalizedPath);
     }
 
     return { status: 404, body: undefined, headers: {} };
