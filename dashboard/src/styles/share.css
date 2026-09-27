@@ -15,7 +15,25 @@ html[data-app="share"] #root {
 }
 
 html[data-app="share"] body {
-  background-image: none;
+  /* The public share page carries the "cartesa" key art behind the HUD. The
+     gradient layer sits on top of the image and is what makes it translucent:
+     raise the veil to fade the art further, lower it to let more through. The
+     dark theme keeps the art far more visible because the art itself is dark. */
+  --share-backdrop-veil: 0.8;
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--page-bg) calc(var(--share-backdrop-veil) * 100%), transparent),
+      color-mix(in srgb, var(--page-bg) calc(var(--share-backdrop-veil) * 100%), transparent)
+    ),
+    url("/when_yah/cartesa.webp");
+  background-position: center, center 28%;
+  background-repeat: no-repeat, no-repeat;
+  background-size: cover, cover;
+  background-attachment: fixed, fixed;
+}
+
+html[data-app="share"][data-theme="dark"] body {
+  --share-backdrop-veil: 0.6;
 }
 
 .share-page {
@@ -26,8 +44,10 @@ html[data-app="share"] body {
 }
 
 .share-topbar {
-  border-bottom: 1px solid var(--inner-border);
-  background: var(--surface-1);
+  border-bottom: 1px solid var(--glass-border-2);
+  background: var(--glass-bg);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
 }
 
 .share-topbar-inner {
@@ -85,6 +105,37 @@ html[data-app="share"] body {
 
 .share-home-link:focus-visible,
 .share-page button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The public share page's HUD reads as frosted glass over the key art rather
+   than an opaque slab, so the backdrop shows through every card. */
+html[data-app="share"] .share-hud-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--glass-border-2);
+}
+
+.share-icon-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--inner-border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.share-icon-button:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.share-icon-button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -181,6 +232,69 @@ html[data-app="share"] body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* The model-access header holds the layout switch and the copy action as one
+   cluster on the right, so the switch sits immediately beside "Copy all". */
+.share-section-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.share-view-switch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--inner-border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+}
+
+.share-view-switch button {
+  min-height: 26px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.share-view-switch button:hover {
+  color: var(--text-primary);
+}
+
+.share-view-switch button.is-selected {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* Raw view: the flat allowlist in an auto-fitting grid that grows to fill the
+   MODEL ACCESS width, so a handful of ids does not leave a tall empty column. */
+.share-model-list.share-model-list-raw {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 6px;
+  max-height: none;
+  margin-top: 16px;
+  padding: 0;
+}
+
+.share-model-list.share-model-list-raw li {
+  min-width: 0;
+}
+
+/* A raw id is the whole point of this view, so let it wrap rather than clip. */
+.share-model-list.share-model-list-raw li code {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .share-section-heading h2,

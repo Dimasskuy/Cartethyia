@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactElement } from "react";
-import { Home, ShieldCheck } from "lucide-react";
+import { Home, Moon, ShieldCheck, Sun } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Card, CardBody } from "../../components/ui/card";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/state";
 import { ClipboardButton } from "../../components/patterns/clipboard-button";
 import { GithubBadge } from "../../components/patterns/github-badge";
-import { readConsoleTheme, applyConsoleTheme } from "../../lib/theme";
+import { readConsoleTheme, applyConsoleTheme, isDarkEffective, writeConsoleTheme, type ConsoleThemeChoice } from "../../lib/theme";
 import { useShareData, type ShareLinkData } from "../../lib/hooks/share-data";
 import {
   deleteStoredShareKey,
@@ -43,13 +43,22 @@ export function SharePage(): ReactElement {
   const [issueBusy, setIssueBusy] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
   const [issueConflict, setIssueConflict] = useState(false);
+  // Dark is the default reading of the share HUD; the toggle beside Home flips
+  // the same `console-theme` preference the console uses.
+  const [theme, setTheme] = useState<ConsoleThemeChoice>(() => readConsoleTheme("dark"));
+  // The allowed-model list has two readings: the flat allowlist as written
+  // ("raw") and the same set bucketed by provider ("grouped"). Raw is the
+  // default because the exact id is what a client has to send.
+  const [modelView, setModelView] = useState<"raw" | "grouped">("raw");
   useEffect(() => {
     document.title = "Cartethyia — Shared access";
     // The public share surface owns no theme of its own: it applies the console
     // `console-theme` preference through the same helper the console uses, so
     // both apps on this origin always resolve to the same tokens. The bootstrap
-    // in `index.html` resolves the same key before the bundle loads.
-    applyConsoleTheme(readConsoleTheme());
+    // in `index.html` resolves the same key before the bundle loads, defaulting
+    // an unset preference to dark on the share page.
+    setTheme(readConsoleTheme("dark"));
+    applyConsoleTheme(readConsoleTheme("dark"));
   }, []);
   const enrollment = state.data?.kind === "enroll" ? state.data : null;
   useEffect(() => {
@@ -154,6 +163,20 @@ export function SharePage(): ReactElement {
           </a>
           <div className="share-topbar-actions">
             <GithubBadge className="share-github-badge" />
+            <button
+              type="button"
+              className="share-icon-button"
+              onClick={() => {
+                const next: ConsoleThemeChoice = isDarkEffective(theme) ? "light" : "dark";
+                setTheme(next);
+                writeConsoleTheme(next);
+              }}
+              aria-label="Toggle theme"
+              aria-pressed={isDarkEffective(theme)}
+              title={isDarkEffective(theme) ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {isDarkEffective(theme) ? <Sun size={15} /> : <Moon size={15} />}
+            </button>
             <a href="/" className="share-home-link">
               <Home size={13} aria-hidden="true" /> Home
             </a>
@@ -184,11 +207,12 @@ export function SharePage(): ReactElement {
                 {data.kind === "handoff" ? "SHARED ACCESS / KEY" : "SHARED ACCESS / ENROLLMENT"}
               </p>
               <h1>{data.name || "Shared API access"}</h1>
-              <p className="share-hero-description">
-                {data.kind === "handoff"
-                  ? "The API key for this gateway, provided through a share link. It is subject to the limits below."
-                  : "A personal API key for this gateway, subject to the limits below."}
-              </p>
+              {data.kind === "handoff" ? (
+                <p className="share-hero-description">
+                  The API key for this gateway, provided through a share link. It is subject to the
+                  limits below.
+                </p>
+              ) : null}
               <div className="share-hero-meta">
                 {statusLabel ? (
                   <span className={`share-status ${statusClass}`}>
@@ -218,7 +242,7 @@ export function SharePage(): ReactElement {
                     aria-label="Copy Base URL"
                   />
                 </div>
-                <p>Use this endpoint in your API client.</p>
+                <p>Point your SDK, Opencode, Claude Code, Droid, and any other CLI</p>
               </Card>
               <Card className="share-hud-card share-key-panel">
                 <h2 className="share-eyebrow">YOUR API KEY</h2>
@@ -314,43 +338,87 @@ export function SharePage(): ReactElement {
                   <p className="share-eyebrow">MODEL ACCESS</p>
                   <h2>Allowed models</h2>
                 </div>
-                {data.modelAllowlist.length ? (
-                  <ClipboardButton
-                    value={data.modelAllowlist.join(", ")}
-                    size="sm"
-                    variant="secondary"
-                    label="Copy all"
-                    copiedLabel="Copied"
-                    aria-label="Copy all allowed models"
-                  />
-                ) : null}
+                <div className="share-section-actions">
+                  <div
+                    className="share-view-switch"
+                    role="tablist"
+                    aria-label="Allowed model layout"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={modelView === "raw"}
+                      className={modelView === "raw" ? "is-selected" : undefined}
+                      onClick={() => setModelView("raw")}
+                    >
+                      Raw
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={modelView === "grouped"}
+                      className={modelView === "grouped" ? "is-selected" : undefined}
+                      onClick={() => setModelView("grouped")}
+                    >
+                      Grouped
+                    </button>
+                  </div>
+                  {data.modelAllowlist.length ? (
+                    <ClipboardButton
+                      value={data.modelAllowlist.join(", ")}
+                      size="sm"
+                      variant="secondary"
+                      label="Copy all"
+                      copiedLabel="Copied"
+                      aria-label="Copy all allowed models"
+                    />
+                  ) : null}
+                </div>
               </div>
               {modelGroups.size ? (
-                <div className="share-model-groups">
-                  {[...modelGroups].sort(([a], [b]) => a.localeCompare(b)).map(([provider, models]) => (
-                    <section className="share-model-group" key={provider} aria-label={`${provider} models`}>
-                      <div className="share-model-group-heading">
-                        <h3>{provider}</h3>
-                        <span>{models.length}</span>
-                      </div>
-                      <ul className="share-model-list">
-                        {models.map((model) => (
-                          <li key={model}>
-                            <code title={model}>{provider === "Other" ? model : model.slice(provider.length + 1)}</code>
-                            <ClipboardButton
-                              value={model}
-                              size="sm"
-                              variant="secondary"
-                              label="Copy"
-                              copiedLabel="Copied"
-                              aria-label={`Copy ${model}`}
-                            />
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  ))}
-                </div>
+                modelView === "raw" ? (
+                  <ul className="share-model-list share-model-list-raw">
+                    {data.modelAllowlist.map((model) => (
+                      <li key={model}>
+                        <code title={model}>{model}</code>
+                        <ClipboardButton
+                          value={model}
+                          size="sm"
+                          variant="secondary"
+                          label="Copy"
+                          copiedLabel="Copied"
+                          aria-label={`Copy ${model}`}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="share-model-groups">
+                    {[...modelGroups].sort(([a], [b]) => a.localeCompare(b)).map(([provider, models]) => (
+                      <section className="share-model-group" key={provider} aria-label={`${provider} models`}>
+                        <div className="share-model-group-heading">
+                          <h3>{provider}</h3>
+                          <span>{models.length}</span>
+                        </div>
+                        <ul className="share-model-list">
+                          {models.map((model) => (
+                            <li key={model}>
+                              <code title={model}>{provider === "Other" ? model : model.slice(provider.length + 1)}</code>
+                              <ClipboardButton
+                                value={model}
+                                size="sm"
+                                variant="secondary"
+                                label="Copy"
+                                copiedLabel="Copied"
+                                aria-label={`Copy ${model}`}
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
+                )
               ) : (
                 <p className="share-model-empty">Model access follows the share template policy.</p>
               )}

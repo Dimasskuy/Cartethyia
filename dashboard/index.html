@@ -10,6 +10,7 @@
       content="One self-hosted gateway for OpenAI, Anthropic and 40 provider adapters. Route providers through one gateway with translation, failover and quotas."
     />
     <link rel="icon" type="image/webp" href="/favicon.webp" />
+    <!-- cartethyia:social-meta:start -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Cartethyia — One Stop OpenAI &amp; Anthropic Proxy Router" />
     <meta
@@ -32,6 +33,7 @@
     />
     <meta name="twitter:image" content="/og_image.webp" />
     <meta name="twitter:image:alt" content="Cartethyia — One Stop OpenAI &amp; Anthropic Proxy Router" />
+    <!-- cartethyia:social-meta:end -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -79,10 +81,14 @@
           const theme =
             storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
               ? storedTheme
-              : "system";
+              : // The public share page presents dark by default; the console
+                // keeps following the OS until the operator chooses.
+                isShare
+                ? "dark"
+                : "system";
           root.dataset.theme = theme;
         } catch {
-          root.dataset.theme = "system";
+          root.dataset.theme = isShare ? "dark" : "system";
         }
         try {
           if (window.localStorage.getItem("console-ambient-glow") === "off") {

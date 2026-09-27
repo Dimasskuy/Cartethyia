@@ -81,6 +81,25 @@ describe("public share enrollment page", () => {
     expect(markup).not.toContain("telemetry");
   });
 
+  test("defaults the model list to raw full ids and offers a grouped switch", () => {
+    shareState = {
+      data: { ...data, modelAllowlist: ["codex/gpt-5.5", "claude/claude-sonnet-5"] },
+      error: null,
+      loading: false,
+    };
+    const markup = render();
+    // Raw is the default, so the exact id a client must send is on screen and
+    // the provider-bucketed headings are not.
+    expect(markup).toContain("codex/gpt-5.5");
+    expect(markup).toContain("claude/claude-sonnet-5");
+    expect(markup).toContain("share-model-list-raw");
+    expect(markup).not.toContain("share-model-groups");
+    // Both readings are reachable from the switch beside Copy all.
+    expect(markup).toContain("share-view-switch");
+    expect(markup).toContain("Grouped");
+    expect(markup).toContain("Copy all");
+  });
+
   test("announces an already-claimed enrollment", () => {
     shareState = { data: { ...data, canIssue: false, alreadyIssued: true }, error: null, loading: false };
     const markup = render();

@@ -20,12 +20,12 @@ export function parseConsoleTheme(value: unknown): ConsoleThemeChoice {
   return value === "light" || value === "dark" || value === "system" ? value : "system";
 }
 
-export function readConsoleTheme(): ConsoleThemeChoice {
-  if (typeof window === "undefined" || !window.localStorage) return "system";
+export function readConsoleTheme(fallback: ConsoleThemeChoice = "system"): ConsoleThemeChoice {
+  if (typeof window === "undefined" || !window.localStorage) return fallback;
   try {
-    return parseConsoleTheme(window.localStorage.getItem(CONSOLE_THEME_KEY));
+    return parseConsoleTheme(window.localStorage.getItem(CONSOLE_THEME_KEY) ?? fallback);
   } catch {
-    return "system";
+    return fallback;
   }
 }
 
