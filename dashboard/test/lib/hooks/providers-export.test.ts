@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { useExportProviderAccounts } from "../../../src/lib/hooks/providers";
+import { useExportProviderAccounts } from "../../../src/hooks/providers";
 import { jsonResponse } from "../../helpers/test-helpers";
 
 const originalFetch = globalThis.fetch;

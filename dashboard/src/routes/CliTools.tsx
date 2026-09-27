@@ -7,8 +7,8 @@ import { ErrorState, LoadingState } from "../components/ui/state";
 import { SectionHeading } from "../components/ui/layout";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
-import { useToolRegistry, useToolStatuses } from "../lib/hooks/cli-tools";
-import type { ToolStatus } from "../lib/contracts";
+import { useToolRegistry, useToolStatuses } from "../hooks/cli-tools";
+import type { ToolStatus } from "../data/contracts";
 import { ToolIcon } from "./cli-tools/ToolIcon";
 export default function CliTools(): ReactNode {
   const registryQuery = useToolRegistry();

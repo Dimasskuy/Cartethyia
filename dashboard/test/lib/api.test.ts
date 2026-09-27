@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { consoleRequest, fetchSessionUser } from "../../src/lib/api";
+import { consoleRequest, fetchSessionUser } from "../../src/data/api";
 import { jsonResponse } from "../helpers/test-helpers";
 
 const originalFetch = globalThis.fetch;

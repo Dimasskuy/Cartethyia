@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiKeyForm, keyCredentialFields, oneTimeSecretForMode } from "../../src/components/ApiKeyForm";
-import { CLIENT_ROUTER_IDS, TENANT_KEY_SCOPES, type ApiKeyResponse } from "../../src/lib/contracts";
+import { CLIENT_ROUTERS, TENANT_KEY_SCOPES, type ApiKeyResponse } from "../../src/data/contracts";
 
 const shareRecord: ApiKeyResponse = {
   id: "parent-id", label: "Team share", keyMode: "share", scopes: [], createdAt: "2026-09-01T00:00:00.000Z", tokensConsumed: 0,
@@ -64,13 +64,25 @@ describe("API key mode form", () => {
     expect(oneTimeSecretForMode("share", "must-not-show")).toBeNull();
     expect(oneTimeSecretForMode("personal", undefined)).toBeNull();
   });
+  test("normalizes a legacy OmniRoute denylist entry in the edit form", () => {
+    const legacyRecord = {
+      ...shareRecord,
+      keyMode: "personal",
+      clientRouterDenylist: ["omniroute"],
+    } as unknown as ApiKeyResponse;
+    const markup = render("edit", legacyRecord);
+    expect(markup).toContain('aria-label="Block 9Router and OmniRoute client"');
+    expect(markup).toContain('aria-checked="true"');
+  });
+
   test("renders descriptive router and scope switches without provider allowlist", () => {
     const markup = render("create", null);
     expect(markup).toContain("Blocked client routers");
     expect(markup).toContain("Matching fingerprints are rejected with 403 before routing.");
     expect(markup).toContain("clients without a fingerprint are not matched.");
-    for (const routerId of CLIENT_ROUTER_IDS) {
-      expect(markup).toContain(`aria-label="Block client router ${routerId}"`);
+    for (const router of CLIENT_ROUTERS) {
+      expect(markup).toContain(`aria-label="Block ${router.label} client"`);
+      expect(markup).toContain(`Block ${router.label} Client`);
     }
     expect(markup).toContain("Routing");
     expect(markup).toContain("Dashboard / Resources");

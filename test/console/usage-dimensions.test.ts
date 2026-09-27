@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { USAGE_DIMENSIONS } from "../../src/console/domains/stats/contracts";
-import { createObservabilityRoutes } from "../../src/console/domains/stats/contracts";
+import { USAGE_DIMENSIONS } from "../../src/console/observability/contracts";
+import { createObservabilityRoutes } from "../../src/console/observability/contracts";
 
 /**
  * The `by-<dimension>` route is parametric, so a dimension is reachable only
@@ -70,7 +70,7 @@ describe("usage breakdown dimensions", () => {
   });
 });
 
-import { isSupportedUsagePeriod } from "../../src/console/domains/stats/contracts";
+import { isSupportedUsagePeriod } from "../../src/console/observability/contracts";
 
 describe("isSupportedUsagePeriod", () => {
   test("accepts the unbounded token and bounded windows", () => {

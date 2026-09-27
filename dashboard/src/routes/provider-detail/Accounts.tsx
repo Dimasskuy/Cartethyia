@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { consoleRequest } from "../../lib/api";
+import { consoleRequest } from "../../data/api";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
@@ -27,24 +27,24 @@ import {
   useExportProviderAccounts,
   useRecoverAccount,
   useUpdateProviderAccount,
-} from "../../lib/hooks/providers";
-import { useProviderAccountInflight } from "../../lib/hooks/routing";
-import { useRefreshAccountQuota } from "../../lib/hooks/quota";
-import { queryKeys } from "../../lib/query-keys";
+} from "../../hooks/providers";
+import { useProviderAccountInflight } from "../../hooks/routing";
+import { useRefreshAccountQuota } from "../../hooks/quota";
+import { queryKeys } from "../../data/query-keys";
 import {
   assignAccountNames,
   parseCredentialBatch,
   type ParsedCredentialEntry,
-} from "../../lib/credential-extract";
-import { formatResetDistance } from "../../lib/quota-formatters";
+} from "../../shared/credential-extract";
+import { formatResetDistance } from "../../shared/quota-formatters";
 import {
   AccountStatusDetail,
   activeModelCooldowns,
   lastModelCooldownAt,
 } from "../../components/AccountCooldown";
-import { downloadTextFile } from "../../lib/download";
-import { toast } from "../../lib/toast";
-import type { ProviderAccountResponse } from "../../lib/contracts";
+import { downloadTextFile } from "../../shared/download";
+import { toast } from "../../shared/toast";
+import type { ProviderAccountResponse } from "../../data/contracts";
 
 
 

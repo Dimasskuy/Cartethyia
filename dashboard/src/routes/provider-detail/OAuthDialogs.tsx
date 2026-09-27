@@ -10,10 +10,10 @@ import {
   usePollOAuthDevice,
   useProviderAccounts,
   useStartOAuthDevice,
-} from "../../lib/hooks/providers";
-import { queryKeys } from "../../lib/query-keys";
-import { toast } from "../../lib/toast";
-import { useTrackedTimeout } from "../../lib/use-timeout";
+} from "../../hooks/providers";
+import { queryKeys } from "../../data/query-keys";
+import { toast } from "../../shared/toast";
+import { useTrackedTimeout } from "../../hooks/use-timeout";
 
 /**
  * Extracts the authorization code from whatever the operator pasted.

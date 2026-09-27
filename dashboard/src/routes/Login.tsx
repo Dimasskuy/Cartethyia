@@ -3,9 +3,9 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { consoleRequest } from "../lib/api";
-import { queryClient } from "../lib/query-client";
-import { queryKeys } from "../lib/query-keys";
+import { consoleRequest } from "../data/api";
+import { queryClient } from "../data/query-client";
+import { queryKeys } from "../data/query-keys";
 
 interface LoginResult {
   readonly status: "success" | "failed";

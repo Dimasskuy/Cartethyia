@@ -31,6 +31,9 @@ coverage/
 # by the running gateway and pruned by retention, so tracking them churns the
 # repo with megabytes of transient request bodies.
 data/
+# Keep the dashboard's checked-in browser data layer distinct from runtime payloads.
+!dashboard/src/data/
+!dashboard/src/data/**
 
 # Agent working state: per-session worktrees under `.claude/worktrees/` are full
 # repository checkouts created by tooling, plus local settings that differ per

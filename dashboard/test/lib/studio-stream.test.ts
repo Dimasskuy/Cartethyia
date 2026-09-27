@@ -4,7 +4,7 @@ import {
   createChatStreamAccumulator,
   formatStudioMs,
   splitSseFrames,
-} from "../../src/lib/studio-stream";
+} from "../../src/shared/studio-stream";
 
 describe("studio SSE parsing", () => {
   test("formats durations like the meta chips", () => {

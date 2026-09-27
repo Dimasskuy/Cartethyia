@@ -15,10 +15,10 @@ import { ApiKeyForm, oneTimeSecretForMode, type KeyFormInput } from "./ApiKeyFor
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ClipboardButton } from "./patterns/clipboard-button";
 import { ShareManagementDialog } from "./ShareManagementDialog";
-import { toast } from "../lib/toast";
-import { getErrorMessage } from "../lib/helpers";
-import type { ApiKeyResponse } from "../lib/contracts";
-import { useApiKeys, useCreateApiKey, useRevokeApiKey, useUpdateApiKey } from "../lib/hooks/api-keys";
+import { toast } from "../shared/toast";
+import { getErrorMessage } from "../shared/helpers";
+import type { ApiKeyResponse } from "../data/contracts";
+import { useApiKeys, useCreateApiKey, useRevokeApiKey, useUpdateApiKey } from "../hooks/api-keys";
 
 /** Compact K/M/B/T token count used by the credential rows. */
 function compactTokens(value: number | null | undefined): string {

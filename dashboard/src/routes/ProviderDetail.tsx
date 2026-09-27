@@ -13,7 +13,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { consoleRequest } from "../lib/api";
+import { consoleRequest } from "../data/api";
 import { ProviderIcon } from "../components/ProviderIcon";
 import { Button } from "../components/ui/button";
 import { Card, CardBody, CardHeader } from "../components/ui/card";
@@ -30,18 +30,18 @@ import {
   useStartOAuthAuthorize,
   useSyncProviderModels,
   useUpdateGlobalProvider,
-} from "../lib/hooks/providers";
-import { queryKeys } from "../lib/query-keys";
-import { providerDisplayName } from "../lib/provider-names";
-import { toast } from "../lib/toast";
-import type { ProviderAccountResponse } from "../lib/contracts";
-import { providerCanConfigureUserAgent } from "../lib/provider-user-agent";
+} from "../hooks/providers";
+import { queryKeys } from "../data/query-keys";
+import { providerDisplayName } from "../shared/provider-names";
+import { toast } from "../shared/toast";
+import type { ProviderAccountResponse } from "../data/contracts";
+import { providerCanConfigureUserAgent } from "../shared/provider-user-agent";
 import { RoutingStrategyCard } from "./provider-detail/RoutingStrategyCard";
 import { CredentialNotice } from "./provider-detail/CredentialNotice";
 import { AccountsList, AddAccountModal } from "./provider-detail/Accounts";
 import { DeviceCodeDialog, OAuthBrowserDialog } from "./provider-detail/OAuthDialogs";
 import { AddModelModal, ModelGrid, ThinkingSelect } from "./provider-detail/Models";
-import type { ProbeReasoningEffort } from "../lib/contracts";
+import type { ProbeReasoningEffort } from "../data/contracts";
 
 export default function ProviderDetail(): ReactNode {
   const { providerId } = useParams<{ providerId: string }>();

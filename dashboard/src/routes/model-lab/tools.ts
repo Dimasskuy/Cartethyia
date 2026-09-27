@@ -1,4 +1,4 @@
-import { isRecord, readConsoleCsrfCookie } from "../../lib/api";
+import { isRecord, readConsoleCsrfCookie } from "../../data/api";
 
 /** Client-executed playground tools: local utilities plus safe web helpers. */
 export const STUDIO_TOOLS = [

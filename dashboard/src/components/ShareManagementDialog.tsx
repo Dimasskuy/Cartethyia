@@ -4,9 +4,9 @@ import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { EmptyState, ErrorState, LoadingState } from "./ui/state";
 import { ClipboardButton } from "./patterns/clipboard-button";
-import { toast } from "../lib/toast";
-import { getErrorMessage } from "../lib/helpers";
-import type { ApiKeyResponse, SharedKeyActivityDetail, SharedKeySummary } from "../lib/contracts";
+import { toast } from "../shared/toast";
+import { getErrorMessage } from "../shared/helpers";
+import type { ApiKeyResponse, SharedKeyActivityDetail, SharedKeySummary } from "../data/contracts";
 import {
   useRegenerateApiKey,
   useRevokeSharedKey,
@@ -14,7 +14,7 @@ import {
   useShareLink,
   useSharedKeyActivity,
   useSharedKeys,
-} from "../lib/hooks/api-keys";
+} from "../hooks/api-keys";
 
 const count = (n: number | null | undefined) => (n ?? 0).toLocaleString();
 const stamp = (s: string | null | undefined) => (s ? new Date(s).toLocaleString() : "—");

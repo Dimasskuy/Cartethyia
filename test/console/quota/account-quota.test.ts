@@ -12,8 +12,8 @@ import {
   inFlightAccountQuotaRefreshes,
   listOAuthQuotaRefreshTargets,
   recordAccountCheck,
-} from "../../../src/console/quota/quota-refresh";
-import { clearQuotaCacheForTests } from "../../../src/console/quota/quota-cache";
+} from "../../../src/console/quota/refresh";
+import { clearQuotaCacheForTests } from "../../../src/console/quota/cache";
 import { createDefaultProviderRegistry } from "../../../src/providers/default-registry";
 import { AuditRecorder } from "../../../src/console/auth/service";
 import { encryptCredential, decryptCredentialToString } from "../../../src/security/crypto";
@@ -113,11 +113,24 @@ async function createTestAccount(providerId = "openai"): Promise<string> {
     expect(body.quota).toBeDefined();
   });
 
+  test("counts cold quota accounts as refreshing in the overview", async () => {
+    const accountId = await createTestAccount("claude");
+    const res = await app.handle(new Request("http://localhost/quota/overview"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      accounts: Array<{ id: string; pending: boolean }>;
+      refreshing: number;
+    };
+    const row = body.accounts.find((account) => account.id === accountId);
+    expect(row?.pending).toBe(true);
+    expect(body.refreshing).toBeGreaterThanOrEqual(1);
+  });
+
   test("the overview answers from the cache without waiting on upstream", async () => {
     const accountId = await createTestAccount();
     // openai has no quota collector, so any upstream attempt fails; a cached
     // entry must still come back on the first read with no fetch involved.
-    const { setCachedQuota } = await import("../../../src/console/quota/quota-cache");
+    const { setCachedQuota } = await import("../../../src/console/quota/cache");
     await setCachedQuota(
       testTenantId,
       accountId,
@@ -528,6 +541,28 @@ dbDescribe("Global account administration", () => {
     return accountId;
   }
 
+  async function createTenantOwnedAccount(): Promise<string> {
+    if (!tenantCreated) {
+      await db
+        .insert(tenants)
+        .values({ id: testTenantId, name: "quota-test-tenant", status: "active" });
+      createdTenantIds.push(testTenantId);
+      tenantCreated = true;
+    }
+    const accountId = randomUUID();
+    createdAccountIds.push(accountId);
+    await db.insert(providerAccounts).values({
+      id: accountId,
+      tenantId: testTenantId,
+      providerId: "claude",
+      label: "tenant-quota-account",
+      credentialCiphertext: encryptCredential("sk-tenant-secret"),
+      credentialKind: "api_key",
+      status: "active",
+    });
+    return accountId;
+  }
+
   function globalApp() {
     return createAccountQuotaRoutes({
       db,
@@ -547,6 +582,14 @@ dbDescribe("Global account administration", () => {
   test("non-admins are denied global administration", async () => {
     const res = await app.handle(new Request("http://localhost/global/accounts"));
     expect(res.status).toBe(403);
+  });
+
+  test("global quota refresh cannot target a tenant-owned account", async () => {
+    const accountId = await createTenantOwnedAccount();
+    const res = await globalApp().handle(
+      new Request(`http://localhost/global/accounts/${accountId}/quota/refresh`, { method: "POST" }),
+    );
+    expect(res.status).toBe(404);
   });
 
   test("platform admin lists and disables a global account with audit", async () => {

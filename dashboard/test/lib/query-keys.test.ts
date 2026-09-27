@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { queryKeys } from "../../src/lib/query-keys";
+import { queryKeys } from "../../src/data/query-keys";
 
 describe("dashboard query keys", () => {
   test("keeps provider model keys under the provider invalidation family", () => {

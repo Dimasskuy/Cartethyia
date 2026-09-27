@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyCustomAssetFile, MAX_CUSTOM_ASSET_BYTES, readCustomizationPersistenceError } from "../../src/lib/customization";
+import { classifyCustomAssetFile, MAX_CUSTOM_ASSET_BYTES, readCustomizationPersistenceError } from "../../src/shared/customization";
 
 describe("customization asset classification", () => {
   test("classifies image and video mime types", () => {

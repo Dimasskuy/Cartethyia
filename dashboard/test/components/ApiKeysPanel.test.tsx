@@ -4,8 +4,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ApiKeysPanel } from "../../src/components/ApiKeysPanel";
-import { queryKeys } from "../../src/lib/query-keys";
-import type { ApiKeyResponse } from "../../src/lib/contracts";
+import { queryKeys } from "../../src/data/query-keys";
+import type { ApiKeyResponse } from "../../src/data/contracts";
 
 const ACTIVE_KEY: ApiKeyResponse = {
   id: "key-active-0001",

@@ -14,7 +14,7 @@ const BACKEND_SRC = join(REPO_ROOT, "src");
  * Vite enforces it only with a warning, which is easy to miss in a build log.
  *
  * That is how `USAGE_DIMENSIONS` reached the browser: the dashboard mirror
- * re-exported the tuple from `console/domains/stats/contracts`, which imports
+ * re-exported the tuple from `console/observability/contracts`, which imports
  * Elysia and reaches `node:crypto` through `console/shared/errors` →
  * `protocol/primitives` → `security/outbound-headers`. Vite externalized the
  * builtin and carried a slice of the backend graph for one string list. The

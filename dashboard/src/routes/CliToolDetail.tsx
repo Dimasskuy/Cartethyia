@@ -11,9 +11,9 @@ import { ModelPickerModal } from "../components/ModelPicker";
 import { Switch } from "../components/ui/switch";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
-import { downloadTextFile } from "../lib/download";
-import { toast } from "../lib/toast";
-import { useApiKeys } from "../lib/hooks/api-keys";
+import { downloadTextFile } from "../shared/download";
+import { toast } from "../shared/toast";
+import { useApiKeys } from "../hooks/api-keys";
 import {
   useApplyTool,
   useDownloadTool,
@@ -21,10 +21,10 @@ import {
   useToolMappings,
   useToolRegistry,
   useToolStatuses,
-} from "../lib/hooks/cli-tools";
-import type { ApiKeyResponse, ApplyInput, CliMappingInput, ToolRegistryEntry, ToolStatus } from "../lib/contracts";
+} from "../hooks/cli-tools";
+import type { ApiKeyResponse, ApplyInput, CliMappingInput, ToolRegistryEntry, ToolStatus } from "../data/contracts";
 import { ToolIcon } from "./cli-tools/ToolIcon";
-import { getErrorMessage } from "../lib/helpers";
+import { getErrorMessage } from "../shared/helpers";
 
 export default function CliToolDetail(): ReactNode {
   const { toolId } = useParams();

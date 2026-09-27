@@ -5,11 +5,11 @@ import { Card, CardBody, CardHeader } from "./ui/card";
 import { Input } from "./ui/input";
 import { Inline } from "./ui/inline";
 import { Stack } from "./ui/stack";
-import { toast } from "../lib/toast";
-import { downloadTextFile } from "../lib/download";
-import { getErrorMessage } from "../lib/helpers";
-import { useExportBackup, useRestoreBackup } from "../lib/hooks/backup";
-import type { BackupImportReport } from "../lib/contracts";
+import { toast } from "../shared/toast";
+import { downloadTextFile } from "../shared/download";
+import { getErrorMessage } from "../shared/helpers";
+import { useExportBackup, useRestoreBackup } from "../hooks/backup";
+import type { BackupImportReport } from "../data/contracts";
 
 /**
  * Backup and restore, as a Settings panel.

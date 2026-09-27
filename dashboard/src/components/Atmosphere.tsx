@@ -1,5 +1,5 @@
 import { useEffect, type CSSProperties, type ReactNode } from "react";
-import { useCustomizationAssetUrl, useCustomizationSettings } from "../lib/customization";
+import { useCustomizationAssetUrl, useCustomizationSettings } from "../shared/customization";
 
 const DEFAULT_BACKGROUND_URL = `${import.meta.env.BASE_URL}default-backgrounds.webp`;
 

@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ApiKeyResponse, SharedKeyActivityDetail } from "../../src/lib/contracts";
+import type { ApiKeyResponse, SharedKeyActivityDetail } from "../../src/data/contracts";
 
 const activity: SharedKeyActivityDetail = {
   models: [
@@ -36,7 +36,7 @@ const activity: SharedKeyActivityDetail = {
 /** Records the key ids the recipients query was enabled for, per render. */
 const sharedKeysCalls: Array<string | null> = [];
 
-mock.module("../../src/lib/hooks/api-keys", () => ({
+mock.module("../../src/hooks/api-keys", () => ({
   useShareApiKey: () => ({ isPending: false, mutate: () => undefined }),
   useRegenerateApiKey: () => ({ isPending: false, mutate: () => undefined }),
   useShareLink: () => ({ data: null, isPending: false, isError: false }),

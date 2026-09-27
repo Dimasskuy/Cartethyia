@@ -8,10 +8,10 @@ import { ErrorState, LoadingState } from "../components/ui/state";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
 import { BackupPanel } from "../components/BackupPanel";
-import { toast } from "../lib/toast";
-import { useChangePassword } from "../lib/hooks/auth";
-import { useRuntimeSettings, useUpdateRuntimeSettings } from "../lib/hooks/settings";
-import { getErrorMessage } from "../lib/helpers";
+import { toast } from "../shared/toast";
+import { useChangePassword } from "../hooks/auth";
+import { useRuntimeSettings, useUpdateRuntimeSettings } from "../hooks/settings";
+import { getErrorMessage } from "../shared/helpers";
 
 
 function PrivacyPanel(): ReactNode {

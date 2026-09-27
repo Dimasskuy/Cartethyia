@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { BUNDLED_PROVIDER_IDS } from "../../src/providers/provider-registry";
-import { providerDisplayName } from "../src/lib/provider-names";
+import { providerDisplayName } from "../src/shared/provider-names";
 
 /**
- * `dashboard/src/lib/provider-names.ts` hand-maintains a display-name entry
+ * `dashboard/src/shared/provider-names.ts` hand-maintains a display-name entry
  * per built-in provider ID. This is the parity contract check its own file
  * doc comment asks for: it fails the moment a new provider is added to
  * `BUNDLED_PROVIDER_IDS` without a matching dashboard display name, instead

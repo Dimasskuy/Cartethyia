@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clientNameFromUserAgent } from "../../src/console/domains/stats/store";
+import { clientNameFromUserAgent } from "../../src/console/observability/store";
 
 describe("clientNameFromUserAgent", () => {
   test("reports the client product token with its version", () => {

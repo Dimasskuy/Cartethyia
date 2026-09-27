@@ -29,7 +29,7 @@ import type {
   StudioAttachment,
   StudioMessage,
   StudioSessionView,
-} from "../lib/contracts";
+} from "../data/contracts";
 import {
   useCreateStudioSession,
   useDeleteStudioSession,
@@ -37,12 +37,12 @@ import {
   useStudioKey,
   useStudioSession,
   useStudioSessions,
-} from "../lib/hooks/studio";
-import { createChatStreamAccumulator, pumpChatStream } from "../lib/studio-stream";
-import type { ChatStreamAccumulator } from "../lib/studio-stream";
-import { toast } from "../lib/toast";
-import { getErrorMessage } from "../lib/helpers";
-import { formatBytes } from "../lib/format";
+} from "../hooks/studio";
+import { createChatStreamAccumulator, pumpChatStream } from "../shared/studio-stream";
+import type { ChatStreamAccumulator } from "../shared/studio-stream";
+import { toast } from "../shared/toast";
+import { getErrorMessage } from "../shared/helpers";
+import { formatBytes } from "../shared/format";
 import {
   ACTIVE_KEY,
   STUDIO_KEY_STORAGE,
@@ -50,7 +50,7 @@ import {
   readStorage,
   writeLocal,
   writeSession,
-} from "../lib/studio-session-storage";
+} from "../shared/studio-session-storage";
 import {
   LOCAL_TOOL_DEFS,
   MAX_TOOL_TURNS,

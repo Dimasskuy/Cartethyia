@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { USAGE_PERIODS as BACKEND_USAGE_PERIODS } from "../../src/console/domains/stats/usage-periods";
+import { USAGE_PERIODS as BACKEND_USAGE_PERIODS } from "../../src/console/observability/usage-periods";
 import { DEFAULT_PROXY_BYPASS_PROVIDER_IDS } from "../../src/providers/provider-registry";
-import { PROXY_UNSUPPORTED_HINT_PROVIDERS } from "../src/lib/use-routing-strategy";
-import generatedPeriods from "../src/lib/generated/usage-periods.json";
+import { PROXY_UNSUPPORTED_HINT_PROVIDERS } from "../src/hooks/use-routing-strategy";
+import generatedPeriods from "../src/data/generated/usage-periods.json";
 
 /**
  * Dashboard hand-maintains a browser-safe copy of

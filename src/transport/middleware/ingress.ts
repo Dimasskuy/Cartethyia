@@ -383,7 +383,7 @@ export function createApiKeyAuthenticationMiddleware(deps: {
         throw new GatewayError(
           "client_router_denied",
           403,
-          `no API invocation access for this client: ${denied}`,
+          "No API invocation access for this client.",
           { reason: "client_router_denied", clientRouter: denied },
         );
       deps.stateStore.require(request).authorization = authorization;

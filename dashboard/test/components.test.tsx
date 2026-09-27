@@ -5,8 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { DashboardShell } from "../src/components/Shell";
 import Settings from "../src/routes/Settings";
-import { queryKeys } from "../src/lib/query-keys";
-import type { SessionUser } from "../src/lib/contracts";
+import { queryKeys } from "../src/data/query-keys";
+import type { SessionUser } from "../src/data/contracts";
 
 const user: SessionUser = {
   id: "user-1",

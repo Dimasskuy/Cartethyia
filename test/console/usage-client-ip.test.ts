@@ -4,7 +4,7 @@ import { inArray } from "drizzle-orm";
 import { getDb, type CartethyiaDatabase } from "../../src/persistence/postgres";
 import { consoleSettings, telemetryEvents, tenants } from "../../src/persistence/schema";
 import { dbDescribe } from "../helpers/db-gate";
-import { DrizzleObservabilityStore } from "../../src/console/domains/stats/store";
+import { DrizzleObservabilityStore } from "../../src/console/observability/store";
 
 /**
  * The `client_ip` breakdown dimension groups telemetry by stored address and

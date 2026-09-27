@@ -3,7 +3,7 @@ import type { Elysia } from "elysia";
 import { and, eq, isNull } from "drizzle-orm";
 import { adminAuditLog, providerAccounts } from "../../persistence/schema";
 import { requireGlobalAdmin } from "../shared/errors";
-import { GLOBAL_QUOTA_LENS, invalidateQuotaCache } from "./quota-cache";
+import { GLOBAL_QUOTA_LENS, invalidateQuotaCache } from "./cache";
 import {
   QUOTA_REFRESH_TIMEOUT_MS,
   loadQuotaTarget,
@@ -11,8 +11,8 @@ import {
   signalFetch,
   timeoutSignal,
   type QuotaRefreshDeps,
-} from "./quota-refresh";
-import { sanitizeGlobalAccount } from "./account-quota-view";
+} from "./refresh";
+import { sanitizeGlobalAccount } from "./quota-view";
 import {
   ACCOUNT_STATUSES,
   type AccountQuotaRoutesDeps,
@@ -119,7 +119,7 @@ export function registerAccountQuotaGlobalRoutes(
     })
     .post("/global/accounts/:id/quota/refresh", async ({ request, params, set }) => {
       const access = requireGlobalAdmin(accessResolver(request));
-      const target = await loadQuotaTarget(db, params.id);
+      const target = await loadQuotaTarget(db, params.id, null);
       if (!target) {
         set.status = 404;
         return { error: `Global account ${params.id} not found`, code: "not_found" };

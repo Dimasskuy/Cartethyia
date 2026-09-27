@@ -17,10 +17,10 @@ import { Switch } from "../components/ui/switch";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
 import { ApiKeysPanel } from "../components/ApiKeysPanel";
-import { useTrackedTimeout } from "../lib/use-timeout";
-import { useNetworkPools } from "../lib/hooks/network";
-import { useSystemHealth } from "../lib/hooks/system";
-import { formatBytes, formatDuration, formatUptime } from "../lib/format";
+import { useTrackedTimeout } from "../hooks/use-timeout";
+import { useNetworkPools } from "../hooks/network";
+import { useSystemHealth } from "../hooks/system";
+import { formatBytes, formatDuration, formatUptime } from "../shared/format";
 
 // ── System Overview 4 Resource Cards ──────────────────────────────────────────
 

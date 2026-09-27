@@ -9,7 +9,7 @@ import { supportsAccountReset } from "../../src/providers/operations/account-res
 const here = import.meta.dir;
 
 /**
- * `ProviderIcon.tsx`'s `iconAssets` map and `Providers.tsx`'s
+ * `ProviderIcon.tsx`'s `iconAssets` map and `features/providers/ProvidersPage.tsx`'s
  * `FREE_LIMITED_IDS`/`FREE_AVAILABLE_IDS`/`FOUNDING_IDS` sets are
  * hand-maintained dashboard copies of backend provider IDs — they cannot import
  * the backend list without bundling its module graph into the browser build
@@ -50,7 +50,7 @@ describe("dashboard/backend parity — hand-maintained provider lists", () => {
   });
 
   test("no free-tier or founding set names an unknown provider", () => {
-    const source = readFileSync(join(here, "../src/routes/Providers.tsx"), "utf8");
+    const source = readFileSync(join(here, "../src/features/providers/ProvidersPage.tsx"), "utf8");
     const known = new Set(bundled);
     for (const marker of [
       "const FREE_LIMITED_IDS = new Set([",
@@ -68,7 +68,7 @@ describe("dashboard/backend parity — hand-maintained provider lists", () => {
     // is a hand-maintained mirror. Compare it behaviorally over every bundled
     // id: a provider the backend accepts but the card hides (or vice versa)
     // means the Reset button and `POST /accounts/:id/reset` disagree.
-    const source = readFileSync(join(here, "../src/lib/hooks/quota.ts"), "utf8");
+    const source = readFileSync(join(here, "../src/hooks/quota.ts"), "utf8");
     const dashboardSet = new Set(parseSetIds(source, "const RESET_PROVIDER_IDS = new Set(["));
     const mismatched = bundled.filter((id) => dashboardSet.has(id) !== supportsAccountReset(id));
     expect(mismatched).toEqual([]);

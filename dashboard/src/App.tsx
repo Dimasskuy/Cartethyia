@@ -5,11 +5,11 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from
 import { Toaster } from "sonner";
 import { DashboardShell } from "./components/Shell";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { lazyWithRetry } from "./lib/lazy-retry";
-import { consoleRequest, fetchSessionUser, setSessionTransitionListener } from "./lib/api";
-import { queryClient } from "./lib/query-client";
-import { queryKeys } from "./lib/query-keys";
-import type { SessionUser } from "./lib/contracts";
+import { lazyWithRetry } from "./shared/lazy-retry";
+import { consoleRequest, fetchSessionUser, setSessionTransitionListener } from "./data/api";
+import { queryClient } from "./data/query-client";
+import { queryKeys } from "./data/query-keys";
+import type { SessionUser } from "./data/contracts";
 
 /** Compact loading shell for lazy-route Suspense: never a blank viewport. */
 function RouteLoadingShell(): ReactNode {
@@ -40,16 +40,16 @@ const Login = lazyWithRetry(() => import("./routes/Login"), "login");
 const Setup = lazyWithRetry(() => import("./routes/Setup"), "setup");
 const Banned = lazyWithRetry(() => import("./routes/Banned"), "banned");
 const Overview = lazyWithRetry(() => import("./routes/Overview"), "overview");
-const Usage = lazyWithRetry(() => import("./routes/Usage"), "usage");
+const Usage = lazyWithRetry(() => import("./features/usage/UsagePage"), "usage");
 const ProviderDetail = lazyWithRetry(() => import("./routes/ProviderDetail"), "provider-detail");
-const Providers = lazyWithRetry(() => import("./routes/Providers"), "providers");
+const Providers = lazyWithRetry(() => import("./features/providers/ProvidersPage"), "providers");
 const Combos = lazyWithRetry(() => import("./routes/Combos"), "combos");
-const Quota = lazyWithRetry(() => import("./routes/Quota"), "quota");
+const Quota = lazyWithRetry(() => import("./features/quota/QuotaPage"), "quota");
 const Proxy = lazyWithRetry(() => import("./routes/Proxy"), "proxy");
 const Settings = lazyWithRetry(() => import("./routes/Settings"), "settings");
 const CliTools = lazyWithRetry(() => import("./routes/CliTools"), "cli-tools");
 const CliToolDetail = lazyWithRetry(() => import("./routes/CliToolDetail"), "cli-tool-detail");
-const ConsoleLog = lazyWithRetry(() => import("./routes/ConsoleLog"), "console-log");
+const ConsoleLogPage = lazyWithRetry(() => import("./features/logs/ConsoleLogPage"), "console-log");
 const Customization = lazyWithRetry(() => import("./routes/Customization"), "customization");
 const Studio = lazyWithRetry(() => import("./routes/Studio"), "studio");
 
@@ -185,7 +185,7 @@ function ProtectedRoutes(): ReactNode {
           <Route path="/model-lab" element={<Studio />} />
           <Route path="/cli-tools" element={<CliTools />} />
           <Route path="/cli-tools/:toolId" element={<CliToolDetail />} />
-          <Route path="/console-log" element={<ConsoleLog />} />
+          <Route path="/console-log" element={<ConsoleLogPage />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

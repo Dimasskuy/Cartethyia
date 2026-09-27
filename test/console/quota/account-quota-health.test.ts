@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toQuotaAccountHealth } from "../../../src/console/quota/account-quota-view";
+import { toQuotaAccountHealth } from "../../../src/console/quota/quota-view";
 
 /**
  * The Quota page's health block.

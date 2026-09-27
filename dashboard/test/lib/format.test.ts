@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatBytes, formatDuration, formatNumber, formatUptime } from "../../src/lib/format";
+import { formatBytes, formatDuration, formatNumber, formatUptime } from "../../src/shared/format";
 
 /**
  * The single formatting policy: an absent or non-finite value renders as `—`,

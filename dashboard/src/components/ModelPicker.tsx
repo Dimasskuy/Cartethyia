@@ -5,12 +5,12 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { ProviderIcon } from "./ProviderIcon";
-import { consoleRequest } from "../lib/api";
-import type { ApiErrorShape } from "../lib/api";
-import type { FlatModelCatalogEntry } from "../lib/contracts";
-import { UNKNOWN_LIMITS_TOOLTIP } from "../lib/model-limits";
-import { queryKeys } from "../lib/query-keys";
-import { querySignal } from "../lib/hooks/common";
+import { consoleRequest } from "../data/api";
+import type { ApiErrorShape } from "../data/api";
+import type { FlatModelCatalogEntry } from "../data/contracts";
+import { UNKNOWN_LIMITS_TOOLTIP } from "../shared/model-limits";
+import { queryKeys } from "../data/query-keys";
+import { querySignal } from "../hooks/common";
 
 export type FlatModelEntry = FlatModelCatalogEntry;
 

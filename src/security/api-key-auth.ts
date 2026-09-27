@@ -23,7 +23,7 @@ export interface ApiKeyAuthorizationSnapshot {
   readonly model_allowlist?: readonly string[] | ReadonlySet<string> | null | undefined;
   readonly model_denylist?: readonly string[] | ReadonlySet<string> | null | undefined;
   /** Client-router ids this key refuses; see `client-router-fingerprint.ts`. */
-  readonly client_router_denylist?: readonly string[] | ReadonlySet<string> | null | undefined;
+  readonly client_router_denylist?: readonly unknown[] | ReadonlySet<unknown> | null | undefined;
   readonly rpm?: number | null | undefined;
   readonly rpm_limit?: number | null | undefined;
   readonly daily_tokens?: number | null | undefined;
@@ -35,11 +35,11 @@ export interface ApiKeyAuthorizationSnapshot {
 }
 
 function freezeList(
-  list: readonly string[] | ReadonlySet<string> | null | undefined,
+  list: readonly unknown[] | ReadonlySet<unknown> | null | undefined,
 ): readonly string[] | null | undefined {
   if (list == null) return list as null | undefined;
-  const arr: readonly string[] =
-    list instanceof Set ? Object.freeze([...list] as string[]) : Object.freeze([...list]);
+  const values = list instanceof Set ? [...list] : Array.isArray(list) ? list : [];
+  const arr = Object.freeze(values.filter((value): value is string => typeof value === "string"));
   return arr;
 }
 
@@ -76,7 +76,7 @@ export function createAuthorizationSnapshot(input: {
   readonly admission_identity?: string;
   readonly model_allowlist?: readonly string[] | ReadonlySet<string> | null;
   readonly model_denylist?: readonly string[] | ReadonlySet<string> | null;
-  readonly client_router_denylist?: readonly string[] | ReadonlySet<string> | null;
+  readonly client_router_denylist?: readonly unknown[] | ReadonlySet<unknown> | null;
   readonly rpm?: number | null;
   readonly daily_tokens?: number | null;
   readonly monthly_tokens?: number | null;
@@ -96,7 +96,7 @@ export function createAuthorizationSnapshot(input: {
       ? { model_denylist: input.model_denylist as readonly string[] }
       : {}),
     ...(input.client_router_denylist !== undefined && input.client_router_denylist !== null
-      ? { client_router_denylist: input.client_router_denylist as readonly string[] }
+      ? { client_router_denylist: input.client_router_denylist }
       : {}),
     ...(input.rpm !== undefined && input.rpm !== null ? { rpm: input.rpm } : {}),
     ...(input.daily_tokens !== undefined && input.daily_tokens !== null

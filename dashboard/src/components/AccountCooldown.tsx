@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { formatResetDistance } from "../lib/quota-formatters";
+import { formatResetDistance } from "../shared/quota-formatters";
 
 /**
  * Cooldown presentation shared by every view that reports account health.

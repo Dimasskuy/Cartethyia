@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { providerCanConfigureUserAgent } from "../../src/lib/provider-user-agent";
+import { providerCanConfigureUserAgent } from "../../src/shared/provider-user-agent";
 
 describe("provider User-Agent setting visibility", () => {
   test("shows the setting for built-in authenticated providers without OAuth", () => {

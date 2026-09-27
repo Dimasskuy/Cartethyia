@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { toWireHistory } from "../../src/routes/Studio";
 import { executeStudioTool, webToolsExplicitlyRequested } from "../../src/routes/model-lab/tools";
-import type { StudioMessage } from "../../src/lib/contracts";
+import type { StudioMessage } from "../../src/data/contracts";
 
 describe("studio client tools", () => {
   test("printf echoes text, clock returns timestamps", () => {

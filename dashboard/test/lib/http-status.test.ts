@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { httpStatusLabel, httpStatusTone } from "../../src/lib/http-status";
+import { httpStatusLabel, httpStatusTone } from "../../src/shared/http-status";
 import { STATUS_CODES } from "node:http";
 
 /**

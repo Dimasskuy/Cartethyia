@@ -26,19 +26,20 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { usePresence } from "../lib/use-presence";
-import { useModalFocus } from "../lib/hooks/use-modal-focus";
-import { applyConsoleTheme, isDarkEffective, readConsoleTheme, writeConsoleTheme } from "../lib/theme";
-import { consoleRequest } from "../lib/api";
-import { queryClient } from "../lib/query-client";
-import { usePullToRefresh } from "../lib/use-pull-to-refresh";
-import { useSystemHealth } from "../lib/hooks/system";
+import { usePresence } from "../hooks/use-presence";
+import { useModalFocus } from "../hooks/use-modal-focus";
+import { applyConsoleTheme, isDarkEffective, readConsoleTheme, writeConsoleTheme } from "../shared/theme";
+import { consoleRequest } from "../data/api";
+import { queryClient } from "../data/query-client";
+import { prefetchRouteIntent } from "../data/route-prefetch";
+import { usePullToRefresh } from "../hooks/use-pull-to-refresh";
+import { useSystemHealth } from "../hooks/system";
 import { Atmosphere } from "./Atmosphere";
-import { DASHBOARD_RELEASE_LABEL } from "../lib/version";
-import { providerDisplayName } from "../lib/provider-names";
-import { useCustomizationAssetUrl, useCustomizationBranding } from "../lib/customization";
-import type { SessionUser } from "../lib/contracts";
-import { formatUptime } from "../lib/format";
+import { DASHBOARD_RELEASE_LABEL } from "../shared/version";
+import { providerDisplayName } from "../shared/provider-names";
+import { useCustomizationAssetUrl, useCustomizationBranding } from "../shared/customization";
+import type { SessionUser } from "../data/contracts";
+import { formatUptime } from "../shared/format";
 
 interface NavItemDef {
   readonly label: string;
@@ -539,19 +540,29 @@ function CommandPalette({ open, close }: { readonly open: boolean; readonly clos
 function SidebarNavGroup({
   group,
   pathname,
+  onIntent,
 }: {
-  group: NavGroupDef;
-  pathname: string;
+  readonly group: NavGroupDef;
+  readonly pathname: string;
+  readonly onIntent: (path: string) => void;
 }): ReactNode {
   return (
     <div className="nav-group-section">
       <p className="nav-group-title">{group.label}</p>
-      <SidebarNavList items={group.items} pathname={pathname} />
+      <SidebarNavList items={group.items} pathname={pathname} onIntent={onIntent} />
     </div>
   );
 }
 
-function SidebarNavList({ items, pathname }: { items: readonly NavItemDef[]; pathname: string }) {
+function SidebarNavList({
+  items,
+  pathname,
+  onIntent,
+}: {
+  readonly items: readonly NavItemDef[];
+  readonly pathname: string;
+  readonly onIntent: (path: string) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState({ top: 0, height: 0, opacity: 0 });
 
@@ -595,6 +606,8 @@ function SidebarNavList({ items, pathname }: { items: readonly NavItemDef[]; pat
             end={item.path === "/"}
             data-active={isActive ? "true" : undefined}
             className={`nav-link-item ${isActive ? "active" : ""}`}
+            onMouseEnter={() => onIntent(item.path)}
+            onFocus={() => onIntent(item.path)}
           >
             <item.icon size={17} className="nav-link-icon" />
             <span>{item.label}</span>
@@ -685,6 +698,9 @@ export function DashboardShell({
   const pull = usePullToRefresh(() => queryClient.invalidateQueries());
 
   const isHealthy = healthQuery.data?.status === "healthy";
+  const prefetchIntent = (path: string): void => {
+    void prefetchRouteIntent(queryClient, path);
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -777,7 +793,12 @@ export function DashboardShell({
 
           <nav style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
             {navigationGroups.map((group) => (
-              <SidebarNavGroup key={group.label} group={group} pathname={location.pathname} />
+              <SidebarNavGroup
+                key={group.label}
+                group={group}
+                pathname={location.pathname}
+                onIntent={prefetchIntent}
+              />
             ))}
           </nav>
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { NetworkPoolResponse } from "../../src/lib/contracts";
-import { summarizePools } from "../../src/lib/proxy-metrics";
+import type { NetworkPoolResponse } from "../../src/data/contracts";
+import { summarizePools } from "../../src/shared/proxy-metrics";
 
 function pool(overrides: Partial<NetworkPoolResponse> = {}): NetworkPoolResponse {
   return {

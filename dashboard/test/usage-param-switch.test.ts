@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { withParam } from "../src/routes/Usage";
+import { withParam } from "../src/features/usage/UsagePage";
 
 /**
  * The Usage page keeps its view state in the URL (`period`, `metric`, `dim`,

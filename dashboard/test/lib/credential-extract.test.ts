@@ -4,7 +4,7 @@ import {
   detectCredentialKind,
   extractCredentialFromPaste,
   parseCredentialBatch,
-} from "../../src/lib/credential-extract";
+} from "../../src/shared/credential-extract";
 
 describe("detectCredentialKind", () => {
   test("classifies a plain API key string as api_key", () => {

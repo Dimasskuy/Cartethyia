@@ -4,8 +4,8 @@ import {
   markClineApiKeyCredential,
 } from "../../../../src/providers/integrations/cline/cline-quota";
 import type { FetchLike } from "../../../../src/providers/quota/quota-contracts";
-import { refreshAccountQuota } from "../../../../src/console/quota/quota-refresh";
-import type { QuotaRefreshDeps } from "../../../../src/console/quota/quota-refresh";
+import { refreshAccountQuota } from "../../../../src/console/quota/refresh";
+import type { QuotaRefreshDeps } from "../../../../src/console/quota/refresh";
 
 function fetcherFor(routes: Record<string, { status: number; body: unknown }>): FetchLike {
   return (async (input: RequestInfo | URL) => {

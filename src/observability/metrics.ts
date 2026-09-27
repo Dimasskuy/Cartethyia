@@ -244,7 +244,7 @@ export class PrometheusRegistry {
     );
     this.proxy_in_flight = this.gauge(
       "proxy_in_flight",
-      "Proxy requests currently executing",
+      "Provider dispatch requests currently in flight on this process",
     );
     this.proxy_request_latency_ms = this.histogram(
       "proxy_request_latency_ms",

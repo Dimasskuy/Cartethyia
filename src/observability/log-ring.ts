@@ -1,7 +1,7 @@
 /**
  * Console log ring buffer + pub/sub: a bounded in-memory tail of structured
  * server log lines for the live Console Log page. The dashboard reads a
- * snapshot and then subscribes over SSE (`console/domains/logs.ts`); nothing
+ * snapshot and then subscribes over SSE (`console/observability/logs.ts`); nothing
  * here touches the database — restarts clear the tail by design.
  */
 

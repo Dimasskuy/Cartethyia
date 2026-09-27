@@ -40,6 +40,8 @@ export interface ProxyRequestState {
   readonly startedAtMs: number;
   /** Timestamp set when the adapter's upstream fetch / streaming iterator begins. */
   upstreamDispatchStartedAtMs?: number;
+  /** Start one logical provider flight after dispatch leases are acquired. */
+  startProviderFlight(): void;
   readonly deadlineMs: number;
   readonly abortController: AbortController;
   /** Body decoded by the single ingress reader, when this is a proxy request. */
@@ -148,6 +150,7 @@ export class ProxyRequestStateStore {
     if (request.signal.aborted) onAbort();
     else request.signal.addEventListener("abort", onAbort, { once: true });
     let cleaned = false;
+    let providerFlightStarted = false;
     const cleanups: Array<() => void> = [];
     const armDeadline = (ms: number): void => {
       clearTimeout(timer);
@@ -163,6 +166,11 @@ export class ProxyRequestStateStore {
       startedAtMs: now,
       deadlineMs,
       abortController,
+      startProviderFlight: () => {
+        if (cleaned || providerFlightStarted) return;
+        providerFlightStarted = true;
+        incrementInFlight();
+      },
       ingressMethod: request.method,
       ingressPath: fastPathname(request.url),
       extendDeadline: (ms: number) => {
@@ -172,7 +180,7 @@ export class ProxyRequestStateStore {
       cleanup: () => {
         if (cleaned) return;
         cleaned = true;
-        decrementInFlight();
+        if (providerFlightStarted) decrementInFlight();
         this.tracker?.untrack(state.requestId);
         this.liveControllers.delete(state.requestId);
         clearTimeout(timer);
@@ -190,7 +198,6 @@ export class ProxyRequestStateStore {
     this.liveControllers.set(state.requestId, abortController);
     this.tracker?.track(state.requestId);
     this.states.set(request, state);
-    incrementInFlight();
     return state;
   }
   require(request: Request): ProxyRequestState {

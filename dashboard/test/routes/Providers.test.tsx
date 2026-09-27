@@ -4,9 +4,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 
-import Providers from "../../src/routes/Providers";
-import { queryKeys } from "../../src/lib/query-keys";
-import type { ProviderAccountResponse, ProviderResponse } from "../../src/lib/contracts";
+import Providers from "../../src/features/providers/ProvidersPage";
+import { queryKeys } from "../../src/data/query-keys";
+import type { ProviderAccountResponse, ProviderResponse } from "../../src/data/contracts";
 
 /**
  * Two defects in the provider list card are covered here, both of which only
@@ -48,19 +48,70 @@ const PROVIDER: ProviderResponse = {
   supportsModelDiscovery: true,
 };
 
+const CUSTOM_PROVIDER: ProviderResponse = {
+  providerId: "custom-openai",
+  label: "Custom OpenAI",
+  enabled: true,
+  isBuiltIn: false,
+  requiresAccount: true,
+  hasAdapterUserAgent: false,
+  supportsModelDiscovery: true,
+};
+
 const inMinutes = (minutes: number): string =>
   new Date(Date.now() + minutes * 60_000).toISOString();
 
 function renderProviders(
   accounts: readonly ProviderAccountResponse[],
   provider: ProviderResponse = PROVIDER,
+  options: {
+    models?: readonly string[];
+    modelError?: boolean;
+    accountError?: boolean;
+    modelsPending?: boolean;
+    accountsPending?: boolean;
+  } = {},
 ): string {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    defaultOptions: { queries: { retry: false, staleTime: Infinity, refetchOnMount: false } },
   });
   queryClient.setQueryData(queryKeys.providers.all, [provider]);
-  queryClient.setQueryData(queryKeys.providers.models(provider.providerId), []);
-  queryClient.setQueryData(queryKeys.providers.accounts(provider.providerId), accounts);
+  const modelsQuery = queryClient.getQueryCache().build(queryClient, {
+    queryKey: queryKeys.providers.models(provider.providerId),
+    queryFn: async () => options.models ?? [],
+  });
+  modelsQuery.setState({
+    data: options.modelsPending ? undefined : options.models ?? [],
+    status: options.modelsPending ? "pending" : options.modelError ? "error" : "success",
+    fetchStatus: options.modelsPending ? "fetching" : "idle",
+    error: options.modelError ? new Error("models unavailable") : null,
+    errorUpdateCount: options.modelError ? 1 : 0,
+    dataUpdateCount: options.modelError ? 0 : options.modelsPending ? 0 : 1,
+    fetchFailureCount: options.modelError ? 1 : 0,
+    fetchFailureReason: options.modelError ? new Error("models unavailable") : null,
+    fetchMeta: null,
+    isInvalidated: false,
+    dataUpdatedAt: options.modelsPending ? 0 : Date.now(),
+    errorUpdatedAt: options.modelError ? Date.now() : 0,
+  });
+  const accountsQuery = queryClient.getQueryCache().build(queryClient, {
+    queryKey: queryKeys.providers.accounts(provider.providerId),
+    queryFn: async () => accounts,
+  });
+  accountsQuery.setState({
+    data: options.accountsPending ? undefined : accounts,
+    status: options.accountsPending ? "pending" : options.accountError ? "error" : "success",
+    fetchStatus: options.accountsPending ? "fetching" : "idle",
+    error: options.accountError ? new Error("accounts unavailable") : null,
+    errorUpdateCount: options.accountError ? 1 : 0,
+    dataUpdateCount: options.accountError ? 0 : options.accountsPending ? 0 : 1,
+    fetchFailureCount: options.accountError ? 1 : 0,
+    fetchFailureReason: options.accountError ? new Error("accounts unavailable") : null,
+    fetchMeta: null,
+    isInvalidated: false,
+    dataUpdatedAt: options.accountsPending ? 0 : Date.now(),
+    errorUpdatedAt: options.accountError ? Date.now() : 0,
+  });
   return renderToStaticMarkup(
     createElement(
       QueryClientProvider,
@@ -142,5 +193,57 @@ describe("provider list card — clickable area", () => {
 
     expect(providerLink(tall)).toContain("flex:1");
     expect(providerLink(short)).toContain("flex:1");
+  });
+});
+
+describe("provider list card — secondary query states", () => {
+  test("pending model and account queries are explicit", () => {
+    const markup = renderProviders([], PROVIDER, { modelsPending: true, accountsPending: true });
+
+    expect(markup).toContain("Loading models");
+    expect(markup).toContain("Loading connections");
+    expect(markup).not.toContain("No models");
+    expect(markup).not.toContain("No connections");
+  });
+
+  test("successful empty model and account queries are explicit", () => {
+    const markup = renderProviders([], PROVIDER, { models: [] });
+
+    expect(markup).toContain("No models");
+    expect(markup).toContain("No connections");
+    expect(markup).not.toContain("Loading models");
+    expect(markup).not.toContain("Models unavailable");
+  });
+
+  test("a secondary query error is unavailable rather than empty", () => {
+    const markup = renderProviders([], PROVIDER, { modelError: true, accountError: true });
+
+    expect(markup).toContain("Models unavailable");
+    // An error after a cached empty response keeps that stale result visible,
+    // alongside the explicit unavailable marker.
+    expect(markup).toContain("Connections unavailable");
+    expect(markup).toContain("No connections");
+    expect(markup).not.toContain("No models");
+  });
+
+  test("custom provider cards use the same secondary states", () => {
+    const markup = renderProviders([], CUSTOM_PROVIDER, { modelError: true, accountError: true });
+
+    expect(markup).toContain("Models unavailable");
+    expect(markup).toContain("Connections unavailable");
+    expect(markup).toContain("Custom OpenAI");
+  });
+
+  test("custom provider cards show loading and empty states", () => {
+    const loading = renderProviders([], CUSTOM_PROVIDER, {
+      modelsPending: true,
+      accountsPending: true,
+    });
+    expect(loading).toContain("Loading models");
+    expect(loading).toContain("Loading connections");
+
+    const empty = renderProviders([], CUSTOM_PROVIDER, { models: [] });
+    expect(empty).toContain("No models");
+    expect(empty).toContain("No connections");
   });
 });

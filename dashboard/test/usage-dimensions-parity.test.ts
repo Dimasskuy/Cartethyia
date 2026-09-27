@@ -1,9 +1,9 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
-import { USAGE_DIMENSIONS, type UsageDimension } from "../src/lib/contracts";
+import { USAGE_DIMENSIONS, type UsageDimension } from "../src/data/contracts";
 import {
   USAGE_DIMENSIONS as BACKEND_DIMENSIONS,
   type UsageDimension as BackendUsageDimension,
-} from "../../src/console/domains/stats/contracts";
+} from "../../src/console/observability/contracts";
 
 /**
  * The Usage page's breakdown tabs, the `?dim=` query parser, and the backend

@@ -11,7 +11,7 @@ import {
   PROXY_UNSUPPORTED_HINT_PROVIDERS,
   ROUTING_ACTIVE_LABEL,
   useRoutingStrategy,
-} from "../../lib/use-routing-strategy";
+} from "../../hooks/use-routing-strategy";
 
 const USER_AGENT_PRESETS = [
   { value: "codex_cli_rs/0.156.1", label: "Codex" },

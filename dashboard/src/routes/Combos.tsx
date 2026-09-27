@@ -10,11 +10,11 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui/state";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
 import { ModelPickerModal } from "../components/ModelPicker";
-import { useTrackedTimeout } from "../lib/use-timeout";
-import { useClipboard } from "../lib/use-clipboard";
-import { toast } from "../lib/toast";
-import type { ComboStrategy, ModelAliasRow, ModelComboRow } from "../lib/contracts";
-import { COMBO_STRATEGY_OPTIONS } from "../lib/combo-strategy";
+import { useTrackedTimeout } from "../hooks/use-timeout";
+import { useClipboard } from "../hooks/use-clipboard";
+import { toast } from "../shared/toast";
+import type { ComboStrategy, ModelAliasRow, ModelComboRow } from "../data/contracts";
+import { COMBO_STRATEGY_OPTIONS } from "../shared/combo-strategy";
 import {
   useCreateModelAlias,
   useCreateModelCombo,
@@ -24,7 +24,7 @@ import {
   useModelCombos,
   useUpdateModelAlias,
   useUpdateModelCombo,
-} from "../lib/hooks/routing";
+} from "../hooks/routing";
 
 // ── Aliases Section ──────────────────────────────────────────────────────────
 

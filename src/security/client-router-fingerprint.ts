@@ -58,9 +58,14 @@ export interface ClientRouterSignal {
 /**
  * Products recognised as of this writing.
  *
+ * 9Router and OmniRoute are the same product under two names, so they share one
+ * entry and one denylist id: an operator who refuses one refuses the other, and
+ * the signals are matched together. `omniroute` survives only as a legacy alias
+ * in `normalizeClientRouterId`, never as its own entry.
+ *
  * Scope note, so a future reader does not over-trust this table: these are the
- * signals those products emit on the paths that were inspected. Both also let
- * an operator override `user-agent` per provider, which erases the UA-based
+ * signals the product emits on the paths that were inspected. It also lets an
+ * operator override `user-agent` per provider, which erases the UA-based
  * signals while leaving the header-based ones intact — so a custom UA makes
  * detection weaker, not impossible, and a path that sends no signal at all
  * simply goes unlabelled.
@@ -68,7 +73,7 @@ export interface ClientRouterSignal {
 export const CLIENT_ROUTERS: readonly ClientRouterDefinition[] = [
   {
     id: "9router",
-    label: "9Router",
+    label: "9Router and OmniRoute",
     signals: [
       {
         field: "x-msh-platform",
@@ -85,12 +90,6 @@ export const CLIENT_ROUTERS: readonly ClientRouterDefinition[] = [
         pattern: /(^|[^a-z0-9])9router([^a-z0-9]|$)/i,
         description: "User-Agent naming 9Router",
       },
-    ],
-  },
-  {
-    id: "omniroute",
-    label: "OmniRoute",
-    signals: [
       {
         field: "x-omniroute-peer-trace",
         description: "OmniRoute's peer-trace header",
@@ -107,6 +106,12 @@ export const CLIENT_ROUTERS: readonly ClientRouterDefinition[] = [
     ],
   },
 ];
+
+/**
+ * Ids an operator may have stored before a rename. `omniroute` folded into
+ * `9router`; keeping the alias means a persisted denylist still resolves.
+ */
+const LEGACY_CLIENT_ROUTER_IDS: Readonly<Record<string, string>> = { omniroute: "9router" };
 
 /** A signal that matched, with the product it belongs to. */
 export interface MatchedClientSignal {
@@ -182,7 +187,9 @@ export function detectClientRouter(probe: ClientRouterProbe): ClientRouterMatch 
 /** Canonical router id, or `undefined` when the value is not one we know. */
 export function normalizeClientRouterId(value: string): string | undefined {
   const normalized = value.trim().toLowerCase();
-  return CLIENT_ROUTERS.some((router) => router.id === normalized) ? normalized : undefined;
+  if (CLIENT_ROUTERS.some((router) => router.id === normalized)) return normalized;
+  // A denylist stored before a rename still resolves to its current id.
+  return LEGACY_CLIENT_ROUTER_IDS[normalized];
 }
 
 /** Every id an operator may store, in the order the dashboard lists them. */
@@ -198,13 +205,17 @@ export const CLIENT_ROUTER_IDS: readonly string[] = Object.freeze(
  * it would refuse traffic over a typo.
  */
 export function deniedClientRouter(
-  denylist: readonly string[] | ReadonlySet<string> | null | undefined,
+  denylist: readonly unknown[] | ReadonlySet<unknown> | null | undefined,
   match: ClientRouterMatch | null,
 ): string | null {
   if (match === null || denylist == null) return null;
-  // Normalised to an array first: `instanceof Set` cannot narrow `ReadonlySet`
-  // (an interface, not a class) and `Array.isArray` cannot exclude a readonly
-  // array, so spreading is the one form that narrows for both members.
-  const ids = Array.isArray(denylist) ? [...denylist] : [...denylist];
-  return ids.includes(match.routerId) ? match.label : null;
+  // Canonicalise every persisted entry at the matching boundary. Older keys may
+  // still contain the pre-merge `omniroute` id, while detection always returns
+  // the current `9router` id.
+  const ids: readonly unknown[] = Array.isArray(denylist) ? denylist : [...denylist];
+  return ids.some(
+    (id) => typeof id === "string" && normalizeClientRouterId(id) === match.routerId,
+  )
+    ? match.label
+    : null;
 }

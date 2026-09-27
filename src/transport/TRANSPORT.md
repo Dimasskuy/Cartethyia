@@ -192,16 +192,19 @@ reductions and a text-only fallback always exists.
 
 **State** (`state.ts`, `ProxyRequestStateStore`). `initialize()` creates the state (uuid, timestamps, deadline, abort
 bridging, unref'd timer), registers it in a `WeakMap<Request, …>` plus a strong `liveControllers` map for `abortAll()` during
-shutdown drain, bumps the in-flight gauge, and feeds the optional `RequestTracker`. `extendDeadline()` re-arms the timer for
-streaming; `cleanup()` is the single idempotent teardown — untrack, release the timer, run registered cleanups LIFO, abort,
-evict the WeakMap entry. `completed` (set by dispatch's `completeAttempt`) marks terminal bookkeeping done so telemetry
+shutdown drain, and feeds the optional `RequestTracker`. After attempt leases are acquired, `startProviderFlight()` increments
+the process-local in-flight gauge once per logical request; it stays active through retries and streaming. `extendDeadline()`
+re-arms the timer for streaming; `cleanup()` is the single idempotent teardown — untrack, release the timer, run registered
+cleanups LIFO (including the flight decrement), abort, and evict the WeakMap entry. `completed` (set by dispatch's `completeAttempt`) marks terminal bookkeeping done so telemetry
 finalizes exactly once. `ProxyRequestOutcome` keeps the internal terminal status plus its wire projection (`httpStatus`),
 provider/account/pool ids, usage, and TTFT/TTFB timing; `inflight.ts` is a process-local gauge with pub/sub that floors at
 zero and is reset only by the test-only `resetInFlightForTests()` — production never resets it.
 
 **Invariants.** Abort checks bracket every async boundary in `prepare()` — a cancelled client never reserves capacity.
 `plan()` guarantees non-empty candidates; `eligible[0]` is always the primary `candidate`. Only `/v1/*` requests get state;
-everything else bypasses the store. A new per-request field is populated in exactly one pipeline stage; a new admission input
+everything else bypasses the store. The in-flight gauge is process-local and counts requests with acquired provider-dispatch
+leases, not ingress requests, pool slots, or fleet-wide activity; direct egress counts too. A new per-request field is populated
+in exactly one pipeline stage; a new admission input
 extends the token estimates or `AttemptLeaseSource` in dispatch, never the state shape.
 
 ## Capability model and normalization (`translation/`)

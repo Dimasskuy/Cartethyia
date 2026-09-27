@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { LoginResponse, SessionStatusResponse } from "../../src/console/auth/session";
 import { defaultSessionCookiePolicy } from "../../src/console/auth/service";
-import type { HealthStatus, SessionResponse } from "../../dashboard/src/lib/contracts";
-import { consoleRequest } from "../../dashboard/src/lib/api";
+import type { HealthStatus, SessionResponse } from "../../dashboard/src/data/contracts";
+import { consoleRequest } from "../../dashboard/src/data/api";
 
 /**
  * Dashboard backend-boundary contracts expressible without the JSX toolchain:

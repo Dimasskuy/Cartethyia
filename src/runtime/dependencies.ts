@@ -27,7 +27,7 @@ import { NetworkPoolSelector } from "../network/pool/selector";
 import { ScheduledTaskRegistry } from "../workers/tasks";
 import { quotaRefreshSweep } from "../workers/quota-refresh-worker";
 import { createAccountSecretResolver } from "../providers/operations/provider-credential-service";
-import { quotaCacheSize } from "../console/quota/quota-cache";
+import { quotaCacheSize } from "../console/quota/cache";
 import { preferencesReaderFor } from "../transport/dispatch/attempt-finalize";
 import { sweepExpiredCooldowns } from "../providers/operations/account-health-service";
 import { DrizzleTelemetryStore } from "../persistence/telemetry-store";

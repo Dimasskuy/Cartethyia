@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { fetchQuotaOverview, type QuotaOverview } from "../../src/lib/hooks/quota";
+import { fetchQuotaOverview, type QuotaOverview } from "../../src/hooks/quota";
 import { jsonResponse } from "../helpers/test-helpers";
 
 const originalFetch = globalThis.fetch;

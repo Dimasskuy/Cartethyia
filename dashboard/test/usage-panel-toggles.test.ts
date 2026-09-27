@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toggleInSet } from "../src/routes/Usage";
+import { toggleInSet } from "../src/features/usage/UsagePage";
 
 /**
  * The Usage page's per-panel widen control flips one key in a `ReadonlySet`.

@@ -3,7 +3,7 @@ import { consoleErrorHandler } from "../shared/errors";
 import { registerAccountQuotaGlobalRoutes } from "./account-quota-global";
 import { registerAccountQuotaTenantRoutes } from "./account-quota-tenant";
 import { createQuotaRefreshDeps, type AccountQuotaRoutesDeps } from "./account-quota-shared";
-import { resetBackgroundQuotaRefreshesForTests } from "./account-quota-view";
+import { resetBackgroundQuotaRefreshesForTests } from "./quota-view";
 
 export { resetBackgroundQuotaRefreshesForTests };
 export type { AccountQuotaRoutesDeps };

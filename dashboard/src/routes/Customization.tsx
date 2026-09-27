@@ -17,14 +17,14 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "../components/ui/button";
-import { formatBytes } from "../lib/format";
+import { formatBytes } from "../shared/format";
 import { Card, CardBody, CardHeader } from "../components/ui/card";
 import { Select } from "../components/ui/select";
 import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
-import { useDebouncedSave } from "../lib/use-debounced-save";
+import { useDebouncedSave } from "../hooks/use-debounced-save";
 import {
   classifyCustomAssetFile,
   MAX_BRANDING_ASSET_BYTES,
@@ -35,7 +35,7 @@ import {
   useCustomizationPersistenceError,
   useCustomizationSettings,
   readCustomizationSettings,
-} from "../lib/customization";
+} from "../shared/customization";
 
 const BRANDING_MIME_OK: Record<string, true> = { "image/png": true, "image/gif": true };
 

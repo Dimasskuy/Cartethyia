@@ -19,8 +19,8 @@ import {
   type QuotaRefreshDeps,
   type QuotaRefreshOutcome,
   type QuotaRefreshTarget,
-} from "../console/quota/quota-refresh";
-import { getCachedQuotaEntries, type CachedQuotaEntry } from "../console/quota/quota-cache";
+} from "../console/quota/refresh";
+import { getCachedQuotaEntries, type CachedQuotaEntry } from "../console/quota/cache";
 import { runGrowingWaves } from "./tasks";
 import type { ProviderId } from "../providers/provider-registry";
 import {

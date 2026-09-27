@@ -1,5 +1,5 @@
 
-import { resolveDashboardApp } from "./lib/app-entry";
+import { resolveDashboardApp } from "./shared/app-entry";
 
 const rootElement = document.getElementById("root");
 

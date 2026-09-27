@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CLIENT_ROUTERS, CLIENT_ROUTER_IDS } from "../../src/security/client-router-fingerprint";
-import { CLIENT_ROUTER_IDS as DASHBOARD_IDS } from "../src/lib/contracts";
+import { CLIENT_ROUTER_IDS as DASHBOARD_IDS } from "../src/data/contracts";
 
 /**
  * The API-key editor renders the routers it offers from `CLIENT_ROUTER_IDS`, and

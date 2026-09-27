@@ -29,33 +29,30 @@ const GENUINE_CLINE = {
 };
 
 describe("client-router fingerprint detection", () => {
-  test("labels 9Router from its product headers", () => {
+  test("labels the merged 9Router/OmniRoute product from its headers", () => {
     expect(detectClientRouter({ headers: { "x-msh-platform": "9router" } })?.routerId).toBe("9router");
     expect(detectClientRouter({ headers: { "x-client-type": "9router" } })?.routerId).toBe("9router");
+    expect(
+      detectClientRouter({ headers: { "x-omniroute-peer-trace": "instance-a" } })?.routerId,
+    ).toBe("9router");
+    expect(
+      detectClientRouter({ headers: { "x-omniroute-fallback-hint": "connection_cooldown" } })
+        ?.routerId,
+    ).toBe("9router");
   });
 
-  test("labels 9Router from a User-Agent naming it", () => {
+  test("labels the product from a User-Agent naming it", () => {
     expect(detectClientRouter({ headers: { "user-agent": "9Router/0.5.81" } })?.routerId).toBe(
       "9router",
     );
     expect(detectClientRouter({ headers: { "user-agent": "9router/zed" } })?.routerId).toBe(
       "9router",
     );
-  });
-
-  test("labels OmniRoute from its product headers and rewritten User-Agent", () => {
-    expect(
-      detectClientRouter({ headers: { "x-omniroute-peer-trace": "instance-a" } })?.routerId,
-    ).toBe("omniroute");
-    expect(
-      detectClientRouter({ headers: { "x-omniroute-fallback-hint": "connection_cooldown" } })
-        ?.routerId,
-    ).toBe("omniroute");
     expect(
       detectClientRouter({
         headers: { "user-agent": "Mozilla/5.0 (compatible; OpenAI Compatible)" },
       })?.routerId,
-    ).toBe("omniroute");
+    ).toBe("9router");
   });
 
   test("does not label a genuine first-party CLI", () => {
@@ -69,7 +66,9 @@ describe("client-router fingerprint detection", () => {
   test("does not label an ordinary SDK or unknown caller", () => {
     expect(detectClientRouter({ headers: {} })).toBeNull();
     expect(detectClientRouter({ headers: { "user-agent": "Bun/1.4.2" } })).toBeNull();
+    // The bare Node UA is generic runtime output, not a product fingerprint.
     expect(detectClientRouter({ headers: { "user-agent": "node" } })).toBeNull();
+    expect(detectClientRouter({ headers: { "user-agent": "node-fetch/1.0" } })).toBeNull();
     expect(
       detectClientRouter({ headers: { "user-agent": "python-requests/2.31.0" } }),
     ).toBeNull();
@@ -77,19 +76,49 @@ describe("client-router fingerprint detection", () => {
     expect(detectClientRouter({ headers: { "x-client-type": "Cline/3.0.58" } })).toBeNull();
   });
 
+  test("never labels a real SDK or CLI User-Agent seen in production traffic", () => {
+    // Transcribed from captured telemetry. Every one of these is a genuine
+    // client and must stay clean; generic runtime User-Agents are not product
+    // fingerprints.
+    const genuineUserAgents = [
+      "opencode/1.18.32 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14",
+      "opencode/latest/2.0.11/cli",
+      "claude-cli/2.1.280 (external, cli)",
+      "claude-cli/2.1.278 (external, sdk-cli)",
+      "codex_cli_rs/0.155.1",
+      "omp/18.2.10",
+      "factory-cli/0.219.0",
+      "GitHubCopilotChat/0.66.0",
+      "oai-compatible-copilot/0.4.2 VSCode/1.137.0",
+      "OpenAI/Python 2.51.0",
+      "python-httpx/0.28.1",
+      "Python-urllib/3.13",
+      "undici",
+      "axios/1.18.1",
+      "Bun/1.3.14",
+      "Go-http-client/2.0",
+      "RikkaHub-Android/2.5.3",
+      "deepseek-harness/0.1.0-rc.7 (+https://github.com/deepseek-ai/deepseek-harness)",
+      "curl/8.8.0",
+    ];
+    for (const userAgent of genuineUserAgents) {
+      expect(detectClientRouter({ headers: { "user-agent": userAgent } })).toBeNull();
+    }
+  });
+
   test("matches header names case-insensitively and reads a Headers instance", () => {
     expect(detectClientRouter({ headers: { "X-Msh-Platform": "9Router" } })?.routerId).toBe(
       "9router",
     );
     const headers = new Headers({ "x-omniroute-peer-trace": "abc" });
-    expect(detectClientRouter({ headers })?.routerId).toBe("omniroute");
+    expect(detectClientRouter({ headers })?.routerId).toBe("9router");
   });
 
   test("reports the signals that matched, for the operator's audit", () => {
     const match = detectClientRouter({
       headers: { "x-msh-platform": "9router", "user-agent": "9Router/0.5.81" },
     });
-    expect(match?.label).toBe("9Router");
+    expect(match?.label).toBe("9Router and OmniRoute");
     expect(match?.signals.map((signal) => signal.field).sort()).toEqual([
       "user-agent",
       "x-msh-platform",
@@ -104,33 +133,47 @@ describe("client-router fingerprint detection", () => {
 describe("client-router denylist", () => {
   test("denies the labelled router when the id is listed", () => {
     const match = detectClientRouter({ headers: { "x-msh-platform": "9router" } });
-    expect(deniedClientRouter(["9router"], match)).toBe("9Router");
-    expect(deniedClientRouter(new Set(["9router"]), match)).toBe("9Router");
+    expect(deniedClientRouter(["9router"], match)).toBe("9Router and OmniRoute");
+    expect(deniedClientRouter(new Set(["9router"]), match)).toBe("9Router and OmniRoute");
+  });
+
+  test("matches a legacy denylist id against the canonical detected id", () => {
+    const match = detectClientRouter({ headers: { "x-msh-platform": "9router" } });
+    expect(deniedClientRouter(["omniroute"], match)).toBe("9Router and OmniRoute");
+    expect(deniedClientRouter(new Set([" OmniRoute "]), match)).toBe("9Router and OmniRoute");
   });
 
   test("allows a router that is not listed", () => {
     const match = detectClientRouter({ headers: { "x-msh-platform": "9router" } });
-    expect(deniedClientRouter(["omniroute"], match)).toBeNull();
     expect(deniedClientRouter([], match)).toBeNull();
     expect(deniedClientRouter(null, match)).toBeNull();
     expect(deniedClientRouter(undefined, match)).toBeNull();
   });
 
+  test("ignores malformed persisted denylist entries", () => {
+    const match = detectClientRouter({ headers: { "x-msh-platform": "9router" } });
+    const malformed = [null, 9, { id: "9router" }];
+    expect(deniedClientRouter(malformed, match)).toBeNull();
+    expect(deniedClientRouter([null, "9router"], match)).toBe("9Router and OmniRoute");
+  });
+
   test("does not deny when nothing was labelled", () => {
-    expect(deniedClientRouter(["9router", "omniroute"], null)).toBeNull();
+    expect(deniedClientRouter(["9router"], null)).toBeNull();
   });
 });
 
 describe("client-router vocabulary", () => {
-  test("normalizes ids and rejects unknown ones", () => {
+  test("normalizes ids, folds the legacy alias, and rejects unknown ones", () => {
     expect(normalizeClientRouterId("  9ROUTER ")).toBe("9router");
-    expect(normalizeClientRouterId("OmniRoute")).toBe("omniroute");
+    // `omniroute` is the same product under its old name; a denylist stored
+    // before the merge must still resolve to the current id.
+    expect(normalizeClientRouterId("OmniRoute")).toBe("9router");
     expect(normalizeClientRouterId("not-a-router")).toBeUndefined();
     expect(normalizeClientRouterId("")).toBeUndefined();
   });
 
   test("exposes the ids the dashboard offers", () => {
-    expect(CLIENT_ROUTER_IDS).toEqual(["9router", "omniroute"]);
+    expect(CLIENT_ROUTER_IDS).toEqual(["9router"]);
     expect(CLIENT_ROUTERS.every((router) => router.signals.length > 0)).toBe(true);
   });
 });

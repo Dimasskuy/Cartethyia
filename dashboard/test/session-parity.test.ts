@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import type { SessionStatusResponse } from "../../src/console/auth/session";
-import type { SessionResponse, SessionUser } from "../src/lib/contracts";
+import type { SessionResponse, SessionUser } from "../src/data/contracts";
 
 /**
  * `SessionResponse` (dashboard) is the backend `SessionStatusResponse` and

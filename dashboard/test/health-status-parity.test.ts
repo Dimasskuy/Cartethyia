@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import { healthStatus } from "../../src/persistence/schema";
-import type { HealthStatus } from "../src/lib/contracts";
+import type { HealthStatus } from "../src/data/contracts";
 
 /**
  * `HealthStatus` (dashboard) is derived from the backend `health_status`

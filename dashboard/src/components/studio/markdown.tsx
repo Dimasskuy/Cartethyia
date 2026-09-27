@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { toast } from "../../lib/toast";
-import { useClipboard } from "../../lib/use-clipboard";
+import { toast } from "../../shared/toast";
+import { useClipboard } from "../../hooks/use-clipboard";
 import { mermaidToAscii } from "../../routes/model-lab/tools";
 
 function CodeBlock({ children }: { children?: ReactNode }): ReactNode {

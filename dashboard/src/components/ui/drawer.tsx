@@ -1,8 +1,8 @@
 import { X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useRef, type ReactNode } from "react";
-import { usePresence } from "../../lib/use-presence";
-import { useModalFocus } from "../../lib/hooks/use-modal-focus";
+import { usePresence } from "../../hooks/use-presence";
+import { useModalFocus } from "../../hooks/use-modal-focus";
 
 export interface DrawerProps {
   readonly open: boolean;

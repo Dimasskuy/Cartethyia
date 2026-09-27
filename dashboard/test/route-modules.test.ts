@@ -6,22 +6,22 @@ import { MemoryRouter } from "react-router-dom";
 
 import { DashboardShell, navigationGroups } from "../src/components/Shell";
 import { DataTable } from "../src/components/ui/layout";
-import type { SessionUser } from "../src/lib/contracts";
+import type { SessionUser } from "../src/data/contracts";
 
 import Login from "../src/routes/Login";
 import Setup from "../src/routes/Setup";
 import Banned from "../src/routes/Banned";
 import Overview from "../src/routes/Overview";
-import Usage from "../src/routes/Usage";
+import Usage from "../src/features/usage/UsagePage";
 import ProviderDetail from "../src/routes/ProviderDetail";
-import Providers from "../src/routes/Providers";
+import Providers from "../src/features/providers/ProvidersPage";
 import Combos from "../src/routes/Combos";
-import Quota from "../src/routes/Quota";
+import Quota from "../src/features/quota/QuotaPage";
 import Proxy from "../src/routes/Proxy";
 import Settings from "../src/routes/Settings";
 import CliTools from "../src/routes/CliTools";
 import CliToolDetail from "../src/routes/CliToolDetail";
-import ConsoleLog from "../src/routes/ConsoleLog";
+import ConsoleLogPage from "../src/features/logs/ConsoleLogPage";
 import Customization from "../src/routes/Customization";
 import Studio from "../src/routes/Studio";
 
@@ -43,7 +43,7 @@ const ROUTE_MODULES: ReadonlyArray<readonly [string, ComponentType]> = [
   ["/settings", Settings],
   ["/cli-tools", CliTools],
   ["/cli-tools/:toolId", CliToolDetail],
-  ["/console-log", ConsoleLog],
+  ["/console-log", ConsoleLogPage],
   ["/customization", Customization],
   ["/model-lab", Studio],
 ];

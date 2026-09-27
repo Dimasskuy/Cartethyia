@@ -27,7 +27,7 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui/state";
 import { Switch } from "../components/ui/switch";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
-import type { HealthCheckResult, NetworkPoolResponse, PoolStrategySetting } from "../lib/contracts";
+import type { HealthCheckResult, NetworkPoolResponse, PoolStrategySetting } from "../data/contracts";
 import {
   useCreateNetworkPool,
   useDeleteNetworkPool,
@@ -40,12 +40,12 @@ import {
   useClearNetworkPoolCooldown,
   usePoolStrategy,
   useUpdatePoolStrategy,
-} from "../lib/hooks/network";
-import { usePoolUsage } from "../lib/hooks/live";
-import { summarizePools } from "../lib/proxy-metrics";
-import { downloadTextFile } from "../lib/download";
-import { toast } from "../lib/toast";
-import { getErrorMessage } from "../lib/helpers";
+} from "../hooks/network";
+import { usePoolUsage } from "../hooks/live";
+import { summarizePools } from "../shared/proxy-metrics";
+import { downloadTextFile } from "../shared/download";
+import { toast } from "../shared/toast";
+import { getErrorMessage } from "../shared/helpers";
 const transportKinds = ["http", "https", "socks5"] as const;
 type TransportKind = (typeof transportKinds)[number];
 

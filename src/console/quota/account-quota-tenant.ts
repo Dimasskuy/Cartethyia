@@ -9,7 +9,7 @@ import {
   getCachedQuotaEntries,
   getCachedQuotaEntry,
   invalidateQuotaCache,
-} from "./quota-cache";
+} from "./cache";
 import {
   QUOTA_REFRESH_TIMEOUT_MS,
   refreshAccountQuota,
@@ -17,7 +17,7 @@ import {
   timeoutSignal,
   type QuotaRefreshDeps,
   type QuotaRefreshFailureCode,
-} from "./quota-refresh";
+} from "./refresh";
 import type { ProviderId } from "../../providers/provider-registry";
 import {
   DAILY_CHECKIN_PROVIDER_IDS,
@@ -41,7 +41,7 @@ import {
   pendingQuotaRefreshes,
   toQuotaAccountHealth,
   toQuotaView,
-} from "./account-quota-view";
+} from "./quota-view";
 import {
   ACCOUNT_STATUSES,
   type AccountQuotaRoutesDeps,
@@ -215,6 +215,7 @@ export function registerAccountQuotaTenantRoutes(
           });
         }
         const isRefreshing = canRefresh && (pending.has(row.id) || entry === undefined);
+        if (isRefreshing) refreshing += 1;
         return {
           id: row.id,
           provider: row.providerId,

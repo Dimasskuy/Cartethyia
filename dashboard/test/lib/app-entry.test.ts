@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { resolveDashboardApp } from "../../src/lib/app-entry";
+import { resolveDashboardApp } from "../../src/shared/app-entry";
 
 describe("dashboard app entry resolution", () => {
   test("uses the console app for console roots and deep links", () => {

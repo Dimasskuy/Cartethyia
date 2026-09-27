@@ -1,8 +1,8 @@
 import { Maximize2, Minus, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { usePresence } from "../../lib/use-presence";
-import { useModalFocus } from "../../lib/hooks/use-modal-focus";
+import { usePresence } from "../../hooks/use-presence";
+import { useModalFocus } from "../../hooks/use-modal-focus";
 
 export interface DialogProps {
   open: boolean;

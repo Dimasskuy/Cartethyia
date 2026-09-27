@@ -4,7 +4,7 @@ import {
   LAZY_RETRY_TTL_MS,
   retryFlagKey,
   shouldReloadChunkLoad,
-} from "../../src/lib/lazy-retry";
+} from "../../src/shared/lazy-retry";
 
 describe("lazy chunk retry", () => {
   test("builds a namespaced storage key per chunk", () => {

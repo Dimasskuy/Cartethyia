@@ -10,7 +10,7 @@ import {
 } from "../../../../src/providers/integrations/xiaomi-mimo/mimostudio";
 import { parseMimoStudioQuota } from "../../../../src/providers/integrations/xiaomi-mimo/mimostudio-quota";
 import { createDefaultProviderRegistry } from "../../../../src/providers/default-registry";
-import { providerDisplayName } from "../../../../dashboard/src/lib/provider-names";
+import { providerDisplayName } from "../../../../dashboard/src/shared/provider-names";
 import type { CanonicalRequest, ToolDefinition } from "../../../../src/transport/canonical-model";
 import { GatewayError } from "../../../../src/transport/gateway-error";
 import type { ProviderDispatchContext, ProviderDispatchTarget } from "../../../../src/providers/provider-registry";

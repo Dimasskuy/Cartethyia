@@ -5,14 +5,14 @@ import { Card, CardBody } from "../../components/ui/card";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/state";
 import { ClipboardButton } from "../../components/patterns/clipboard-button";
 import { GithubBadge } from "../../components/patterns/github-badge";
-import { readConsoleTheme, applyConsoleTheme, isDarkEffective, writeConsoleTheme, type ConsoleThemeChoice } from "../../lib/theme";
-import { useShareData, type ShareLinkData } from "../../lib/hooks/share-data";
+import { readConsoleTheme, applyConsoleTheme, isDarkEffective, writeConsoleTheme, type ConsoleThemeChoice } from "../../shared/theme";
+import { useShareData, type ShareLinkData } from "../../hooks/share-data";
 import {
   deleteStoredShareKey,
   readStoredShareKey,
   writeStoredShareKey,
   type StoredShareKey,
-} from "../../lib/share-key-storage";
+} from "../../shared/share-key-storage";
 
 interface IssueResult { key: string; keyId: string; keyPrefix: string; createdAt: string }
 interface ApiError { error?: string | { code?: string; message?: string }; message?: string }

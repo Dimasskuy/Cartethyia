@@ -7,7 +7,7 @@ import {
   paginateQuotaWindows,
   QUOTA_WINDOWS_PER_PAGE,
   accountIdentity,
-} from "../../src/lib/quota-formatters";
+} from "../../src/shared/quota-formatters";
 
 describe("quota display formatters", () => {
   test("uses named windows and converts hour labels to days", () => {

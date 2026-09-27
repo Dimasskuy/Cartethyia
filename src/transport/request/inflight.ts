@@ -1,9 +1,9 @@
 /**
- * In-flight proxy request counter — incremented when the request state store
- * admits a request, decremented exactly once when its state is cleaned up
- * (success, error, or client abort all funnel through `cleanup`, which is
- * idempotent). Pub/sub lets the console push the live count over SSE instead
- * of polling.
+ * In-flight provider dispatch counter — incremented once after a request
+ * acquires its dispatch leases, and decremented exactly once when request
+ * state is cleaned up (success, error, or client abort all funnel through the
+ * idempotent cleanup). Pub/sub lets the console push the live count over SSE
+ * instead of polling.
  *
  * Process-local: each gateway instance reports its own flights. The floor at
  * zero keeps a missed teardown (a path that never cleans up) from driving

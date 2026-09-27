@@ -9,7 +9,7 @@ import {
   resolveMimoDesktopModelId,
 } from "../../../../src/providers/integrations/xiaomi-mimo/mimodesktop";
 import { createDefaultProviderRegistry } from "../../../../src/providers/default-registry";
-import { providerDisplayName } from "../../../../dashboard/src/lib/provider-names";
+import { providerDisplayName } from "../../../../dashboard/src/shared/provider-names";
 import type { CanonicalRequest } from "../../../../src/transport/canonical-model";
 import type { ProviderDispatchTarget } from "../../../../src/providers/provider-registry";
 

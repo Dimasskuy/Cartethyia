@@ -1,4 +1,4 @@
-import type { StudioAttachment } from "../../lib/contracts";
+import type { StudioAttachment } from "../../data/contracts";
 
 export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 export const AUDIO_MIMES = ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/wave"];

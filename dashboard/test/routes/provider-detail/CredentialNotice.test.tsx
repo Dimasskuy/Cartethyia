@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CredentialNotice } from "../../../src/routes/provider-detail/CredentialNotice";
-import type { ProviderResponse } from "../../../src/lib/contracts";
+import type { ProviderResponse } from "../../../src/data/contracts";
 
 function provider(overrides: Partial<ProviderResponse> = {}): ProviderResponse {
   return {

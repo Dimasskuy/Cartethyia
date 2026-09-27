@@ -6,7 +6,7 @@ import { Dialog } from "./ui/dialog";
 import { DataTable } from "./ui/layout";
 import { Inline } from "./ui/inline";
 import { EmptyState, ErrorState, LoadingState } from "./ui/state";
-import { useAccountHealthEvents, useRecoverAccount } from "../lib/hooks/providers";
+import { useAccountHealthEvents, useRecoverAccount } from "../hooks/providers";
 
 /**
  * The account health & error log dialog.

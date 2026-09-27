@@ -33,7 +33,9 @@ src/console/
   routing/                operator routing targets (model/ alias+combo, pools/ egress proxies)
   settings/               per-tenant runtime preferences
   quota/                  provider-account quota views + refresh orchestration
-  domains/                api-keys, studio, live/logs, stats, audit, performance, sse
+  observability/          live SSE, logs, performance, and usage statistics routes/contracts/stores
+  domains/                api-keys, studio, audit
+
   cli-tools/              CLI-agent onboarding + host injectors (injectors/ holds the per-tool
                           InjectorSpecs; the "Injector contract" section below is the spec contract)
   share/                  public enrollment and owner-side shared-key activity
@@ -222,7 +224,7 @@ Manual checks do not mutate dispatch health except for the explicit 402/407 disa
 Credentials are encrypted on write (`encryptCredential`) and never rehydrated on read; only
 prefix-length hints leave the store.
 
-## Domains (`domains/`)
+## Domains and observability (`domains/`, `observability/`)
 
 - **API keys** (`api-keys/`): list (hides revoked), detail, create (generated `rk_` secret or
   owner-supplied key, hashed via `hashSecret` plus an encrypted copy so share recipients can
@@ -244,13 +246,13 @@ prefix-length hints leave the store.
   the validated outbound network binding, plus a key endpoint that decrypts the tenant's default
   gateway key so Studio traffic flows through the real proxy path instead of a trusted-identity
   bypass.
-- **Live** (`live.ts`) reads the process-local in-flight count and per-pool usage
+- **Live** (`observability/live.ts`) reads the process-local in-flight count and per-pool usage
   (`/live/in-flight`, `/live/in-flight/stream`, `/live/pools`, `/live/pools/stream`) —
   `dashboard:read` guard. The global count is process-level; pool usage is filtered by tenant
   ownership. The pool stream emits `pools` inflight snapshots and tenant-filtered `health`
   status/error transitions for the Proxy page.
-  **Logs** (`logs.ts`) tail `observability/log-ring` with a `level`/`limit` read (cap 500), an
-  audited delete, and an SSE stream. **Stats** (`stats/`) serves health, usage, the analytics
+  **Logs** (`observability/logs.ts`) tail `observability/log-ring` with a `level`/`limit` read (cap 500), an
+  audited delete, and an SSE stream. **Stats** (`observability/contracts.ts`, `observability/store.ts`) serves health, usage, the analytics
   surface, and telemetry events with payloads opt-in; periods are whitelisted by
   `isSupportedUsagePeriod` and client IPs are masked unless the tenant opts into `privacyMode:
   full`. Error counts — summary, health window, breakdown, `/system/usage`, the provider-account
@@ -387,7 +389,7 @@ missing or older than `QUOTA_STALE_AFTER_MS` on a bounded background queue, repo
 flips (`active|cooldown|disabled`) invalidate the snapshot, `DELETE` also drops the
 cached entry and audits `provider_account.deleted`, and the `/global/accounts*` routes are
 `platform:admin`-only management of tenant-null shared accounts. Every health block is built by
-`toQuotaAccountHealth` in `account-quota-view.ts`, so the four call sites cannot drift: it carries the
+`toQuotaAccountHealth` in `quota-view.ts`, so the four call sites cannot drift: it carries the
 account-wide `cooldownUntil` *and* the live `modelCooldowns` entries. A model-scoped throttle writes
 only the latter (the account stays routable for its other models), so a view that carried only the
 error message left the health dialog showing why an account was throttled but not until when. Elapsed
@@ -399,13 +401,13 @@ describes, so it invalidates only the route snapshot — clearing the cache blan
 user was looking at. A `DELETE` still clears the entry, because nothing can make a deleted
 account's quota meaningful again.
 
-The cache (`quota-cache.ts`) is two tiers under `quota:{lens}:{accountId}` with a 300 s TTL — an
+The cache (`cache.ts`) is two tiers under `quota:{lens}:{accountId}` with a 300 s TTL — an
 in-process `TtlCache` in front of Redis, so quota reads survive a Redis outage. The lens is
 deliberately not the tenant: `quotaLens(tenantId)` maps a tenant-null (global/shared) account
 onto the shared `GLOBAL_QUOTA_LENS`, since a shared account's quota is the same fact whoever asks
 and keying it per tenant meant N fetches for one answer.
 
-Refresh runs through one shared `refreshAccountQuota` (`quota-refresh.ts`) so the single, bulk,
+Refresh runs through one shared `refreshAccountQuota` (`refresh.ts`) so the single, bulk,
 global, background, and sweep paths cannot drift: resolve the credential through the refresh-aware
 path (`resolveCredential`, so OAuth tokens refresh before use), call `fetchProviderQuota` (or a
 synthetic `missing_credential` result), then `setCachedQuota` under `targetLens(target)` —
@@ -599,12 +601,12 @@ enrollment. Public responses are `no-store` and carry the locked-down API CSP, f
   try/`errorResponse` wrapper; a login-capable provider needs an `OAuthLoginClient` in the
   provider registry — the OAuth routes resolve clients dynamically, so no route changes are
   required.
-- **New read-heavy resource or live feed:** mimic `stats/` — DTOs and
+- **New read-heavy resource or live feed:** mimic `observability/` — DTOs and
   `create*Operations`/`create*Routes` in `contracts.ts`, Drizzle aggregation in `store.ts` behind
   a narrow store interface, period/cursor validation up front. A live feed reuses
-  `domains/sse/routes.ts`
-  (`createConsoleSseStream` + `consoleSseResponse`) on the `live.ts`/`logs.ts` pattern: guard,
-  send the snapshot, return the subscriber teardown.
+  `observability/sse.ts` (`createConsoleSseStream` + `consoleSseResponse`) on the
+  `observability/live.ts`/`observability/logs.ts` pattern: guard, send the snapshot, return the
+  subscriber teardown.
 - **New alias/combo rule or transport kind:** `routing/model/contracts.ts` beside
   `aliasCycleExists`/`targetResolves`, persisted in `routing/model/store.ts` behind
   `ModelRoutingStore`. A

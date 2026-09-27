@@ -103,14 +103,14 @@ describe("createRequestContextMiddleware — /v1 scoping", () => {
       .all("/*", () => ({ ok: true }));
   }
 
-  test("initializes proxy state and counts one flight for /v1 routes", async () => {
+  test("initializes proxy state without counting before provider dispatch", async () => {
     const stateStore = new ProxyRequestStateStore();
     const app = buildContextApp(stateStore);
     const req = new Request("http://localhost/v1/chat/completions", { method: "POST" });
     const response = await app.handle(req);
     expect(response.status).toBe(200);
     expect(stateStore.get(req)).toBeDefined();
-    expect(getInFlightCount()).toBe(1);
+    expect(getInFlightCount()).toBe(0);
   });
 
   test("skips proxy state for health, console, and static paths", async () => {
@@ -137,8 +137,8 @@ describe("createRequestContextMiddleware — /v1 scoping", () => {
    * plugin. A plugin-scoped `afterResponse` only fires for a request that
    * matched a registered route, so an unregistered `/v1/*` path — the cheapest
    * request an abuser can send — was admitted by the root `request` hook and
-   * never cleaned up. Measured before the fix: one unmatched request left
-   * `proxy_in_flight` permanently one higher for the life of the process.
+   * never cleaned up. That lifecycle leak made the process-local request tracker
+   * permanently one higher for the life of the process.
    *
    * This drives the real pipeline (not a hand-built app) because the defect
    * was precisely which app the lifecycle was registered on.
@@ -288,11 +288,9 @@ dbDescribe("checks.test.ts", () => {
       };
       expect(body.error?.code).toBe("client_router_denied");
       expect(body.error?.origin).toBe("cartethyia");
-      expect(body.error?.message ?? "").toContain("no API invocation access for this client");
-      // The matched router's name is in the message but not in `details`: the
-      // public detail allowlist is deliberate, so this asserts the shape rather
-      // than assuming the extra field survived sanitisation.
-      expect(body.error?.message ?? "").toContain("9Router");
+      // The public message carries the standard `Cartethyia Error:` origin
+      // prefix; the text itself is generic and never names the matched router.
+      expect(body.error?.message ?? "").toContain("No API invocation access for this client.");
     });
 
     test("serves the same key when the caller is not a denied router", async () => {
@@ -601,7 +599,7 @@ describe("registerTelemetryLifecycle — in-flight release", () => {
     } as never;
   }
 
-  test("a completed non-stream request releases its flight without a second telemetry row", async () => {
+  test("a completed non-stream request stays uncounted before dispatch and emits no second telemetry row", async () => {
     const stateStore = new ProxyRequestStateStore();
     const enqueued = { count: 0 };
     const hook = captureHook({ stateStore, enqueued });
@@ -612,7 +610,7 @@ describe("registerTelemetryLifecycle — in-flight release", () => {
     // completeAttempt, exactly like production dispatch.
     state.outcome = { status: "completed" };
     state.completed = true;
-    expect(getInFlightCount()).toBe(1);
+    expect(getInFlightCount()).toBe(0);
     await hook({ request: req });
     // The flight is gone (no leak) and no duplicate telemetry row was queued.
     expect(getInFlightCount()).toBe(0);
@@ -632,7 +630,7 @@ describe("registerTelemetryLifecycle — in-flight release", () => {
     expect(getInFlightCount()).toBe(0);
   });
 
-  test("a live stream is left untouched for stream-end finalization", async () => {
+  test("a live stream stays uncounted until a provider dispatch is acquired", async () => {
     const stateStore = new ProxyRequestStateStore();
     const enqueued = { count: 0 };
     const hook = captureHook({ stateStore, enqueued });
@@ -641,9 +639,9 @@ describe("registerTelemetryLifecycle — in-flight release", () => {
     authorizedState(stateStore, req);
     state.streaming = true;
     await hook({ request: req });
-    // Still hanging by design: the stream owns this flight until it
-    // terminates; touching it here would abort the live stream.
-    expect(getInFlightCount()).toBe(1);
+    // The response lifecycle preserves active streams, but this test never
+    // reaches provider dispatch, so no dispatch flight has started.
+    expect(getInFlightCount()).toBe(0);
     expect(enqueued.count).toBe(0);
     state.cleanup();
   });

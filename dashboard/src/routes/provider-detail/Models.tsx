@@ -27,11 +27,11 @@ import {
   useProbeModel,
   useRegisterProviderModels,
   useSetModelEnabled,
-} from "../../lib/hooks/providers";
-import { UNKNOWN_LIMITS_TOOLTIP } from "../../lib/model-limits";
-import { toast } from "../../lib/toast";
-import { useTrackedTimeout } from "../../lib/use-timeout";
-import { PROBE_REASONING_EFFORTS, type ModelCatalogEntry, type ProbeReasoningEffort } from "../../lib/contracts";
+} from "../../hooks/providers";
+import { UNKNOWN_LIMITS_TOOLTIP } from "../../shared/model-limits";
+import { toast } from "../../shared/toast";
+import { useTrackedTimeout } from "../../hooks/use-timeout";
+import { PROBE_REASONING_EFFORTS, type ModelCatalogEntry, type ProbeReasoningEffort } from "../../data/contracts";
 
 function formatModelTokens(value: number | null): string {
   if (value === null) return "\u2014";

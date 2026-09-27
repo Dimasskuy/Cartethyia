@@ -130,6 +130,7 @@ export async function runAttemptLoop<TResult, TAdapter>(
       // the estimate is only charged once the request truly consumed
       // upstream resources; the lease and reservation are held from here on.
       bindingEstablished = true;
+      state.startProviderFlight();
       return await input.attempt({
         candidate,
         credential,

@@ -78,6 +78,15 @@ describe("ApiKeyAuthorizationSnapshot", () => {
     expect(snap.rpm).toBe(60);
   });
 
+  test("ignores malformed client-router denylist entries without throwing", () => {
+    const snap = freezeSnapshot({
+      api_key_id: "malformed",
+      tenant_id: "tenant",
+      client_router_denylist: { broken: true } as unknown as ReadonlySet<unknown>,
+    });
+    expect(snap.client_router_denylist).toEqual([]);
+  });
+
   test("createAuthorizationSnapshot preserves all fields and sets admission_identity default", () => {
     const snap = createAuthorizationSnapshot({
       api_key_id: "key-123",

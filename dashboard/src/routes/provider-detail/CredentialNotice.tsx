@@ -2,7 +2,7 @@ import { ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
 import { Card, CardBody } from "../../components/ui/card";
 import { Inline } from "../../components/ui/inline";
-import type { ProviderResponse } from "../../lib/contracts";
+import type { ProviderResponse } from "../../data/contracts";
 
 /**
  * Where an operator obtains this provider's credential.

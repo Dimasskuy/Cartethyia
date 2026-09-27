@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MODEL_GROUPS, ThinkingSelect, probeThinkingOptions } from "../../../src/routes/provider-detail/Models";
-import { PROBE_REASONING_EFFORTS } from "../../../src/lib/contracts";
+import { PROBE_REASONING_EFFORTS } from "../../../src/data/contracts";
 
 /**
  * The Models section carries one reasoning-effort selector, and it must offer

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { assertProviderRouting } from "../../../src/lib/hooks/common";
+import { assertProviderRouting } from "../../../src/hooks/common";
 
 describe("assertProviderRouting", () => {
   test("rejects a non-numeric maxInflight", () => {

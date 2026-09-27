@@ -5,9 +5,9 @@ import {
   clearQuotaCacheForTests,
   getCachedQuota,
   setCachedQuota,
-} from "../../src/console/quota/quota-cache";
+} from "../../src/console/quota/cache";
 import { clearConsoleLogs, getConsoleLogSnapshot } from "../../src/observability/log-ring";
-import { inFlightAccountQuotaRefreshes } from "../../src/console/quota/quota-refresh";
+import { inFlightAccountQuotaRefreshes } from "../../src/console/quota/refresh";
 import type { RedisClient } from "../../src/persistence/redis";
 import type { ProviderQuotaResult } from "../../src/providers/quota/quota-contracts";
 import type { ProviderRegistry } from "../../src/providers/provider-registry";
@@ -16,7 +16,7 @@ import type { OAuthTokenRefresher } from "../../src/providers/authentication/oau
 const dummyRefresher: OAuthTokenRefresher = {
   refresh: async () => ({ access: "a", refresh: "r", expiresAt: new Date() }),
 };
-/** Minimal in-memory RedisClient fake covering the quota-cache call shapes. */
+/** Minimal in-memory RedisClient fake covering the quota cache call shapes. */
 function fakeRedis(): RedisClient {
   const store = new Map<string, string>();
   return {

@@ -85,7 +85,11 @@ produces:
    downstream routers this key refuses, matched against
    `client-router-fingerprint.ts`. That module reads inbound headers only and
    labels a caller from values the product itself emits (`x-msh-platform:
-   9router`, `x-omniroute-peer-trace`, a User-Agent naming the product). It is
+   9router`, `x-omniroute-peer-trace`, or a User-Agent naming the product).
+   Generic runtime User-Agents such as bare `node` are not product-unique and
+   are not used. 9Router and OmniRoute are one product under two names and share
+   a single entry and id (`9router`);
+   `omniroute` is accepted as a legacy alias. It is
    a best-effort label, **not** an authentication boundary: a client that sends
    no fingerprint is simply not matched. The denial runs in
    `createApiKeyAuthenticationMiddleware`, so a refused router is rejected 403

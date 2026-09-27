@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { Activity, ArrowRight, ArrowUpRight, Home, Menu, MessageCircle, Network, ShieldCheck, Sparkles, Terminal, X } from "lucide-react";
 import { GITHUB_REPO_URL, GithubBadge } from "../../components/patterns/github-badge";
-import { useReducedMotion } from "../../lib/use-reduced-motion";
+import { useReducedMotion } from "../../hooks/use-reduced-motion";
 
 type SignalIconName = "activity" | "network" | "shield" | "sparkles" | "terminal";
 type StoryTheme = "night" | "core" | "blossom" | "voices" | "red" | "denial" | "shore";

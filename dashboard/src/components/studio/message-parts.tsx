@@ -1,11 +1,11 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Bot, Brain, Check, ChevronDown, Copy, User, Wrench } from "lucide-react";
-import type { StudioMessage } from "../../lib/contracts";
-import { formatStudioMs } from "../../lib/studio-stream";
-import { formatTokens as formatTokenCount } from "../../lib/format";
-import { toast } from "../../lib/toast";
-import { useClipboard } from "../../lib/use-clipboard";
+import type { StudioMessage } from "../../data/contracts";
+import { formatStudioMs } from "../../shared/studio-stream";
+import { formatTokens as formatTokenCount } from "../../shared/format";
+import { toast } from "../../shared/toast";
+import { useClipboard } from "../../hooks/use-clipboard";
 
 function formatTokens(usage: StudioMessage["usage"]): string | null {
   if (!usage) return null;

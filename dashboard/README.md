@@ -43,16 +43,16 @@ chunks:
 | --- | --- | --- |
 | `/login`, `/setup`, `/banned` | `Login`, `Setup`, `Banned` | `console/auth` |
 | `/` | `Overview` | dashboard summary APIs |
-| `/usage` | `Usage` | `console/domains/stats` and usage contracts |
-| `/providers` | `Providers` | `console/providers/catalog` |
+| `/usage` | `features/usage/UsagePage` | `console/observability` and usage contracts |
+| `/providers` | `features/providers/ProvidersPage` | `console/providers/catalog` |
 | `/providers/:providerId` | `ProviderDetail` | `console/providers/detail` and catalog |
 | `/combos` | `Combos` | `console/routing/model` |
-| `/quota` | `Quota` | `console/quota` |
+| `/quota` | `features/quota/QuotaPage` | `console/quota` |
 | `/proxy` | `Proxy` | `network/pool` and routing |
-| `/customization` | `Customization` | none (browser-local: `dashboard/src/lib/customization`) |
+| `/customization` | `Customization` | none (browser-local: `dashboard/src/shared/customization`) |
 | `/model-lab` | `Studio` | `console/domains/studio` |
 | `/cli-tools`, `/cli-tools/:toolId` | `CliTools`, `CliToolDetail` | `console/cli-tools` |
-| `/console-log` | `ConsoleLog` | `console/domains/logs` and SSE |
+| `/console-log` | `features/logs/ConsoleLogPage` | `console/observability/logs` and SSE |
 | `/settings` | `Settings` | `console/settings` |
 | Overview `API Credentials` row → share | `ShareManagementDialog` | `console/domains/api-keys` and `console/share` |
 | `/share/:token` (public root route) | `apps/share/page.tsx` | public key enrollment (`/data`, `/issue`) and personal handoff (`/handoff`) via `src/console/share/share-router.ts` |
@@ -72,7 +72,7 @@ authority; update the mirror in the same change and keep `dashboard/test/*-parit
 - Provider display names in `src/lib/provider-names.ts` mirror the canonical
   bundled provider registry. Keep the exact bundled count and ids synchronized;
   BYOK providers are runtime data, not bundled registry entries.
-- `src/components/ProviderIcon.tsx`'s `iconAssets` map and `Providers.tsx`'s
+- `src/components/ProviderIcon.tsx`'s `iconAssets` map and `features/providers/ProvidersPage.tsx`'s
   `FREE_LIMITED_IDS` / `FREE_AVAILABLE_IDS` / `FOUNDING_IDS` sets are the same
   kind of hand-copied provider-id list, guarded by
   `test/provider-lists-parity.test.ts`. The icon map may carry extra keys for
@@ -84,8 +84,8 @@ authority; update the mirror in the same change and keep `dashboard/test/*-parit
   drift field-by-field.
 - `src/lib/contracts.ts` re-exports the backend `USAGE_DIMENSIONS` tuple as a value, not a
   type-only copy, because the Usage page validates `?dim=` against it at runtime and offers one
-  breakdown tab per member. It comes from `console/domains/stats/usage-dimensions`, a module
-  with no imports, rather than from `stats/contracts`, which imports Elysia and reaches
+  breakdown tab per member. It comes from `console/observability/usage-dimensions`, a module
+  with no imports, rather than from `observability/contracts`, which imports Elysia and reaches
   `node:crypto` through the console error path. Pinned by `test/usage-dimensions-parity.test.ts`.
 - Usage periods are generated into `src/lib/generated/usage-periods.json` by
   `bun run codegen`; do not hand-maintain a second period list.
@@ -106,7 +106,7 @@ rule is enforced by `test/architecture/dashboard-boundary.test.ts`, which walks
 every `dashboard/src` value import into the backend graph and fails on the first
 module that reaches Elysia, a `node:*` API, or a database driver. A backend
 module a value must be shared from has to be import-free (like
-`console/domains/stats/usage-dimensions` and `security/access-control`) or
+`console/observability/usage-dimensions` and `security/access-control`) or
 reached through a generated file, not through the module that happens to
 declare it.
 

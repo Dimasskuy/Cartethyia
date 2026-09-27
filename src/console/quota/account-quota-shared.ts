@@ -1,7 +1,7 @@
 import type { ConsoleAccessResolver } from "../auth/access";
 import type { AuditRecorder } from "../auth/service";
 import { markClineApiKeyCredential } from "../../providers/integrations/cline/cline-quota";
-import type { QuotaRefreshDeps } from "./quota-refresh";
+import type { QuotaRefreshDeps } from "./refresh";
 
 /**
  * Dependencies shared by the tenant-scoped and global-admin account/quota route

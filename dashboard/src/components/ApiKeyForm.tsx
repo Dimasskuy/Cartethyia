@@ -4,11 +4,12 @@ import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { ModelPickerModal } from "./ModelPicker";
 import {
-  CLIENT_ROUTER_IDS,
+  CLIENT_ROUTERS,
   TENANT_KEY_SCOPES,
+  normalizeClientRouterId,
   type ApiKeyResponse,
   type TenantScope,
-} from "../lib/contracts";
+} from "../data/contracts";
 
 /**
  * Human-readable descriptions of the authority granted by each tenant scope.
@@ -201,7 +202,9 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
   const [blockedRouters, setBlockedRouters] = useState<string[]>(() => {
     const list = (record as unknown as { clientRouterDenylist?: string[] | null })
       ?.clientRouterDenylist;
-    return list ? [...list] : [];
+    return list
+      ? [...new Set(list.map(normalizeClientRouterId).filter((id): id is string => id !== undefined))]
+      : [];
   });
   const [notesTitle, setNotesTitle] = useState(() => {
     const t = (record as unknown as { notesTitle?: string | null })?.notesTitle;
@@ -564,9 +567,9 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
             </p>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            {CLIENT_ROUTER_IDS.map((routerId) => (
+            {CLIENT_ROUTERS.map((router) => (
               <div
-                key={routerId}
+                key={router.id}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -576,28 +579,28 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
                   padding: "8px 10px",
                   border: "1px solid var(--inner-border)",
                   borderRadius: "8px",
-                  background: blockedRouters.includes(routerId) ? "var(--accent-soft)" : "var(--surface-1)",
+                  background: blockedRouters.includes(router.id) ? "var(--accent-soft)" : "var(--surface-1)",
                 }}
               >
                 <div>
-                  <div style={{ fontSize: "12px", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
-                    {routerId}
+                  <div style={{ fontSize: "12px", color: "var(--text-primary)" }}>
+                    Block {router.label} Client
                   </div>
                   <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-tertiary)" }}>
-                    Block requests identified as {routerId}.
+                    Reject requests fingerprinted as {router.label}.
                   </p>
                 </div>
                 <Switch
-                  checked={blockedRouters.includes(routerId)}
+                  checked={blockedRouters.includes(router.id)}
                   onChange={(checked) =>
                     setBlockedRouters((current) =>
                       checked
-                        ? [...current, routerId]
-                        : current.filter((entry) => entry !== routerId),
+                        ? [...current, router.id]
+                        : current.filter((entry) => entry !== router.id),
                     )
                   }
                   disabled={busy}
-                  aria-label={`Block client router ${routerId}`}
+                  aria-label={`Block ${router.label} client`}
                 />
               </div>
             ))}

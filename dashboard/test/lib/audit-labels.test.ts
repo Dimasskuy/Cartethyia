@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { auditActionLabel, prettifyAuditAction } from "../../src/lib/audit-labels";
+import { auditActionLabel, prettifyAuditAction } from "../../src/shared/audit-labels";
 
 describe("audit action labels", () => {
   test("known backend actions have explicit human labels", () => {

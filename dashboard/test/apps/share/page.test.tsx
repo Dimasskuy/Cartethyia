@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ShareEnrollmentData, ShareHandoffData, ShareLinkData } from "../../../src/lib/hooks/share-data";
+import type { ShareEnrollmentData, ShareHandoffData, ShareLinkData } from "../../../src/hooks/share-data";
 
 (globalThis as { window?: unknown }).window = {
   location: { pathname: "/share/public-token", origin: "https://gateway.example" },
@@ -10,7 +10,7 @@ import type { ShareEnrollmentData, ShareHandoffData, ShareLinkData } from "../..
 
 interface ShareState { data: ShareLinkData | null; error: string | null; loading: boolean }
 let shareState: ShareState = { data: null, error: null, loading: true };
-mock.module("../../../src/lib/hooks/share-data", () => ({ useShareData: (): ShareState => shareState }));
+mock.module("../../../src/hooks/share-data", () => ({ useShareData: (): ShareState => shareState }));
 // Load after mock.module so the page captures the mocked data hook.
 const { SharePage, tokenFromPathname } = await import("../../../src/apps/share/page");
 function render(): string { return renderToStaticMarkup(createElement(SharePage)); }
