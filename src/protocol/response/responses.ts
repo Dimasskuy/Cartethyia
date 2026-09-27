@@ -302,6 +302,11 @@ export async function* decodeResponsesSseStream(
   // name-only follow-up delta; without this set that recovery would re-fire
   // for every already-named call.
   const namedCalls = new Set<string>();
+  // Reasoning item ids whose deltas were streamed incrementally.
+  // Many Responses backends emit both delta frames and the complete item
+  // in output_item.done; without this tracking the reasoning text duplicates.
+  const streamedReasoningItemIds = new Set<string>();
+  let hasStreamedReasoningDeltas = false;
   yield {
     type: "response_start",
     sequence_number: seq++,
@@ -364,6 +369,9 @@ export async function* decodeResponsesSseStream(
             typeof event["summary_index"] === "number" && Number.isInteger(event["summary_index"])
               ? event["summary_index"]
               : 0;
+          const deltaItemId = typeof event["item_id"] === "string" ? event["item_id"] : undefined;
+          if (deltaItemId !== undefined) streamedReasoningItemIds.add(deltaItemId);
+          hasStreamedReasoningDeltas = true;
           yield {
             type: "content_delta",
             sequence_number: seq++,
@@ -557,7 +565,11 @@ export async function* decodeResponsesSseStream(
           const encryptedContent =
             typeof item["encrypted_content"] === "string" ? item["encrypted_content"] : undefined;
           const itemId = typeof item["id"] === "string" ? item["id"] : undefined;
-          if (summaries.length > 0) {
+          const alreadyStreamed =
+            itemId !== undefined
+              ? streamedReasoningItemIds.has(itemId)
+              : hasStreamedReasoningDeltas;
+          if (summaries.length > 0 && !alreadyStreamed) {
             for (const [position, summary] of summaries.entries()) {
               yield {
                 type: "content_delta",

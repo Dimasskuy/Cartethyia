@@ -203,6 +203,21 @@ describe("decodeResponsesSseStream reasoning items", () => {
       .map((event) => (event.content as Extract<ContentPart, { kind: "reasoning" }>).summary);
     expect(summaries).toEqual(["Reasoning in content"]);
   });
+  test("does not duplicate reasoning text when both delta frames and output_item.done arrive", async () => {
+    const body =
+      `data: {"type":"response.reasoning_text.delta","item_id":"rs_1","delta":"Thinking text delta"}\n\n` +
+      `data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","content":[{"type":"reasoning_text","text":"Thinking text delta"}]}}\n\n` +
+      `data: {"type":"response.completed","response":{"status":"completed","usage":{}}}\n\n` +
+      `data: [DONE]\n\n`;
+    const events = await collect(decodeResponsesSseStream(streamOf(body), fakeRequest()));
+    const summaries = events
+      .filter(
+        (event): event is Extract<CanonicalEvent, { type: "content_delta" }> =>
+          event.type === "content_delta" && event.content.kind === "reasoning",
+      )
+      .map((event) => (event.content as Extract<ContentPart, { kind: "reasoning" }>).summary);
+    expect(summaries).toEqual(["Thinking text delta"]);
+  });
 
 });
 

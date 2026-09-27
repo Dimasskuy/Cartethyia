@@ -106,7 +106,7 @@ function handoffRow(overrides: Partial<ShareHandoffRow> = {}): ShareHandoffRow {
     monthlyTokenLimit: null,
     lifetimeTokenBudget: null,
     maxConcurrentRequests: null,
-    modelAllowlist: null,
+    modelAllowlist: ["openai/gpt-5"],
     modelDenylist: null,
     modelPrefix: null,
     notesTitle: null,
