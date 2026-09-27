@@ -1,6 +1,6 @@
 /**
  * Token-speed (tokens/sec) computation shared by live-traffic telemetry
- * (`transport/middleware/ingress.ts`) and model probes
+ * (`transport/middleware/error-lifecycle.ts`) and model probes
  * (`providers/discovery/provider-probing-service.ts`) so both report the
  * same number for the same observation.
  *

@@ -170,6 +170,12 @@ function mapUsageRequestItem(
     ...(event.estimatedCostUsd !== null && event.estimatedCostUsd !== undefined
       ? { estimatedCost: Number(event.estimatedCostUsd) }
       : {}),
+    ...(event.creditUsed !== null && event.creditUsed !== undefined
+      ? { creditUsed: Number(event.creditUsed) }
+      : {}),
+    ...(event.resolveMs !== null && event.resolveMs !== undefined
+      ? { resolveMs: event.resolveMs }
+      : {}),
   };
 }
 async function resolveProxyLabel(
@@ -616,7 +622,15 @@ export class DrizzleObservabilityStore implements ObservabilityStore {
       .orderBy(desc(telemetryEvents.createdAt), desc(telemetryEvents.id))
       .limit(limit);
     const hideClientIp = await shouldMaskClientIp(this.preferences, tenantId);
-    return { items: rows.map((row) => mapUsageRequestItem(row, hideClientIp)) };
+    const keyIds = [...new Set(rows.map((row) => row.apiKeyId).filter((id): id is string => id !== null))];
+    const labels = await this.apiKeyLabels(tenantId, keyIds);
+    return {
+      items: rows.map((row) => {
+        const item = mapUsageRequestItem(row, hideClientIp);
+        const label = row.apiKeyId ? labels.get(row.apiKeyId) : undefined;
+        return label === undefined ? item : { ...item, apiKeyLabel: label };
+      }),
+    };
   }
   async usageRequestDetail(
     tenantId: string,

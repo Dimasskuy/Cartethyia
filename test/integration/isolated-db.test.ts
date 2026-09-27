@@ -300,6 +300,8 @@ const expectedColumns: Record<string, readonly ExpectedColumn[]> = {
     column("output_tokens", "integer", "int4", "YES"),
     column("reasoning_tokens", "integer", "int4", "YES"),
     column("estimated_cost_usd", "numeric", "numeric", "YES"),
+    column("credit_used", "numeric", "numeric", "YES"),
+    column("resolve_ms", "integer", "int4", "YES"),
     column("tokens_per_sec", "numeric", "numeric", "YES"),
     column("first_content_delta_at_ms", "bigint", "int8", "YES"),
     column("last_event_at_ms", "bigint", "int8", "YES"),

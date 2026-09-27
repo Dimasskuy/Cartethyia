@@ -422,6 +422,14 @@ export interface UsageRecord {
    * cannot price is unpriced, not free.
    */
   estimated_cost: number | null;
+  /**
+   * Provider-billed credits for this turn, or `undefined` when the upstream
+   * reported no credit field. The Tencent buddy family reports a top-level
+   * `credit` (e.g. `1.01` for 72k prompt tokens) in its Chat usage frame;
+   * it is a billing-meter unit, not USD, so it rides beside
+   * `estimated_cost` rather than replacing it.
+   */
+  credit_used?: number;
   total_tokens?: number | "unavailable";
   details?: {
     accepted_prediction_tokens?: number | "unavailable";

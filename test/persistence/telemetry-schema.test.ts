@@ -14,4 +14,10 @@ describe("telemetry_events timestamp columns", () => {
     expect(telemetryEvents.firstContentDeltaAtMs.getSQLType()).toBe("bigint");
     expect(telemetryEvents.lastEventAtMs.getSQLType()).toBe("bigint");
   });
+
+  test("resolveMs is an integer-millisecond column", () => {
+    // Resolve overhead is a small millisecond count (routing + lease +
+    // preparation), so int4 is correct — unlike the epoch timestamps above.
+    expect(telemetryEvents.resolveMs.getSQLType()).toBe("integer");
+  });
 });

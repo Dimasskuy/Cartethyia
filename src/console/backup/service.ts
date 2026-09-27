@@ -18,7 +18,7 @@
  */
 import type { CartethyiaDatabase } from "../../persistence/postgres";
 import { ConsoleDomainError } from "../shared/errors";
-import { CONFIG_TABLES, TELEMETRY_TABLES, TENANT_TABLE } from "./contracts";
+import { tablesForSection } from "./contracts";
 import type { BackupSection } from "./contracts";
 import { exportBackup, applyRestore } from "./store";
 import { detectFormat, restoreOrder, validateRestorePayload } from "./validate";
@@ -57,14 +57,6 @@ function sectionsOrDefault(sections: readonly BackupSection[] | undefined): read
 export class BackupService {
   constructor(private readonly options: BackupServiceOptions) {}
 
-  /** Tables an export of these sections reads. */
-  private tablesFor(sections: readonly BackupSection[]) {
-    const tables = [];
-    if (sections.includes("config")) tables.push(...CONFIG_TABLES, TENANT_TABLE);
-    if (sections.includes("telemetry")) tables.push(...TELEMETRY_TABLES);
-    return tables;
-  }
-
   async export(options: ExportOptions): Promise<{ payload: unknown; counts: Record<string, number> }> {
     if (!(await this.options.verifyPassword(options.password))) {
       throw new ConsoleDomainError("unauthorized", 401, "password is incorrect");
@@ -72,7 +64,7 @@ export class BackupService {
     const sections = sectionsOrDefault(options.sections);
     const { payload, counts } = await exportBackup(
       this.options.db,
-      this.tablesFor(sections),
+      sections.flatMap((section) => tablesForSection(section)),
       options.tenantId,
     );
     return { payload, counts };
@@ -145,7 +137,7 @@ export class BackupService {
   ): Promise<Record<string, number>> {
     const { counts } = await exportBackup(
       this.options.db,
-      this.tablesFor(sectionsOrDefault(sections)),
+      sectionsOrDefault(sections).flatMap((section) => tablesForSection(section)),
       tenantId,
     );
     return counts;

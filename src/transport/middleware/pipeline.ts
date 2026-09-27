@@ -1,19 +1,23 @@
 import { Elysia } from "elysia";
+import { createIngressPolicyMiddleware } from "./body-policy";
 import {
-  createApiKeyAuthenticationMiddleware,
   createCanonicalRequestMiddleware,
   createClientIdentityMiddleware,
-  createDependencyReadinessMiddleware,
-  createErrorNormalizationMiddleware,
-  createIngressPolicyMiddleware,
-  createIpAbuseProtectionMiddleware,
   createProxyRoutePreparationMiddleware,
   createRequestContextMiddleware,
+  type CanonicalAdapter,
+} from "./request-context";
+import {
+  createApiKeyAuthenticationMiddleware,
+  createDependencyReadinessMiddleware,
+  createIpAbuseProtectionMiddleware,
+} from "./gateway-guards";
+import {
+  createErrorNormalizationMiddleware,
   registerRequestCleanup,
   registerTelemetryLifecycle,
   type AfterResponseApp,
-  type CanonicalAdapter,
-} from "./ingress";
+} from "./error-lifecycle";
 import type { ReadinessCheckResult } from "../../persistence/readiness";
 import type { IpAbuseProtectionService } from "../../security/abuse";
 import type { ProxyRequestPreparer } from "../request/preparer";

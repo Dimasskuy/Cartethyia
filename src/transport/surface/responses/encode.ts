@@ -6,7 +6,8 @@ import { SurfaceStreamEncoder } from "../stream-base";
 import { ResponsesLifecycleError, ResponsesSequenceError } from "./errors";
 import type { ResponsesEncodingContext, ResponsesWireEvent } from "./contracts";
 import type { SurfaceOutput } from "../adapters";
-import { computerOutputToWire, outputToWire, parseResponsesComputerActionChunks } from "./parse";
+import { parseResponsesComputerActionChunks } from "./parse";
+import { computerOutputToWire, outputToWire } from "./wire-output";
 
 
 

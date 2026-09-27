@@ -758,6 +758,15 @@ export const telemetryEvents = pgTable(
     outputTokens: integer("output_tokens"),
     reasoningTokens: integer("reasoning_tokens"),
     estimatedCostUsd: numeric("estimated_cost_usd", { precision: 12, scale: 6 }),
+    /** Provider-billed credits (Tencent buddy-meter `credit`); NULL when unreported. */
+    creditUsed: numeric("credit_used", { precision: 12, scale: 4 }),
+    /**
+     * Gateway-side time before the upstream dispatch began: routing,
+     * credential lease, and request preparation. `ttfbMs` is measured from
+     * the dispatch start, so this is the overhead the client waited on before
+     * the provider was even called.
+     */
+    resolveMs: integer("resolve_ms"),
     tokensPerSec: numeric("tokens_per_sec", { precision: 10, scale: 2 }),
     // Absolute epoch-millisecond event timestamps (~1.8e12) overflow integer
     // (int4): completed requests carrying observed stream timings failed

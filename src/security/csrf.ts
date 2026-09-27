@@ -20,7 +20,7 @@ export const CSRF_HEADER_NAME = "x-csrf-token";
 
 /**
  * Name of the session cookie whose presence gates CSRF validation in
- * `transport/middleware/ingress.ts`. Defined once here (next to the CSRF check that reads
+ * `transport/middleware/gateway-guards.ts`. Defined once here (next to the CSRF check that reads
  * it) instead of once per layer; `console/auth/session-resolver.ts` reuses it.
  */
 export const SESSION_COOKIE_NAME = "session_token";

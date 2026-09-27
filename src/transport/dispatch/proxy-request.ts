@@ -26,7 +26,7 @@ import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer"
 import { resolveStreamFirstChunkTimeoutMs, resolveStreamStallTimeoutMs, resolveUpstreamTimeoutMs } from "../../config";
 import { ProxyRequestStateStore } from "../request/state";
 import { repriceUsage } from "../../providers/usage";
-import { finalizeRequestTelemetry } from "../middleware/ingress";
+import { finalizeRequestTelemetry } from "../middleware/error-lifecycle";
 import {
   captureProviderExchange,
   completeAttempt,

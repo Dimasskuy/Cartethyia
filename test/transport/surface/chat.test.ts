@@ -209,6 +209,27 @@ describe("ChatAdapter.parse", () => {
     expect(payload["prompt_cache_retention"]).toBe("24h");
   });
 
+  test("bounds an unbounded max_tokens on the chat wire", () => {
+    const adapter = new ChatAdapter();
+    const oversized = adapter.parse({
+      model: "gpt-chat",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 128000,
+    });
+    expect(canonicalToChatPayload(oversized)["max_tokens"]).toBe(32000);
+    const withinBound = adapter.parse({
+      model: "gpt-chat",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 8000,
+    });
+    expect(canonicalToChatPayload(withinBound)["max_tokens"]).toBe(8000);
+    const absent = adapter.parse({
+      model: "gpt-chat",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect("max_tokens" in canonicalToChatPayload(absent)).toBe(false);
+  });
+
   test("parses the caller omit flag and top_p/logprobs sampling knobs", () => {
     const adapter = new ChatAdapter();
     const request = adapter.parse({

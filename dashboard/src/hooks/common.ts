@@ -155,6 +155,8 @@ function assertUsageRequestItem(value: unknown): void {
     "ttfbMs",
     "tokensPerSec",
     "estimatedCost",
+    "creditUsed",
+    "resolveMs",
   ]) {
     if (!isOptionalFiniteNumber(value[field])) throw invalidResponse("Invalid usage request response");
   }

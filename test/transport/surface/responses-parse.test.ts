@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
-  computerOutputToWire,
   hasOwn,
-  outputToWire,
   parseResponsesComputerActionChunks,
   parseResponsesRequest,
   unwrapBody,
 } from "../../../src/transport/surface/responses/parse";
+import {
+  computerOutputToWire,
+  outputToWire,
+} from "../../../src/transport/surface/responses/wire-output";
 import type { ContentPart } from "../../../src/transport/canonical-model";
 import { canonicalToChatPayload } from "../../../src/protocol/request/chat";
 

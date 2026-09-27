@@ -203,3 +203,138 @@ dbDescribe("PublicModelCatalogStore — alias/combo metadata", () => {
     expect(entry?.max_completion_tokens).toBe(32_000);
   });
 });
+
+/**
+ * The metadata a client parses off `/v1/models`.
+ *
+ * The surface used to publish only `context_length`/`max_completion_tokens`/
+ * `capabilities`, so `reasoning`, `tool_call`, `web_search`, and `cost` — all
+ * persisted on the `models` row — never reached a client. These tests pin the
+ * whole emitted entry, including the normalized modality vocabulary.
+ */
+dbDescribe("PublicModelCatalogStore — emitted metadata", () => {
+  let db: CartethyiaDatabase;
+  const tenantId = randomUUID();
+  const providerId = `meta-emit-${randomUUID().slice(0, 8)}`;
+  const richModel = `rich-${randomUUID().slice(0, 8)}`;
+  const plainModel = `plain-${randomUUID().slice(0, 8)}`;
+  const aliasName = `emit-alias-${randomUUID().slice(0, 8)}`;
+
+  beforeAll(async () => {
+    db = getDb();
+    await db
+      .insert(tenants)
+      .values({ id: tenantId, name: "public-model-store-emit-test", status: "active" })
+      .onConflictDoNothing();
+    await db
+      .insert(providers)
+      .values({ id: providerId, tenantId, enabled: true, requiresAccount: false });
+    await db.insert(models).values([
+      {
+        providerId,
+        modelId: richModel,
+        wireFamily: "chat",
+        endpointPath: "/v1/chat/completions",
+        contextLimit: 1_048_576,
+        outputLimit: 131_072,
+        // Provider-native spelling: `document` and `file` must fold to `pdf`,
+        // and an unknown token must be dropped rather than leaked.
+        modalities: { input: ["text", "image", "document", "file", "hologram"], output: ["text"] },
+        reasoning: true,
+        toolCall: true,
+        webSearch: true,
+        cost: { input: 3, output: 15, cache_read: 0.3 },
+        enabled: true,
+      },
+      {
+        providerId,
+        modelId: plainModel,
+        wireFamily: "chat",
+        endpointPath: "/v1/chat/completions",
+        contextLimit: 8_192,
+        outputLimit: 4_096,
+        modalities: null,
+        reasoning: false,
+        toolCall: false,
+        webSearch: false,
+        cost: null,
+        enabled: true,
+      },
+    ]);
+    await db.insert(modelAliases).values({ tenantId, alias: aliasName, targetModel: `${providerId}/${richModel}` });
+  });
+
+  afterAll(async () => {
+    await db.delete(modelAliases).where(eq(modelAliases.tenantId, tenantId));
+    await db.delete(models).where(eq(models.providerId, providerId));
+    await db.delete(providers).where(eq(providers.id, providerId));
+    await db.delete(tenants).where(eq(tenants.id, tenantId));
+  });
+
+  function snapshot(): ApiKeyAuthorizationSnapshot {
+    return {
+      api_key_id: randomUUID(),
+      tenant_id: tenantId,
+      model_allowlist: [`${providerId}/${richModel}`, `${providerId}/${plainModel}`, aliasName],
+      model_denylist: null,
+    };
+  }
+
+  test("a rich catalog row publishes reasoning/tool_call/web_search/cost and a normalized vocabulary", async () => {
+    const store = new PublicModelCatalogStore(db);
+    const listed = await store.listPublicModels(tenantId, snapshot());
+    const entry = listed.find((m) => m.id === `${providerId}/${richModel}`);
+
+    expect(entry).toBeDefined();
+    expect(entry?.context_length).toBe(1_048_576);
+    expect(entry?.max_completion_tokens).toBe(131_072);
+    // `document`/`file` folded to `pdf`; `hologram` dropped.
+    expect(entry?.capabilities).toEqual({ input: ["text", "image", "pdf"], output: ["text"] });
+    expect(entry?.reasoning).toBe(true);
+    expect(entry?.tool_call).toBe(true);
+    expect(entry?.web_search).toBe(true);
+    expect(entry?.cost).toEqual({ input: 3, output: 15, cache_read: 0.3 });
+  });
+
+  test("a bare row omits capabilities and the false flags rather than publishing defaults", async () => {
+    const store = new PublicModelCatalogStore(db);
+    const listed = await store.listPublicModels(tenantId, snapshot());
+    const entry = listed.find((m) => m.id === `${providerId}/${plainModel}`);
+
+    expect(entry).toBeDefined();
+    expect(entry?.capabilities).toBeUndefined();
+    expect(entry?.reasoning).toBeUndefined();
+    expect(entry?.tool_call).toBeUndefined();
+    expect(entry?.web_search).toBeUndefined();
+    expect(entry?.cost).toBeUndefined();
+  });
+
+  test("an alias mirrors its target's capability flags and cost", async () => {
+    const store = new PublicModelCatalogStore(db);
+    const listed = await store.listPublicModels(tenantId, snapshot());
+    const entry = listed.find((m) => m.id === aliasName);
+
+    expect(entry).toBeDefined();
+    expect(entry?.owned_by).toBe("cartethyia");
+    expect(entry?.reasoning).toBe(true);
+    expect(entry?.tool_call).toBe(true);
+    expect(entry?.web_search).toBe(true);
+    expect(entry?.cost).toEqual({ input: 3, output: 15, cache_read: 0.3 });
+    expect(entry?.capabilities).toEqual({ input: ["text", "image", "pdf"], output: ["text"] });
+  });
+
+  test("the detail route emits the same extended entry", async () => {
+    const store = new PublicModelCatalogStore(db);
+    const detail = await store.getPublicModelDetail(
+      `${providerId}/${richModel}`,
+      tenantId,
+      snapshot(),
+    );
+
+    expect(detail?.reasoning).toBe(true);
+    expect(detail?.tool_call).toBe(true);
+    expect(detail?.web_search).toBe(true);
+    expect(detail?.cost).toEqual({ input: 3, output: 15, cache_read: 0.3 });
+    expect(detail?.capabilities).toEqual({ input: ["text", "image", "pdf"], output: ["text"] });
+  });
+});

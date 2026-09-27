@@ -7,6 +7,7 @@ import {
   ArrowUp,
   ArrowUpFromLine,
   Check,
+  Coins,
   Copy,
   Database,
   DollarSign,
@@ -16,7 +17,6 @@ import {
   Minimize2,
   Radio,
   Scaling,
-  Sigma,
   Wrench,
 } from "lucide-react";
 import {
@@ -50,7 +50,7 @@ import { useProviderAccounts } from "../../hooks/providers";
 import { useInFlight } from "../../hooks/live";
 import { useTrackedTimeout } from "../../hooks/use-timeout";
 import { USAGE_PERIODS, type UsagePeriod as Period } from "../../data/usage-periods";
-import { httpStatusLabel, httpStatusTone } from "../../shared/http-status";
+import { httpStatusLabel, httpStatusShortLabel, httpStatusTone } from "../../shared/http-status";
 import { USAGE_DIMENSIONS, type UsageDimension } from "../../data/contracts";
 import {
   DEFAULT_TOKEN_SCALE,
@@ -133,6 +133,14 @@ function formatUsd(value: number | null | undefined): string {
   if (value < 0.01) return `$${value.toFixed(4)}`;
   return `$${value.toFixed(2)}`;
 }
+/**
+ * Provider-billed credits (Tencent buddy-meter `credit`): two decimals like
+ * the live probe reported (`1.01`), `—` when the upstream sent no credit.
+ */
+export function formatCredit(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return `${Number(value.toFixed(2)).toLocaleString("en-US")} CR`;
+}
 function formatSpeed(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) return "—";
   const rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
@@ -150,21 +158,53 @@ function formatDateTime(value: string): string {
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 }
-
-/** Wire surface mapped to its compact `/surface` label for the status cell. */
-function protocolLabel(surface: string | undefined): string {
+/**
+ * Wire surface mapped to its protocol family name for the status cell.
+ * The `API KEY` column already identifies the client, so the status cell
+ * names only the protocol family — never the endpoint or client string.
+ */
+export function surfaceFamilyLabel(surface: string | undefined): string {
   switch (surface) {
     case "chat":
-      return "/chat";
+      return "OpenAI Completions";
     case "messages":
-      return "/messages";
+      return "Anthropic Messages";
     case "responses":
-      return "/responses";
+      return "OpenAI Responses";
     case "completion":
-      return "/completions";
+      return "OpenAI Completions";
     default:
-      return surface ? `/${surface}` : "—";
+      return surface ? surface : "—";
   }
+}
+
+/**
+ * Relative age of a request start for the time cell's second line:
+ * minutes below an hour, hours below a day, days below a week, weeks above.
+ * Pure display — the absolute clock stays on the first line.
+ */
+export function formatAgo(value: string, nowMs: number = Date.now()): string {
+  const started = new Date(value).getTime();
+  if (Number.isNaN(started)) return "—";
+  const diffMs = Math.max(0, nowMs - started);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  if (diffMs < hour) {
+    const minutes = Math.max(0, Math.floor(diffMs / minute));
+    return minutes <= 1 ? "just now" : `${minutes}m ago`;
+  }
+  if (diffMs < day) {
+    const hours = Math.floor(diffMs / hour);
+    return hours <= 1 ? "1h ago" : `${hours}h ago`;
+  }
+  if (diffMs < week) {
+    const days = Math.floor(diffMs / day);
+    return days <= 1 ? "1d ago" : `${days}d ago`;
+  }
+  const weeks = Math.floor(diffMs / week);
+  return weeks <= 1 ? "1w ago" : `${weeks}w ago`;
 }
 
 /**
@@ -185,19 +225,36 @@ function statusCode(
       : httpStatus === 200
         ? "ok"
         : "warn";
-    return { code: httpStatusLabel(httpStatus), tone };
+    return { code: httpStatusShortLabel(httpStatus), tone };
   }
   switch (status) {
     case "completed":
-      return { code: httpStatusLabel(200), tone: "ok" };
+      return { code: httpStatusShortLabel(200), tone: "ok" };
     case "failed":
-      return { code: httpStatusLabel(500), tone: "err" };
+      return { code: httpStatusShortLabel(500), tone: "err" };
     case "cancelled":
-      return { code: httpStatusLabel(499), tone: "warn" };
+      return { code: httpStatusShortLabel(499), tone: "warn" };
     case "truncated":
-      return { code: httpStatusLabel(502), tone: "err" };
+      return { code: httpStatusShortLabel(502), tone: "err" };
     default:
       return { code: status, tone: "warn" };
+  }
+}
+
+/** The full-phrase code for the explainer: `500` -> `"500 Internal Server Error"`. */
+function statusFullCode(status: string, httpStatus?: number): string {
+  if (httpStatus !== undefined) return httpStatusLabel(httpStatus);
+  switch (status) {
+    case "completed":
+      return httpStatusLabel(200);
+    case "failed":
+      return httpStatusLabel(500);
+    case "cancelled":
+      return httpStatusLabel(499);
+    case "truncated":
+      return httpStatusLabel(502);
+    default:
+      return status;
   }
 }
 
@@ -211,8 +268,8 @@ function statusExplainer(
     return `499 · client aborted the request (${errorKind ?? "cancelled"}) — not a gateway error`;
   }
   if (httpStatus === 200 || status === "completed") return "200 · request succeeded";
-  const code = httpStatus ?? statusCode(status).code;
-  return errorKind ? `${code} · ${errorKind}` : String(code);
+  const code = statusFullCode(status, httpStatus);
+  return errorKind ? `${code} · ${errorKind}` : code;
 }
 
 /**
@@ -1358,9 +1415,12 @@ export default function Usage(): ReactNode {
               onScroll={handleTableScroll}
               style={{ maxHeight: "445px", overflow: "auto", borderRadius: "10px", border: "1px solid var(--inner-border)" }}
             >
-              <DataTable headers={["Time", "Provider/model", "Status", "Tokens", "Cache (of input)", "TTFT", "tps", "Dur"]}>
+              <DataTable
+                headers={["Time", "Provider/model", "API Key", "Status", "Tokens", "TPS", "TTFT", "Done"]}
+              >
                 {requestItems.map((row) => {
                   const isNew = newRowIds.has(row.requestId);
+                  const costText = row.estimatedCost === undefined ? "—" : formatUsd(row.estimatedCost);
                   return (
                     <tr
                       key={row.requestId}
@@ -1372,7 +1432,8 @@ export default function Usage(): ReactNode {
                       }}
                     >
                     <td style={{ fontSize: "11.5px", color: "var(--text-tertiary)", whiteSpace: "nowrap" }}>
-                      {formatTime(row.startedAt)}
+                      <div>{formatTime(row.startedAt)}</div>
+                      <div style={{ fontSize: "10.5px", marginTop: "1px" }}>{formatAgo(row.startedAt)}</div>
                     </td>
                     <td style={{ maxWidth: "210px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
@@ -1399,6 +1460,27 @@ export default function Usage(): ReactNode {
                           : row.model ?? "—"}
                       </div>
                     </td>
+                    <td style={{ maxWidth: "140px" }}>
+                      <div
+                        className="truncate"
+                        title={row.apiKeyLabel ?? row.apiKeyId ?? "—"}
+                        style={{ fontSize: "12px", fontWeight: 600 }}
+                      >
+                        {row.apiKeyLabel ?? "—"}
+                      </div>
+                      <div
+                        className="truncate"
+                        title={row.clientName ?? row.userAgent ?? "—"}
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "11px",
+                          color: "var(--text-tertiary)",
+                          marginTop: "1px",
+                        }}
+                      >
+                        {row.clientName ?? row.userAgent ?? "—"}
+                      </div>
+                    </td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "11px" }}>
                       <div>
                         <span
@@ -1411,7 +1493,7 @@ export default function Usage(): ReactNode {
                         >
                           {row.mode === "stream" ? "streaming" : "non-streaming"}
                         </span>
-                        {" - "}
+                        {" "}
                         <StatusCodeWithExplainer
                           status={row.status}
                           errorKind={row.errorKind}
@@ -1420,7 +1502,7 @@ export default function Usage(): ReactNode {
                       </div>
                       <div
                         className="truncate"
-                        title={row.userAgent ?? row.clientName ?? "—"}
+                        title={surfaceFamilyLabel(row.surface)}
                         style={{
                           fontFamily: "var(--font-mono)",
                           fontSize: "11px",
@@ -1429,32 +1511,51 @@ export default function Usage(): ReactNode {
                           maxWidth: "220px",
                         }}
                       >
-                        {protocolLabel(row.surface)} - {row.clientName ?? row.userAgent ?? "—"}
+                        {surfaceFamilyLabel(row.surface)}
                       </div>
                     </td>
                     <td style={{ fontFamily: "var(--font-mono)", fontSize: "11px", whiteSpace: "nowrap", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", color: "var(--text-secondary)" }}>
-                        <ArrowUp size={10} aria-label="Input tokens" /> {formatNumber(row.inputTokens)}
-                      </span>
-                      {" "}
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", color: "var(--text-secondary)" }}>
-                        <ArrowDown size={10} aria-label="Output tokens" /> {formatNumber(row.outputTokens)}
-                      </span>
-                      {" "}
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontWeight: 700 }}>
-                        <Sigma size={10} aria-label="Total tokens" /> {formatNumber(row.totalTokens)}
-                      </span>
-                    </td>
-                    <td style={{ fontFamily: "var(--font-mono)", fontSize: "11.5px", textAlign: "right", color: "var(--text-secondary)" }}>
-                      {row.cachedTokens !== undefined && row.cachedTokens > 0
-                        ? `${formatNumber(row.cachedTokens)} / ${formatNumber(row.inputTokens)}`
-                        : formatNumber(row.cachedTokens ?? 0)}
-                    </td>
-                    <td style={{ fontFamily: "var(--font-mono)", fontSize: "11.5px", textAlign: "right", color: "var(--text-secondary)" }}>
-                      {formatDuration(row.ttfbMs)}
+                      <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "var(--text-secondary)" }}>
+                          <ArrowUp size={10} aria-label="Input tokens" /> IN {formatNumber(row.inputTokens)}
+                        </span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "var(--text-secondary)" }}>
+                          <ArrowDown size={10} aria-label="Output tokens" /> OUT {formatNumber(row.outputTokens)}
+                        </span>
+                      </div>
+                      <div
+                        style={{ display: "flex", gap: "12px", justifyContent: "flex-end", marginTop: "1px", color: "var(--text-tertiary)" }}
+                        title={row.estimatedCost === undefined ? "Unpriced model — no catalog rate" : undefined}
+                      >
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                          <Database size={10} aria-label="Cached tokens" /> CACHED {formatNumber(row.cachedTokens ?? 0)}
+                        </span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                          <DollarSign size={10} aria-label="Estimated cost" /> COST {costText}
+                        </span>
+                        {row.creditUsed !== undefined ? (
+                          <span
+                            style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+                            title="Provider-billed credits for this turn"
+                          >
+                            <Coins size={10} aria-label="Credits used" /> {formatCredit(row.creditUsed)}
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
                     <td style={{ fontFamily: "var(--font-mono)", fontSize: "11.5px", textAlign: "right", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
                       {formatSpeed(row.tokensPerSec)}
+                    </td>
+                    <td style={{ fontFamily: "var(--font-mono)", fontSize: "11.5px", textAlign: "right", color: "var(--text-secondary)" }}>
+                      <div>{formatDuration(row.ttfbMs)}</div>
+                      {row.resolveMs !== undefined ? (
+                        <div
+                          style={{ fontSize: "10.5px", marginTop: "1px", color: "var(--text-tertiary)" }}
+                          title="Gateway-side time before the upstream dispatch began"
+                        >
+                          ({formatDuration(row.resolveMs)})
+                        </div>
+                      ) : null}
                     </td>
                     <td style={{ fontFamily: "var(--font-mono)", fontSize: "11.5px", textAlign: "right", color: "var(--text-secondary)" }}>
                       {formatDuration(row.durationMs)}

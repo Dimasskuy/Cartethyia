@@ -472,5 +472,19 @@ export function canonicalToChatPayload(
     if (value !== undefined) payload[field] = value;
   }
   Object.assign(payload, pickWireSupportedControls(request.generation_controls, "chat"));
+  // Bound the Chat-wire ceiling after the pick: the pick forwards the caller's
+  // max_tokens verbatim, so clamping before it would be overwritten. 32_000
+  // intentionally equals TOOL_CALL_MAX_TOKENS_FLOOR in
+  // src/protocol/request/messages.ts — the same safe magnitude, not a copy to
+  // refactor. Free-tier Chat backends reject unbounded values (e.g. 128000)
+  // with a generic invalid-argument 400.
+  const requestedMaxTokens = payload["max_tokens"];
+  if (
+    typeof requestedMaxTokens === "number" &&
+    Number.isFinite(requestedMaxTokens) &&
+    requestedMaxTokens > 32_000
+  ) {
+    payload["max_tokens"] = 32_000;
+  }
   return payload;
 }

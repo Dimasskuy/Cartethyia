@@ -103,6 +103,11 @@ export const CLIENT_ROUTERS: readonly ClientRouterDefinition[] = [
         equals: "mozilla/5.0 (compatible; openai compatible)",
         description: "OmniRoute's rewritten OpenAI-compatible User-Agent",
       },
+      {
+        field: "user-agent",
+        pattern: /^node(?:\/[\w.+-]+)?$/i,
+        description: "Node's default User-Agent, sent bare by this router",
+      },
     ],
   },
 ];

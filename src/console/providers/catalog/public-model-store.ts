@@ -21,6 +21,78 @@ export interface AllowedModelEntry {
   context_length?: number;
   max_completion_tokens?: number;
   capabilities?: unknown;
+  reasoning?: boolean;
+  tool_call?: boolean;
+  web_search?: boolean;
+  cost?: unknown;
+}
+
+/**
+ * The closed input/output modality vocabulary this surface publishes.
+ *
+ * The catalog stores provider-native spellings (`document`, `file`), and
+ * models.dev files a different set (`pdf`, `video`). A client parsing
+ * `/v1/models` needs one vocabulary, so the emitted `capabilities` is
+ * normalized to this set: synonyms are folded (`document`/`file` → `pdf`) and
+ * any token outside it is dropped rather than leaked verbatim.
+ */
+const MODALITY_SYNONYMS: Readonly<Record<string, string>> = {
+  document: "pdf",
+  file: "pdf",
+};
+const KNOWN_MODALITIES: ReadonlySet<string> = new Set(["text", "image", "audio", "video", "pdf"]);
+
+function normalizeModalityList(values: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const raw of values) {
+    if (typeof raw !== "string") continue;
+    const token = MODALITY_SYNONYMS[raw] ?? raw;
+    if (!KNOWN_MODALITIES.has(token) || out.includes(token)) continue;
+    out.push(token);
+  }
+  return out;
+}
+
+/**
+ * Projects a stored `modalities` jsonb value into the published vocabulary.
+ * `undefined` when nothing survives — an entry with no describable modality
+ * omits `capabilities` rather than advertising an empty one.
+ */
+function normalizeModalities(value: unknown): { input?: string[]; output?: string[] } | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as { input?: unknown; output?: unknown };
+  const pick = (candidate: unknown): string[] =>
+    Array.isArray(candidate) ? normalizeModalityList(candidate.filter((v): v is string => typeof v === "string")) : [];
+  const input = pick(record.input);
+  const output = pick(record.output);
+  if (input.length === 0 && output.length === 0) return undefined;
+  return {
+    ...(input.length > 0 ? { input } : {}),
+    ...(output.length > 0 ? { output } : {}),
+  };
+}
+
+/** A cost value's comparable rate signature; `undefined` when it states none. */
+function costSignature(cost: unknown): string | undefined {
+  if (cost === null || typeof cost !== "object" || Array.isArray(cost)) return undefined;
+  const c = cost as { input?: unknown; output?: unknown; cache_read?: unknown; cache_write?: unknown };
+  return [c.input, c.output, c.cache_read, c.cache_write]
+    .map((value) => (typeof value === "number" ? value : "x"))
+    .join("/");
+}
+
+/**
+ * The rate every member agrees on, or `undefined` when they differ.
+ *
+ * A pool may route to any member, so a single price is only honest when all of
+ * them bill the same; quoting one member's rate would misprice the rest.
+ */
+function commonCost(entries: readonly unknown[]): unknown {
+  const present = entries.filter((entry) => entry != null);
+  if (present.length === 0) return undefined;
+  const signature = costSignature(present[0]);
+  if (signature === undefined) return undefined;
+  return present.every((entry) => costSignature(entry) === signature) ? present[0] : undefined;
 }
 
 function matchesModelPrefix(
@@ -38,6 +110,10 @@ interface ModelMetadata {
   readonly contextLimit: number | null;
   readonly outputLimit: number | null;
   readonly modalities: unknown;
+  readonly reasoning: boolean;
+  readonly toolCall: boolean;
+  readonly webSearch: boolean;
+  readonly cost: unknown;
 }
 
 /** Defaults advertised when a target has no catalog row to describe it. */
@@ -86,11 +162,28 @@ function advertisedMetadata(
   const found = ids
     .map((id) => meta.get(id))
     .filter((entry): entry is ModelMetadata => entry !== undefined);
-  if (found.length === 0) return { contextLimit: null, outputLimit: null, modalities: undefined };
+  if (found.length === 0) {
+    return {
+      contextLimit: null,
+      outputLimit: null,
+      modalities: undefined,
+      reasoning: false,
+      toolCall: false,
+      webSearch: false,
+      cost: undefined,
+    };
+  }
   return {
     contextLimit: Math.min(...found.map((m) => m.contextLimit ?? DEFAULT_CONTEXT_LIMIT)),
     outputLimit: Math.min(...found.map((m) => m.outputLimit ?? DEFAULT_OUTPUT_LIMIT)),
     modalities: intersectModalities(found.map((m) => m.modalities).filter((m) => m != null)),
+    // A pool may route to any member, so a capability is claimed only when
+    // every member has it; a single member's rate is quoted only when all
+    // members bill alike.
+    reasoning: found.every((m) => m.reasoning),
+    toolCall: found.every((m) => m.toolCall),
+    webSearch: found.every((m) => m.webSearch),
+    cost: commonCost(found.map((m) => m.cost)),
   };
 }
 
@@ -193,6 +286,10 @@ export class PublicModelCatalogStore {
         modelId: models.modelId,
         outputLimit: models.outputLimit,
         modalities: models.modalities,
+        reasoning: models.reasoning,
+        toolCall: models.toolCall,
+        webSearch: models.webSearch,
+        cost: models.cost,
         providerRequiresAccount: providers.requiresAccount,
       })
       .from(models)
@@ -258,15 +355,22 @@ export class PublicModelCatalogStore {
           isModelAllowed(snapshot, `${m.providerId}/${m.modelId}`),
       )
       .filter((m) => !shadowsAliasOrCombo(m, aliasTargets, comboNames, snapshot))
-      .map((m) => ({
-        id: `${m.providerId}/${m.modelId}`,
-        object: "model" as const,
-        created: Math.floor(Date.now() / 1000),
-        owned_by: m.providerId,
-        ...(m.contextLimit != null ? { context_length: m.contextLimit } : {}),
-        ...(m.outputLimit != null ? { max_completion_tokens: m.outputLimit } : {}),
-        ...(m.modalities ? { capabilities: m.modalities } : {}),
-      }));
+      .map((m) => {
+        const capabilities = normalizeModalities(m.modalities);
+        return {
+          id: `${m.providerId}/${m.modelId}`,
+          object: "model" as const,
+          created: Math.floor(Date.now() / 1000),
+          owned_by: m.providerId,
+          ...(m.contextLimit != null ? { context_length: m.contextLimit } : {}),
+          ...(m.outputLimit != null ? { max_completion_tokens: m.outputLimit } : {}),
+          ...(capabilities ? { capabilities } : {}),
+          ...(m.reasoning ? { reasoning: true } : {}),
+          ...(m.toolCall ? { tool_call: true } : {}),
+          ...(m.webSearch ? { web_search: true } : {}),
+          ...(m.cost != null ? { cost: m.cost } : {}),
+        };
+      });
 
     // Expose tenant model aliases and combos as first-class public models.
     // `aliasRows`/`comboRows` were loaded above for the shadow filter.
@@ -296,6 +400,7 @@ export class PublicModelCatalogStore {
         if (!matchesModelPrefix(modelPrefix, a.alias) && !isModelAllowed(snapshot, a.alias)) continue;
         if (!isModelAllowed(snapshot, a.alias)) continue;
         const target = advertisedMetadata(resolveTargetIds(a.targetModel, aliasTargets, comboMembers), targetMeta);
+        const capabilities = normalizeModalities(target.modalities);
         modelEntries.push({
           id: a.alias,
           object: "model" as const,
@@ -303,7 +408,11 @@ export class PublicModelCatalogStore {
           owned_by: "cartethyia",
           context_length: target.contextLimit ?? DEFAULT_CONTEXT_LIMIT,
           max_completion_tokens: target.outputLimit ?? DEFAULT_OUTPUT_LIMIT,
-          ...(target.modalities ? { capabilities: target.modalities } : {}),
+          ...(capabilities ? { capabilities } : {}),
+          ...(target.reasoning ? { reasoning: true } : {}),
+          ...(target.toolCall ? { tool_call: true } : {}),
+          ...(target.webSearch ? { web_search: true } : {}),
+          ...(target.cost != null ? { cost: target.cost } : {}),
         });
       }
 
@@ -311,6 +420,7 @@ export class PublicModelCatalogStore {
         if (!matchesModelPrefix(modelPrefix, c.name) && !isModelAllowed(snapshot, c.name)) continue;
         if (!isModelAllowed(snapshot, c.name)) continue;
         const target = advertisedMetadata(resolveTargetIds(c.name, aliasTargets, comboMembers), targetMeta);
+        const capabilities = normalizeModalities(target.modalities);
         modelEntries.push({
           id: c.name,
           object: "model" as const,
@@ -318,7 +428,11 @@ export class PublicModelCatalogStore {
           owned_by: "cartethyia",
           context_length: target.contextLimit ?? DEFAULT_CONTEXT_LIMIT,
           max_completion_tokens: target.outputLimit ?? DEFAULT_OUTPUT_LIMIT,
-          ...(target.modalities ? { capabilities: target.modalities } : {}),
+          ...(capabilities ? { capabilities } : {}),
+          ...(target.reasoning ? { reasoning: true } : {}),
+          ...(target.toolCall ? { tool_call: true } : {}),
+          ...(target.webSearch ? { web_search: true } : {}),
+          ...(target.cost != null ? { cost: target.cost } : {}),
         });
       }
     }
@@ -353,6 +467,10 @@ export class PublicModelCatalogStore {
         contextLimit: models.contextLimit,
         outputLimit: models.outputLimit,
         modalities: models.modalities,
+        reasoning: models.reasoning,
+        toolCall: models.toolCall,
+        webSearch: models.webSearch,
+        cost: models.cost,
       })
       .from(models)
       .where(
@@ -368,6 +486,10 @@ export class PublicModelCatalogStore {
         contextLimit: row.contextLimit,
         outputLimit: row.outputLimit,
         modalities: row.modalities,
+        reasoning: row.reasoning,
+        toolCall: row.toolCall,
+        webSearch: row.webSearch,
+        cost: row.cost,
       });
     }
     void tenantId;
@@ -391,6 +513,10 @@ export class PublicModelCatalogStore {
           contextLimit: models.contextLimit,
           outputLimit: models.outputLimit,
           modalities: models.modalities,
+          reasoning: models.reasoning,
+          toolCall: models.toolCall,
+          webSearch: models.webSearch,
+          cost: models.cost,
         })
         .from(models)
         .innerJoin(providers, eq(models.providerId, providers.id))
@@ -412,6 +538,7 @@ export class PublicModelCatalogStore {
         (isModelAllowed(snapshot, row.modelId) ||
           isModelAllowed(snapshot, `${row.providerId}/${row.modelId}`))
       ) {
+        const capabilities = normalizeModalities(row.modalities);
         return {
           id: `${row.providerId}/${row.modelId}`,
           object: "model" as const,
@@ -419,7 +546,11 @@ export class PublicModelCatalogStore {
           owned_by: row.providerId,
           ...(row.contextLimit != null ? { context_length: row.contextLimit } : {}),
           ...(row.outputLimit != null ? { max_completion_tokens: row.outputLimit } : {}),
-          ...(row.modalities ? { capabilities: row.modalities } : {}),
+          ...(capabilities ? { capabilities } : {}),
+          ...(row.reasoning ? { reasoning: true } : {}),
+          ...(row.toolCall ? { tool_call: true } : {}),
+          ...(row.webSearch ? { web_search: true } : {}),
+          ...(row.cost != null ? { cost: row.cost } : {}),
         };
       }
       return undefined;

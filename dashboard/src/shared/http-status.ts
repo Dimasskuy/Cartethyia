@@ -42,6 +42,41 @@ export function httpStatusLabel(status: number): string {
   return reason === undefined ? String(status) : `${status} ${reason}`;
 }
 
+/**
+ * Compact reason words for the dense Requests table.
+ *
+ * The status cell is narrow and repeated on every row, so a full phrase
+ * (`500 Internal Server Error`) wraps the cell and pushes the numeric columns
+ * out of line. Each word is capped at five characters — the short mnemonics an
+ * operator scans for (`ERR`, `BAD`, `ABORT`) — while the full phrase stays
+ * available in the popover explainer and the accessible name. An unknown code
+ * falls back to its bare digits rather than inventing a word.
+ */
+const SHORT_REASONS: Readonly<Record<number, string>> = {
+  200: "OK",
+  400: "BAD",
+  401: "AUTH",
+  403: "DENY",
+  404: "MISS",
+  409: "CONFL",
+  413: "LARGE",
+  415: "TYPE",
+  422: "UNPRO",
+  429: "RATE",
+  499: "ABORT",
+  500: "ERR",
+  501: "TODO",
+  502: "GATE",
+  503: "DOWN",
+  504: "TIME",
+};
+
+/** `500` -> `"500 ERR"`; an unknown code falls back to just its digits. */
+export function httpStatusShortLabel(status: number): string {
+  const reason = SHORT_REASONS[status];
+  return reason === undefined ? String(status) : `${status} ${reason}`;
+}
+
 /** Severity tone for a status: green success, red failure, amber in-between. */
 export type HttpStatusTone = "ok" | "err" | "warn";
 

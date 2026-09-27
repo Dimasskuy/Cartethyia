@@ -308,9 +308,14 @@ describe("completeAttempt telemetry parity (D3)", () => {
     if (!nonStreamRow || !streamRow) throw new Error("expected two telemetry rows");
     for (const row of [nonStreamRow, streamRow] as Array<Record<string, unknown>>) {
       expect(row).toMatchObject({ status: "completed", usage: FIXTURE_USAGE });
+      // Resolve overhead is measured from request start to dispatch, so both
+      // paths must report a finite, non-negative millisecond count.
+      expect(typeof row["resolveMs"]).toBe("number");
+      expect(row["resolveMs"] as number).toBeGreaterThanOrEqual(0);
       delete row["requestId"];
       delete row["latencyMs"];
       delete row["ttfbMs"];
+      delete row["resolveMs"];
       delete row["tokensPerSec"];
       delete row["firstContentDeltaAtMs"];
       delete row["lastEventAtMs"];

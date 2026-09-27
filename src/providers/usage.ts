@@ -296,6 +296,12 @@ export function normalizeUsage(input: Record<string, unknown>): UsageRecord {
     output_tokens,
     reasoning_tokens,
     estimated_cost,
+    // Tencent buddy-meter credit: top-level `credit` in the Chat usage frame
+    // (probed live on cb/deepseek-v4.1-flash-sg: 0 on a 29-token turn, 1.01
+    // on a 72k-token turn). Negative/NaN values are dropped, never clamped.
+    ...(typeof input.credit === "number" && Number.isFinite(input.credit) && input.credit >= 0
+      ? { credit_used: input.credit }
+      : {}),
     ...(Object.keys(details).length > 0 ? { details } : {}),
   };
 }

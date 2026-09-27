@@ -10,7 +10,7 @@ import { messagesAdapter } from "./transport/surface/messages/adapter";
 import { completionAdapter } from "./transport/surface/completion";
 import { SurfaceAdapterRegistry } from "./transport/surface/adapters";
 import { GatewayError } from "./transport/gateway-error";
-import type { CanonicalAdapter } from "./transport/middleware/ingress";
+import type { CanonicalAdapter } from "./transport/middleware/request-context";
 import type { ApiKeyAuthorizationSnapshot } from "./security/api-key-auth";
 import { getPool } from "./persistence/postgres";
 import { getRedisOrUndefined } from "./persistence/redis";

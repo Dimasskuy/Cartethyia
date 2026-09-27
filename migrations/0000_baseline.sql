@@ -328,6 +328,8 @@ CREATE TABLE "telemetry_events" (
   "output_tokens" integer,
   "reasoning_tokens" integer,
   "estimated_cost_usd" numeric(12, 6),
+  "credit_used" numeric(12, 4),
+  "resolve_ms" integer,
   "tokens_per_sec" numeric(10, 2),
   "first_content_delta_at_ms" bigint,
   "last_event_at_ms" bigint,

@@ -42,6 +42,13 @@ export interface TelemetryEventInput {
   readonly errorOrigin?: string;
   readonly usage?: UsageRecord;
   readonly tokensPerSec?: number;
+  /**
+   * Gateway-side time from request start to the upstream dispatch: routing,
+   * credential lease, and preparation. `ttfbMs` is measured from the dispatch
+   * start, so this is the overhead the client waited on before the provider
+   * was called.
+   */
+  readonly resolveMs?: number;
   readonly firstContentDeltaAtMs?: number;
   readonly lastEventAtMs?: number;
 }
@@ -113,6 +120,10 @@ function telemetryEventRow(event: TelemetryEventInput) {
       event.usage?.estimated_cost === null || event.usage === undefined
         ? null
         : String(event.usage.estimated_cost),
+    // Buddy-meter credit; NULL when the upstream reported no credit field.
+    // Numeric columns are string-typed in Drizzle, like `estimatedCostUsd`.
+    creditUsed: event.usage?.credit_used != null ? String(event.usage.credit_used) : null,
+    resolveMs: event.resolveMs ?? null,
     tokensPerSec: event.tokensPerSec != null ? String(event.tokensPerSec) : null,
     firstContentDeltaAtMs: event.firstContentDeltaAtMs ?? null,
     lastEventAtMs: event.lastEventAtMs ?? null,

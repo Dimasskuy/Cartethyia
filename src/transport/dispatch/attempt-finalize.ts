@@ -10,7 +10,7 @@ import { TelemetryPayloadCapture } from "../../observability/payload-capture";
 import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer";
 import { CachedPreferencesReader, DrizzlePreferencesReader } from "../../persistence/tenant-preferences";
 import type { ProxyRequestOutcome, ProxyRequestState } from "../request/state";
-import { finalizeRequestTelemetry } from "../middleware/ingress";
+import { finalizeRequestTelemetry } from "../middleware/error-lifecycle";
 import { log } from "../../observability/logger";
 import {
   disablePoolForProxyHttpStatus,

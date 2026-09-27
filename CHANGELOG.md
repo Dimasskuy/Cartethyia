@@ -463,7 +463,7 @@ identity headers are a protocol requirement rather than cloaking: the API reject
 a request that does not identify a Copilot client, so they are stamped after the
 shared pipeline and win over a route-level User-Agent.
 
-`CARTETHYIA_COPILOT_ENTERPRISE_DOMAIN` points the login at a GitHub Enterprise
+`CARTETHYIA_GITHUB_ENTERPRISE_DOMAIN` points the login at a GitHub Enterprise
 domain; empty (the default) means github.com.
 
 **Not verified against the live API.** No Copilot subscription credential was

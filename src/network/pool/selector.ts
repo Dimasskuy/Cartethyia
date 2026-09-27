@@ -2,11 +2,38 @@
  * `NetworkPoolSelector` — distributed pool admission: weighted, cooldown-aware
  * selection plus inflight accounting (local map + Redis counters for
  * multi-process correctness).
+ *
+ * Role files: `pool-scripts.ts` (Redis scripts + key builders),
+ * `pool-state.ts` (local inflight/rotation/cooldown state). This file keeps
+ * the selection algorithm and the `NetworkPoolSelector` public surface.
  */
 import { redisEvalNumber, type RedisClient } from "../../persistence/redis";
-import { isRecord } from "../../protocol/primitives";
 import { resolveInflightTtlSeconds } from "../../config";
 import { log } from "../../observability/logger";
+import {
+  COOLDOWN_CLEAR_SCRIPT,
+  COOLDOWN_FLAG_SCRIPT,
+  POOL_ADMIT_SCRIPT,
+  POOL_RELEASE_SCRIPT,
+  proxyCooldownKey,
+  proxyCooldownProvidersKey,
+  proxyInflightKey,
+} from "./pool-scripts";
+import {
+  advanceRotation,
+  createPoolLocalState,
+  enforceCooldownLimit,
+  enforceInflightLimit,
+  parseCooldownEntry,
+  rotationStart,
+  type PoolLocalState,
+  type PoolRotation,
+  type PoolUsageSnapshot,
+  type ProxyCooldownEntry,
+} from "./pool-state";
+
+export type { PoolRotation, PoolUsageSnapshot, ProxyCooldownEntry };
+export { parseCooldownEntry };
 
 // Pool selector
 export const DEFAULT_PROXY_CONCURRENCY = 10;
@@ -21,18 +48,6 @@ const MAX_PROXY_WEIGHT = 1000;
 function poolInflightTtlSeconds(): number {
   return resolveInflightTtlSeconds();
 }
-const POOL_ADMIT_SCRIPT = `
-local current = tonumber(redis.call('GET', KEYS[1]) or '0')
-if current >= tonumber(ARGV[1]) then return 0 end
-redis.call('INCR', KEYS[1])
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
-return 1
-`;
-const POOL_RELEASE_SCRIPT = `
-local current = tonumber(redis.call('GET', KEYS[1]) or '0')
-if current <= 1 then redis.call('DEL', KEYS[1]); return 0 end
-return redis.call('DECR', KEYS[1])
-`;
 export function effectiveConcurrency(limit: number): number {
   if (!Number.isInteger(limit) || limit < 1) return 0;
   return limit;
@@ -42,13 +57,6 @@ function normalizedWeight(weight: number | undefined): number {
   if (weight === undefined) return DEFAULT_PROXY_WEIGHT;
   if (!Number.isInteger(weight) || weight < 1 || weight > MAX_PROXY_WEIGHT) return 0;
   return weight;
-}
-
-export interface ProxyCooldownEntry {
-  readonly poolId: string;
-  readonly providerId: string;
-  readonly until: number;
-  readonly reason: string;
 }
 
 export type PoolSelectionFailureReason =
@@ -72,143 +80,13 @@ export interface PoolSelectionFailure {
   readonly retryAt?: number;
 }
 
-function parseCooldownEntry(raw: string): ProxyCooldownEntry | undefined {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      isRecord(parsed) &&
-      typeof parsed.poolId === "string" &&
-      typeof parsed.providerId === "string" &&
-      typeof parsed.until === "number" &&
-      Number.isFinite(parsed.until) &&
-      typeof parsed.reason === "string"
-    ) {
-      return {
-        poolId: parsed.poolId,
-        providerId: parsed.providerId.toLowerCase(),
-        until: parsed.until,
-        reason: parsed.reason.slice(0, 200),
-      };
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
-/**
- * Round-robin rotation request for one selection — present ⇒ rotate across
- * the eligible pools instead of scoring by load. `key` scopes the cursor (the
- * pool-owning tenant, so two tenants never share rotation position);
- * `rotateCount` is how many requests one pool serves before advancing,
- * clamped to 1..1000 exactly like the account strategy. Absent ⇒ the default
- * weighted least-loaded scan.
- */
-export interface PoolRotation {
-  readonly key: string;
-  readonly rotateCount: number;
-}
-
-export interface PoolUsageSnapshot {
-  readonly poolId: string;
-  readonly currentInflight: number;
-}
-
 export class NetworkPoolSelector {
-  /** Bound on locally tracked inflight counters (paranoia: keys are pool ids, so the real bound is the pool count). */
-  private static readonly MAX_INFLIGHT_ENTRIES = 10_000;
-  /** Bound on locally cached cooldown entries (pools × providers). */
-  private static readonly MAX_COOLDOWN_ENTRIES = 5_000;
-  /** Bound on round-robin rotation cursors (one per pool-owning tenant). */
-  private static readonly MAX_ROTATION_KEYS = 5_000;
-
-  private readonly inflight = new Map<string, number>();
-  private readonly cooldowns = new Map<string, ProxyCooldownEntry>();
-  /** Per-key round-robin state: scan position + admissions the pool at that position has served. */
-  private readonly rotationCursors = new Map<string, { pos: number; served: number }>();
-  private fairnessCursor = 0;
-
-  /** Evicts expired cooldown entries first, then oldest-inserted ones past the bound. */
-  private enforceCooldownLimit(): void {
-    if (this.cooldowns.size < NetworkPoolSelector.MAX_COOLDOWN_ENTRIES) return;
-    const now = Date.now();
-    for (const [key, entry] of this.cooldowns) {
-      if (now >= entry.until) this.cooldowns.delete(key);
-    }
-    while (this.cooldowns.size >= NetworkPoolSelector.MAX_COOLDOWN_ENTRIES) {
-      const oldestKey = this.cooldowns.keys().next().value;
-      if (oldestKey === undefined) break;
-      this.cooldowns.delete(oldestKey);
-    }
-  }
-
-  /**
-   * Bounds the local inflight map by evicting the oldest-inserted counter.
-   * With Redis the evicted pool's count stays authoritative there; the local
-   * map only re-seeds, so worst case one pool briefly over-admits locally.
-   */
-  private enforceInflightLimit(): void {
-    if (this.inflight.size < NetworkPoolSelector.MAX_INFLIGHT_ENTRIES) return;
-    const oldestKey = this.inflight.keys().next().value;
-    if (oldestKey !== undefined) {
-      this.inflight.delete(oldestKey);
-      log.warn(
-        `[pool-selector] local inflight map exceeded ${NetworkPoolSelector.MAX_INFLIGHT_ENTRIES} entries; evicted oldest counter`,
-      );
-    }
-  }
+  private readonly state: PoolLocalState = createPoolLocalState();
 
   constructor(private readonly redis?: RedisClient) {}
 
-  /** Next rotation start offset for `key`; an unknown key starts at 0. */
-  private rotationStart(key: string, length: number): number {
-    const pos = this.rotationCursors.get(key)?.pos ?? 0;
-    return ((pos % length) + length) % length;
-  }
-
-  /**
-   * Record a successful admission at `absoluteIndex` — called only after the
-   * pool actually acquired a slot, so a failed or cooling selection never
-   * consumes rotation position. The scan resumes at `pos` until this pool has
-   * served `rotateCount` requests, then advances by exactly one position:
-   * striding the position by `rotateCount` steps per admission skips pools
-   * whenever the pool count and `rotateCount` share a factor (2 pools with
-   * `rotateCount` 2 pinned one pool forever). An index that is not `pos`
-   * means the eligible list changed under the scan (shrank, or failover
-   * jumped past a full pool); re-anchor there with a fresh served count.
-   * State is per-process like the account `RoundRobinState`; the map is
-   * bounded oldest-inserted-first.
-   */
-  private advanceRotation(
-    key: string,
-    length: number,
-    absoluteIndex: number,
-    rotateCount: number,
-  ): void {
-    if (
-      !this.rotationCursors.has(key) &&
-      this.rotationCursors.size >= NetworkPoolSelector.MAX_ROTATION_KEYS
-    ) {
-      const oldest = this.rotationCursors.keys().next().value;
-      if (oldest !== undefined) this.rotationCursors.delete(oldest);
-    }
-    const safeCount = Math.max(1, Math.min(1000, Math.trunc(rotateCount)));
-    const current = this.rotationCursors.get(key) ?? { pos: 0, served: 0 };
-    if (absoluteIndex !== current.pos) {
-      this.rotationCursors.set(key, { pos: absoluteIndex, served: 1 });
-      return;
-    }
-    const served = current.served + 1;
-    this.rotationCursors.set(
-      key,
-      served >= safeCount
-        ? { pos: (absoluteIndex + 1) % length, served: 0 }
-        : { pos: current.pos, served },
-    );
-  }
-
   getInflight(poolId: string): number {
-    return this.inflight.get(poolId) ?? 0;
+    return this.state.inflight.get(poolId) ?? 0;
   }
 
   /**
@@ -220,7 +98,7 @@ export class NetworkPoolSelector {
    */
   snapshotPoolUsage(): readonly PoolUsageSnapshot[] {
     const out: PoolUsageSnapshot[] = [];
-    for (const [poolId, currentInflight] of this.inflight) {
+    for (const [poolId, currentInflight] of this.state.inflight) {
       out.push({ poolId, currentInflight });
     }
     return out;
@@ -248,7 +126,7 @@ export class NetworkPoolSelector {
 
   async getInflightAuthoritative(poolId: string): Promise<number> {
     if (!this.redis) return this.getInflight(poolId);
-    const raw = await this.redis.get(this.redisInflightKey(poolId));
+    const raw = await this.redis.get(proxyInflightKey(poolId));
     if (raw === null) return 0;
     const value = Number(raw);
     if (!Number.isInteger(value) || value < 0) {
@@ -266,19 +144,19 @@ export class NetworkPoolSelector {
       return { acquired: false, release: () => {} };
     }
 
-    this.enforceInflightLimit();
-    this.inflight.set(poolId, current + 1);
+    enforceInflightLimit(this.state.inflight);
+    this.state.inflight.set(poolId, current + 1);
     this.notifyPoolUsage();
     let released = false;
 
     const release = () => {
       if (released) return;
       released = true;
-      const val = this.inflight.get(poolId) ?? 1;
+      const val = this.state.inflight.get(poolId) ?? 1;
       if (val <= 1) {
-        this.inflight.delete(poolId);
+        this.state.inflight.delete(poolId);
       } else {
-        this.inflight.set(poolId, val - 1);
+        this.state.inflight.set(poolId, val - 1);
       }
       this.notifyPoolUsage();
     };
@@ -288,41 +166,6 @@ export class NetworkPoolSelector {
 
   private cooldownKey(poolId: string, providerId: string): string {
     return `${poolId}::${providerId.toLowerCase()}`;
-  }
-
-  private redisCooldownKey(poolId: string, providerId: string): string {
-    return `proxy:cooldown:${poolId}:${providerId.toLowerCase()}`;
-  }
-
-  private redisCooldownProvidersKey(poolId: string): string {
-    return `proxy:cooldown:providers:${poolId}`;
-  }
-
-  /** One cooldown marker plus its index entry, written atomically. */
-  private static readonly COOLDOWN_FLAG_SCRIPT = `
-    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-    redis.call('SADD', KEYS[2], ARGV[3])
-    -- The index set must outlive every marker it lists, or it is evicted while
-    -- a cooldown is still active and the pair becomes invisible to other
-    -- processes. EXPIRE ... GT only ever extends, so a later short cooldown
-    -- cannot shorten a longer one already indexed.
-    local ttl = redis.call('TTL', KEYS[1])
-    if ttl > 0 then
-      local current = redis.call('TTL', KEYS[2])
-      if current < 0 or ttl > current then redis.call('EXPIRE', KEYS[2], ttl) end
-    end
-    return 1
-  `;
-
-  /** Clears one cooldown marker and its index entry atomically. */
-  private static readonly COOLDOWN_CLEAR_SCRIPT = `
-    redis.call('DEL', KEYS[1])
-    redis.call('SREM', KEYS[2], ARGV[1])
-    return 1
-  `;
-
-  private redisInflightKey(poolId: string): string {
-    return `proxy:inflight:${poolId}`;
   }
 
   async flagProviderCooldown(
@@ -338,8 +181,8 @@ export class NetworkPoolSelector {
       until,
       reason: reason.slice(0, 200),
     };
-    this.enforceCooldownLimit();
-    this.cooldowns.set(this.cooldownKey(poolId, providerId), entry);
+    enforceCooldownLimit(this.state.cooldowns);
+    this.state.cooldowns.set(this.cooldownKey(poolId, providerId), entry);
     if (this.redis) {
       try {
         const ttlSec = Math.max(1, Math.ceil(durationMs / 1000));
@@ -349,10 +192,10 @@ export class NetworkPoolSelector {
         // set's own TTL, which previously had none and so grew without bound.
         await redisEvalNumber(
           this.redis,
-          NetworkPoolSelector.COOLDOWN_FLAG_SCRIPT,
+          COOLDOWN_FLAG_SCRIPT,
           2,
-          this.redisCooldownKey(poolId, providerId),
-          this.redisCooldownProvidersKey(poolId),
+          proxyCooldownKey(poolId, providerId),
+          proxyCooldownProvidersKey(poolId),
           JSON.stringify(entry),
           ttlSec,
           entry.providerId,
@@ -369,20 +212,20 @@ export class NetworkPoolSelector {
     providerId: string,
   ): Promise<{ inCooldown: boolean; resetsAt: Date | null; reason: string | null }> {
     const k = this.cooldownKey(poolId, providerId);
-    const local = this.cooldowns.get(k);
+    const local = this.state.cooldowns.get(k);
     if (local) {
       if (Date.now() < local.until) {
         return { inCooldown: true, resetsAt: new Date(local.until), reason: local.reason };
       }
-      this.cooldowns.delete(k);
+      this.state.cooldowns.delete(k);
     }
     if (this.redis) {
       try {
-        const raw = await this.redis.get(this.redisCooldownKey(poolId, providerId));
+        const raw = await this.redis.get(proxyCooldownKey(poolId, providerId));
         const parsed = raw ? parseCooldownEntry(raw) : undefined;
         if (parsed && Date.now() < parsed.until) {
-          this.enforceCooldownLimit();
-          this.cooldowns.set(k, parsed);
+          enforceCooldownLimit(this.state.cooldowns);
+          this.state.cooldowns.set(k, parsed);
           return { inCooldown: true, resetsAt: new Date(parsed.until), reason: parsed.reason };
         }
         if (raw) {
@@ -403,14 +246,14 @@ export class NetworkPoolSelector {
     const now = Date.now();
     const active = new Map<string, ProxyCooldownEntry>();
 
-    for (const [key, entry] of this.cooldowns.entries()) {
+    for (const [key, entry] of this.state.cooldowns.entries()) {
       if (entry.poolId !== poolId) continue;
       if (now < entry.until) active.set(entry.providerId, entry);
-      else this.cooldowns.delete(key);
+      else this.state.cooldowns.delete(key);
     }
 
     if (this.redis) {
-      const providerIds = await this.redis.smembers(this.redisCooldownProvidersKey(poolId));
+      const providerIds = await this.redis.smembers(proxyCooldownProvidersKey(poolId));
       // A pool with no cooling providers — the common case, and every pool when
       // nothing is throttled — lists no members. `MGET` requires at least one
       // key, so calling it with an empty spread makes Redis reject the command
@@ -422,7 +265,7 @@ export class NetworkPoolSelector {
       // the pool overview's hot read, so a serial scan made its latency scale
       // with the pool's provider count.
       const raws = (await this.redis.mget(
-        ...providerIds.map((providerId) => this.redisCooldownKey(poolId, providerId)),
+        ...providerIds.map((providerId) => proxyCooldownKey(poolId, providerId)),
       )) as Array<string | null>;
       for (let index = 0; index < providerIds.length; index += 1) {
         const providerId = providerIds[index];
@@ -430,19 +273,19 @@ export class NetworkPoolSelector {
         const raw = raws[index] ?? null;
         const entry = raw ? parseCooldownEntry(raw) : undefined;
         if (!entry) {
-          if (raw) await this.redis.del(this.redisCooldownKey(poolId, providerId));
-          await this.redis.srem(this.redisCooldownProvidersKey(poolId), providerId);
+          if (raw) await this.redis.del(proxyCooldownKey(poolId, providerId));
+          await this.redis.srem(proxyCooldownProvidersKey(poolId), providerId);
           continue;
         }
         if (entry.poolId === poolId && now < entry.until) active.set(entry.providerId, entry);
-        else await this.redis.srem(this.redisCooldownProvidersKey(poolId), providerId);
+        else await this.redis.srem(proxyCooldownProvidersKey(poolId), providerId);
       }
     }
 
     return [...active.values()];
   }
   async clearProviderCooldown(poolId: string, providerId: string): Promise<void> {
-    this.cooldowns.delete(this.cooldownKey(poolId, providerId));
+    this.state.cooldowns.delete(this.cooldownKey(poolId, providerId));
     if (!this.redis) return;
     await this.clearRedisCooldown(poolId, providerId);
   }
@@ -458,10 +301,10 @@ export class NetworkPoolSelector {
     if (!this.redis) return;
     await redisEvalNumber(
       this.redis,
-      NetworkPoolSelector.COOLDOWN_CLEAR_SCRIPT,
+      COOLDOWN_CLEAR_SCRIPT,
       2,
-      this.redisCooldownKey(poolId, providerId),
-      this.redisCooldownProvidersKey(poolId),
+      proxyCooldownKey(poolId, providerId),
+      proxyCooldownProvidersKey(poolId),
       providerId.toLowerCase(),
     );
   }
@@ -474,14 +317,14 @@ export class NetworkPoolSelector {
    * never earned.
    */
   async clearPoolCooldowns(poolId: string): Promise<void> {
-    for (const key of [...this.cooldowns.keys()]) {
-      if (key.startsWith(`${poolId}::`)) this.cooldowns.delete(key);
+    for (const key of [...this.state.cooldowns.keys()]) {
+      if (key.startsWith(`${poolId}::`)) this.state.cooldowns.delete(key);
     }
     if (!this.redis) return;
-    const indexKey = this.redisCooldownProvidersKey(poolId);
+    const indexKey = proxyCooldownProvidersKey(poolId);
     const providerIds = await this.redis.smembers(indexKey);
     for (const providerId of providerIds) {
-      await this.redis.del(this.redisCooldownKey(poolId, providerId));
+      await this.redis.del(proxyCooldownKey(poolId, providerId));
     }
     await this.redis.del(indexKey);
   }
@@ -549,22 +392,22 @@ export class NetworkPoolSelector {
         // through to the next offset (failover). Only a successful admission
         // counts: the head pool serves `rotateCount` requests, then the
         // position advances by exactly one.
-        const rotationStart = this.rotationStart(rotation.key, scored.length);
+        const start = rotationStart(this.state.rotationCursors, rotation.key, scored.length);
         for (let offset = 0; offset < scored.length; offset += 1) {
-          const absolute = (rotationStart + offset) % scored.length;
+          const absolute = (start + offset) % scored.length;
           const candidate = scored[absolute];
           if (!candidate) continue;
           if (this.getInflight(candidate.poolId) >= candidate.capacity) continue;
           const slot = this.acquire(candidate.poolId, candidate.capacity);
           if (!slot.acquired) continue;
-          this.advanceRotation(rotation.key, scored.length, absolute, rotation.rotateCount);
+          advanceRotation(this.state.rotationCursors, rotation.key, scored.length, absolute, rotation.rotateCount);
           return { poolId: candidate.poolId, release: slot.release };
         }
         return undefined;
       }
       let bestPool: (typeof scored)[number] | undefined;
       let minRatio = Number.POSITIVE_INFINITY;
-      const start = this.fairnessCursor++ % scored.length;
+      const start = this.state.fairnessCursor++ % scored.length;
       for (let offset = 0; offset < scored.length; offset += 1) {
         const candidate = scored[(start + offset) % scored.length];
         if (!candidate) continue;
@@ -582,20 +425,24 @@ export class NetworkPoolSelector {
     }
 
     const redis = this.redis;
-    const withCounts = await Promise.all(
-      scored.map(async (candidate) => {
-        const raw = await redis.get(this.redisInflightKey(candidate.poolId));
-        const count = raw === null ? 0 : Number(raw);
-        if (!Number.isFinite(count) || count < 0) {
-          throw new Error(`invalid pool inflight counter: ${candidate.poolId}`);
-        }
-        return {
-          ...candidate,
-          count,
-          ratio: count / (candidate.capacity * candidate.weight),
-        };
-      }),
-    );
+    // One MGET for every candidate instead of a GET per candidate: the
+    // per-pool script below already guarantees capacity atomically, so the
+    // pre-read is only a score, but serial GETs made admission latency scale
+    // with the candidate count on exactly the path that runs per request.
+    const inflightKeys = scored.map((candidate) => proxyInflightKey(candidate.poolId));
+    const rawCounts = (await redis.mget(...inflightKeys)) as Array<string | null>;
+    const withCounts = scored.map((candidate, index) => {
+      const raw = rawCounts[index] ?? null;
+      const count = raw === null ? 0 : Number(raw);
+      if (!Number.isFinite(count) || count < 0) {
+        throw new Error(`invalid pool inflight counter: ${candidate.poolId}`);
+      }
+      return {
+        ...candidate,
+        count,
+        ratio: count / (candidate.capacity * candidate.weight),
+      };
+    });
     // Original (pre-sort) index = absolute rotation position and
     // deterministic tie-breaking.
     const absoluteIndex = new Map(withCounts.map((candidate, index) => [candidate.poolId, index]));
@@ -603,16 +450,16 @@ export class NetworkPoolSelector {
       // Round robin orders strictly by the tenant cursor; the CAS admit below
       // still enforces capacity, so a full pool falls through to the next
       // offset exactly like account failover.
-      const rotationStart = this.rotationStart(rotation.key, withCounts.length);
+      const start = rotationStart(this.state.rotationCursors, rotation.key, withCounts.length);
       withCounts.sort(
         (left, right) =>
-          (((absoluteIndex.get(left.poolId) ?? 0) - rotationStart + withCounts.length) %
+          (((absoluteIndex.get(left.poolId) ?? 0) - start + withCounts.length) %
             withCounts.length) -
-          (((absoluteIndex.get(right.poolId) ?? 0) - rotationStart + withCounts.length) %
+          (((absoluteIndex.get(right.poolId) ?? 0) - start + withCounts.length) %
             withCounts.length),
       );
     } else {
-      const start = this.fairnessCursor++ % withCounts.length;
+      const start = this.state.fairnessCursor++ % withCounts.length;
       const tieOrder = absoluteIndex;
       withCounts.sort((left, right) => {
         const ratioDifference = left.ratio - right.ratio;
@@ -628,21 +475,22 @@ export class NetworkPoolSelector {
         redis,
         POOL_ADMIT_SCRIPT,
         1,
-        this.redisInflightKey(candidate.poolId),
+        proxyInflightKey(candidate.poolId),
         String(candidate.capacity),
         String(poolInflightTtlSeconds()),
       );
       if (result !== 1) continue;
       if (rotation) {
-        this.advanceRotation(
+        advanceRotation(
+          this.state.rotationCursors,
           rotation.key,
           withCounts.length,
           absoluteIndex.get(candidate.poolId) ?? 0,
           rotation.rotateCount,
         );
       }
-      this.enforceInflightLimit();
-      this.inflight.set(candidate.poolId, this.getInflight(candidate.poolId) + 1);
+      enforceInflightLimit(this.state.inflight);
+      this.state.inflight.set(candidate.poolId, this.getInflight(candidate.poolId) + 1);
       this.notifyPoolUsage();
       let released = false;
       return {
@@ -651,10 +499,10 @@ export class NetworkPoolSelector {
           if (released) return;
           released = true;
           const local = this.getInflight(candidate.poolId);
-          if (local <= 1) this.inflight.delete(candidate.poolId);
-          else this.inflight.set(candidate.poolId, local - 1);
+          if (local <= 1) this.state.inflight.delete(candidate.poolId);
+          else this.state.inflight.set(candidate.poolId, local - 1);
           this.notifyPoolUsage();
-          void redisEvalNumber(redis, POOL_RELEASE_SCRIPT, 1, this.redisInflightKey(candidate.poolId)).catch(
+          void redisEvalNumber(redis, POOL_RELEASE_SCRIPT, 1, proxyInflightKey(candidate.poolId)).catch(
             (error: unknown) => {
               log.error("[pool-selector] failed to release distributed slot", error as Error);
             },

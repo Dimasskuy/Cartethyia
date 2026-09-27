@@ -54,6 +54,28 @@ describe("normalizeUsage", () => {
     expect(usage.cached_input_tokens).toBe(1408);
     expect(usage.uncached_input_tokens).toBe(184);
   });
+  test("reads the Tencent buddy-meter credit field", () => {
+    // Probed live on cb/deepseek-v4.1-flash-sg: top-level `credit` beside
+    // the token counts — a billing-meter unit, not USD.
+    const usage = normalizeUsage({
+      prompt_tokens: 72017,
+      completion_tokens: 1,
+      total_tokens: 72018,
+      credit: 1.01,
+    });
+    expect(usage.credit_used).toBe(1.01);
+  });
+
+  test("leaves credit_used absent when the upstream sent no credit", () => {
+    const usage = normalizeUsage({ prompt_tokens: 100, completion_tokens: 10 });
+    expect(usage.credit_used).toBeUndefined();
+    expect("credit_used" in usage).toBe(false);
+  });
+
+  test("drops a negative or non-finite credit rather than persisting it", () => {
+    expect(normalizeUsage({ prompt_tokens: 10, completion_tokens: 1, credit: -2 }).credit_used).toBeUndefined();
+    expect(normalizeUsage({ prompt_tokens: 10, completion_tokens: 1, credit: Number.NaN }).credit_used).toBeUndefined();
+  });
 
   test("extracts flat cached_tokens (Gemini/mapGeminiUsage shape)", () => {
     const usage = normalizeUsage({

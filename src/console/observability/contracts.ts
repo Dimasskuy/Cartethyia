@@ -150,6 +150,10 @@ export interface UsageRequestItem {
   userAgent?: string;
   clientName?: string;
   estimatedCost?: number;
+  /** Provider-billed credits; absent when the upstream reported no credit field. */
+  creditUsed?: number;
+  /** Gateway-side time from request start to upstream dispatch, in ms. */
+  resolveMs?: number;
   /** Resolved API key label; absent when the key is gone or unknown. */
   apiKeyLabel?: string;
   /** HTTP status the client actually received; absent on historical rows. */

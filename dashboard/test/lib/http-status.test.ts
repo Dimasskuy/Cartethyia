@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { httpStatusLabel, httpStatusTone } from "../../src/shared/http-status";
+import { httpStatusLabel, httpStatusShortLabel, httpStatusTone } from "../../src/shared/http-status";
 import { STATUS_CODES } from "node:http";
 
 /**
@@ -41,6 +41,31 @@ describe("httpStatusLabel", () => {
     // Never invent a phrase for a code we do not know about.
     expect(httpStatusLabel(599)).toBe("599");
     expect(httpStatusLabel(0)).toBe("0");
+  });
+});
+
+describe("httpStatusShortLabel", () => {
+  test("every status the gateway can return has a short word of at most 5 characters", () => {
+    const emitted = [200, 400, 401, 403, 404, 409, 413, 415, 422, 429, 499, 500, 501, 502, 503, 504];
+    for (const code of emitted) {
+      const label = httpStatusShortLabel(code);
+      expect(label.startsWith(`${code} `)).toBe(true);
+      const word = label.slice(String(code).length + 1);
+      // The whole point: a narrow cell must not carry `500 Internal Server Error`.
+      expect(word.length).toBeLessThanOrEqual(5);
+    }
+  });
+
+  test("names the codes the way an operator scans for them", () => {
+    expect(httpStatusShortLabel(500)).toBe("500 ERR");
+    expect(httpStatusShortLabel(400)).toBe("400 BAD");
+    expect(httpStatusShortLabel(499)).toBe("499 ABORT");
+    expect(httpStatusShortLabel(200)).toBe("200 OK");
+  });
+
+  test("an unknown code falls back to the bare number", () => {
+    expect(httpStatusShortLabel(599)).toBe("599");
+    expect(httpStatusShortLabel(0)).toBe("0");
   });
 });
 

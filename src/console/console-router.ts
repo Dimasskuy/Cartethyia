@@ -11,7 +11,7 @@ import { createConsoleAuthRoutes } from "./auth/session";
 import {
   createConsoleCsrfMiddleware,
   createConsoleMutationLimiterMiddleware,
-} from "../transport/middleware/ingress";
+} from "../transport/middleware/gateway-guards";
 import { registerConsoleDomains, type ConsoleDomainContext } from "./domain-registration";
 import type { ConsoleAccessResolver } from "./auth/access";
 import type { CartethyiaDatabase } from "../persistence/postgres";

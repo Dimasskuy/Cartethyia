@@ -1,7 +1,8 @@
 /**
- * Minimal SSE framing + stream helper for console live endpoints. The gateway
- * already speaks SSE to inference clients; this is the same wire shape
- * (named `event:`, JSON `data:`) pointed at the dashboard instead.
+ * Minimal SSE stream helper for console live endpoints. The gateway
+ * already speaks SSE to inference clients; frames are the same wire shape
+ * (named `event:`, JSON `data:`) pointed at the dashboard instead, built by
+ * the shared `buildSseEventFrame` core so the two layers cannot drift.
  */
 
 export interface SseSender {
@@ -11,9 +12,9 @@ export interface SseSender {
 /** Register endpoint-specific SSE subscriptions; return their teardown callback. */
 export type SseSetup = (sender: SseSender) => () => void;
 
-export function formatSseFrame(event: string, json: string): string {
-  return `event: ${event}\ndata: ${json}\n\n`;
-}
+import { buildSseEventFrame as formatSseFrame } from "../../transport/surface/stream-frame";
+
+export { formatSseFrame };
 
 /**
  * Heartbeat cadence. The listener idles at 60s, so a comment frame every 25s

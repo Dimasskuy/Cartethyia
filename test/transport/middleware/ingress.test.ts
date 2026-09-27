@@ -12,12 +12,18 @@ import { getInFlightCount, resetInFlightForTests } from "../../../src/transport/
 import { getConsoleLogSnapshot, resetConsoleLogsForTests } from "../../../src/observability/log-ring";
 import {
   readIngressBody,
+} from "../../../src/transport/middleware/body-policy";
+import {
   createApiKeyAuthenticationMiddleware,
   createConsoleMutationLimiterMiddleware,
+} from "../../../src/transport/middleware/gateway-guards";
+import {
   createErrorNormalizationMiddleware,
-  createRequestContextMiddleware,
   registerTelemetryLifecycle,
-} from "../../../src/transport/middleware/ingress";
+} from "../../../src/transport/middleware/error-lifecycle";
+import {
+  createRequestContextMiddleware,
+} from "../../../src/transport/middleware/request-context";
 
 describe("context.test.ts", () => {
   function requestWithBody(body: ReadableStream<Uint8Array>): Request {
@@ -291,6 +297,48 @@ dbDescribe("checks.test.ts", () => {
       // The public message carries the standard `Cartethyia Error:` origin
       // prefix; the text itself is generic and never names the matched router.
       expect(body.error?.message ?? "").toContain("No API invocation access for this client.");
+    });
+
+    test("refuses a bare Node User-Agent when the key denies the router", async () => {
+      const { token } = await createTenantWithKey(["routing:invoke"], ["9router"]);
+      const stateStore = new ProxyRequestStateStore();
+      const app = buildApp(stateStore);
+      const req = requestFor("/v1/chat/completions", {
+        authorization: `Bearer ${token}`,
+        "user-agent": "node",
+      });
+      stateStore.initialize(req, Date.now(), 30_000);
+      const response = await app.handle(req);
+      expect(response.status).toBe(403);
+      const body = (await response.json()) as {
+        error?: { code?: string; message?: string; origin?: string };
+      };
+      expect(body.error?.code).toBe("client_router_denied");
+      expect(body.error?.message ?? "").toContain("No API invocation access for this client.");
+    });
+
+    test("serves the bare Node User-Agent through a key that does not list it", async () => {
+      const { token } = await createTenantWithKey(["routing:invoke"], []);
+      const stateStore = new ProxyRequestStateStore();
+      const app = buildApp(stateStore);
+      const req = requestFor("/v1/chat/completions", {
+        authorization: `Bearer ${token}`,
+        "user-agent": "node",
+      });
+      stateStore.initialize(req, Date.now(), 30_000);
+      expect((await app.handle(req)).status).toBe(200);
+    });
+
+    test("serves a versioned node library User-Agent when the router is denied", async () => {
+      const { token } = await createTenantWithKey(["routing:invoke"], ["9router"]);
+      const stateStore = new ProxyRequestStateStore();
+      const app = buildApp(stateStore);
+      const req = requestFor("/v1/chat/completions", {
+        authorization: `Bearer ${token}`,
+        "user-agent": "node-fetch/1.0",
+      });
+      stateStore.initialize(req, Date.now(), 30_000);
+      expect((await app.handle(req)).status).toBe(200);
     });
 
     test("serves the same key when the caller is not a denied router", async () => {

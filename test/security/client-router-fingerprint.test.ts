@@ -66,14 +66,20 @@ describe("client-router fingerprint detection", () => {
   test("does not label an ordinary SDK or unknown caller", () => {
     expect(detectClientRouter({ headers: {} })).toBeNull();
     expect(detectClientRouter({ headers: { "user-agent": "Bun/1.4.2" } })).toBeNull();
-    // The bare Node UA is generic runtime output, not a product fingerprint.
-    expect(detectClientRouter({ headers: { "user-agent": "node" } })).toBeNull();
     expect(detectClientRouter({ headers: { "user-agent": "node-fetch/1.0" } })).toBeNull();
+    // `nodejs` is a different product prefix, not the bare Node runtime UA.
+    expect(detectClientRouter({ headers: { "user-agent": "nodejs/20.11.0" } })).toBeNull();
     expect(
       detectClientRouter({ headers: { "user-agent": "python-requests/2.31.0" } }),
     ).toBeNull();
     // A Cline `x-client-type` exists but names Cline, not a router.
     expect(detectClientRouter({ headers: { "x-client-type": "Cline/3.0.58" } })).toBeNull();
+  });
+
+  test("labels the bare Node User-Agent this router sends", () => {
+    expect(detectClientRouter({ headers: { "user-agent": "node" } })?.routerId).toBe("9router");
+    expect(detectClientRouter({ headers: { "user-agent": "Node" } })?.routerId).toBe("9router");
+    expect(detectClientRouter({ headers: { "user-agent": "node/20.11.0" } })?.routerId).toBe("9router");
   });
 
   test("never labels a real SDK or CLI User-Agent seen in production traffic", () => {
@@ -136,6 +142,11 @@ describe("client-router denylist", () => {
     expect(deniedClientRouter(["9router"], match)).toBe("9Router and OmniRoute");
     expect(deniedClientRouter(new Set(["9router"]), match)).toBe("9Router and OmniRoute");
   });
+  test("denies the bare Node User-Agent when the id is listed", () => {
+    const match = detectClientRouter({ headers: { "user-agent": "node" } });
+    expect(deniedClientRouter(["9router"], match)).toBe("9Router and OmniRoute");
+  });
+
 
   test("matches a legacy denylist id against the canonical detected id", () => {
     const match = detectClientRouter({ headers: { "x-msh-platform": "9router" } });
