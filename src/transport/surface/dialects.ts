@@ -191,9 +191,10 @@ export function parseReasoningIntent(body: Record<string, unknown>): ReasoningIn
   const rawEffort = reasoningObj
     ? readString(reasoningObj, "effort")
     : (readString(body, "reasoning_effort") ?? readString(body, "reasoning_level"));
-  const rawSummary = reasoningObj
-    ? (readString(reasoningObj, "summary") ?? readString(reasoningObj, "summary_mode"))
+  const rawSummaryMode = reasoningObj
+    ? (readString(reasoningObj, "summary_mode") ?? readString(reasoningObj, "summary"))
     : readString(body, "summary_mode");
+  const rawSummaryText = reasoningObj ? readString(reasoningObj, "summary") : undefined;
   const reasoning: ReasoningIntent = {};
   if (isReasoningEffort(rawEffort)) reasoning.effort = rawEffort;
   if (reasoningObj) {
@@ -207,10 +208,11 @@ export function parseReasoningIntent(body: Record<string, unknown>): ReasoningIn
     const budget = readNumber(reasoningObj, "budget_tokens");
     if (budget !== undefined) reasoning.budget_tokens = budget;
   }
-  if (rawSummary === "auto" || rawSummary === "concise" || rawSummary === "detailed") {
-    reasoning.summary_mode = rawSummary;
-  } else if (rawSummary !== undefined && reasoningObj) {
-    reasoning.summary = rawSummary;
+  if (rawSummaryMode === "auto" || rawSummaryMode === "concise" || rawSummaryMode === "detailed") {
+    reasoning.summary_mode = rawSummaryMode;
+  }
+  if (rawSummaryText !== undefined && rawSummaryText !== "auto" && rawSummaryText !== "concise" && rawSummaryText !== "detailed") {
+    reasoning.summary = rawSummaryText;
   }
   return Object.keys(reasoning).length > 0 ? reasoning : undefined;
 }

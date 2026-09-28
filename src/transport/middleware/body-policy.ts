@@ -60,11 +60,11 @@ export async function readIngressBody(
   const isJsonRoute = isJsonProxyRoute(p);
   const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (!contentType) {
-    if (isJsonRoute) throw new GatewayError("invalid_request", 415, "content-type must be application/json");
+    if (isJsonRoute) throw new GatewayError("unsupported_media_type", 415, "content-type must be application/json");
     return undefined;
   }
   if (contentType !== "application/json") {
-    if (isJsonRoute) throw new GatewayError("invalid_request", 415, "content-type must be application/json");
+    if (isJsonRoute) throw new GatewayError("unsupported_media_type", 415, "content-type must be application/json");
     return undefined;
   }
   const maxBytes = options.maxBodyBytes ?? 1_048_576;

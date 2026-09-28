@@ -4,6 +4,11 @@ Operating contract for coding agents. Read once at the start of a task.
 Sections 5–9 decide whether a change is acceptable; 2–4 are how to work;
 10–16 are boundaries and the closing audit.
 
+The intent behind every rule here is one thing: **leave the repository in a
+state where the next reader can trust the code and the docs.** The rules are
+defaults, not ceremonies. Apply judgment, and when a rule and the goal visibly
+conflict, follow the goal and say in your report that you did.
+
 ## Section index
 
 Titles are stable: other files cite a section by name or number. Renaming a
@@ -47,7 +52,8 @@ when the work is reachable.
 6. Brevity of the patch.
 
 A shorter patch is not better if it leaves dead code, stale imports, fragile
-fallbacks, or an unverified contract.
+fallbacks, or an unverified contract. Equally, a longer patch is not better for
+its own sake — do not expand scope to satisfy a checklist item.
 
 ## 2. Required start-of-task protocol
 
@@ -63,6 +69,10 @@ For non-trivial work, before extended reasoning:
 Use the goal/task feature for multi-step work. For a one-file or obvious edit,
 read, edit, and run the smallest useful check — do not build a plan.
 
+Scale this to the task. A typo fix does not need a written goal; a routing
+change does. The point of the protocol is that you act on evidence rather than
+on a mental model of the code.
+
 ## 3. Action gate and context budget
 
 **A turn counts only when it acts:** read a file/symbol, search a caller or
@@ -74,8 +84,6 @@ Never spend consecutive turns only restating the plan, describing intent,
 listing hypothetical approaches, or deliberating without a tool call. If the
 next action is clear, do it. After two failed approaches, inspect the failure
 and change approach. After three no-progress actions, report the exact blocker.
-Thinking is not progress unless it produced a read, search, edit, command,
-fetch, or evidence-backed decision.
 
 **Spend context deliberately.**
 
@@ -88,17 +96,17 @@ fetch, or evidence-backed decision.
 - Do not paste source you already read — quote the line, symbol, or diff.
 - Match the report to the reader: evidence plus decisions, not a walkthrough.
 
-**High-reasoning models:** use low/normal reasoning for straightforward edits;
-reserve high for ambiguous architecture, security, data safety, or hard
-debugging. Even then, take the first tool action immediately after identifying
-the target, and after every tool result choose the next evidence-producing
-action.
+**Match reasoning effort to the problem.** Use low/normal reasoning for
+straightforward edits; reserve high for ambiguous architecture, security, data
+safety, or hard debugging. Even then, take the first tool action immediately
+after identifying the target, and after every tool result choose the next
+evidence-producing action.
 
-**Banned patterns (observed failures — do not repeat):**
+**Failure patterns worth avoiding** (observed, not hypothetical):
 
 - Re-instrumenting the same path more than once. If a tap/log did not show the
-  cause, do not add the same tap again — change what you observe (raw bytes vs
-  parsed, request vs response) or read the code that transforms it.
+  cause, change what you observe (raw bytes vs parsed, request vs response) or
+  read the code that transforms it.
 - Restart/reload loops. Confirm the process actually picked up the change
   (version, a log line) before re-running; a hot-reload that silently missed
   the edit wastes a whole cycle.
@@ -115,8 +123,8 @@ Local source first. Do not web-search what the repository already answers.
 
 For external or time-sensitive facts: search for the primary source, fetch and
 read the actual page (snippets are not evidence), prefer official docs/specs/
-source over summaries, extract the exact behavior, apply it, verify locally, and
-cite the fetched source when the answer depends on it. If a page cannot be
+source over summaries, extract the exact behavior, apply it, verify locally,
+and cite the fetched source when the answer depends on it. If a page cannot be
 fetched, say so and use a second source or mark the claim unverified.
 
 ## 5. Hard implementation boundaries
@@ -144,6 +152,13 @@ cause is a defect in the change.
 - Never leave a stub, fake, TODO implementation, debug logging, or misleading
   placeholder in production code.
 
+The spirit of this section is narrower than a literal reading: the ban is on
+*hiding a cause*, not on legitimate design. A deliberate capability-degradation
+path, a documented fallback an operator configures, and a guard for a
+partially-implemented dependency are all normal engineering — each is fine when
+it is the intended behavior and is named as such. What is never fine is a
+branch whose only purpose is to make a known failure stop being visible.
+
 ## 6. Clean cutover: no aliases for new features
 
 When adding, renaming, moving, or replacing a feature/API/symbol/module:
@@ -166,9 +181,12 @@ export const newFeature = oldFeature;
 export function oldName(...args: Args) { return newName(...args); }
 ```
 
-If compatibility is genuinely required, it must be an explicit release
-boundary named in the task, documented in the layer doc, with a removal
-condition. Otherwise migrate and remove.
+If compatibility is genuinely required, it must be an explicit release boundary
+named in the task, documented in the layer doc, with a removal condition.
+Otherwise migrate and remove.
+
+A `CHANGELOG.md` entry or a historical doc mentioning the old name is not a
+caller; leave history historical and correct the active docs instead.
 
 ## 7. Real fix, and temporary-test limits
 
@@ -213,6 +231,9 @@ Ruled out: interface dispatch, callback field, re-export, dynamic import,
 Evidence: <search results + typecheck/test output>
 ```
 
+This applies to symbols *reachable from the change*. Do not treat it as a
+licence to audit unrelated code that nobody asked about.
+
 ## 9. Evidence discipline
 
 ### 9.1 Derive facts from source; never restate them from memory
@@ -249,7 +270,8 @@ When a claim you made turns out false, correct it where it stands and say what
 is true. Mark it:
 
 ```markdown
-> **Koreksi.** Premis di atas salah. Verifikasi menemukan <X>; yang benar <Y>.
+> **Correction.** The premise above is wrong. Verification found <X>; the truth
+> is <Y>.
 ```
 
 ### 9.6 Report the shape of the evidence
@@ -277,6 +299,9 @@ blocked** with the reason. Never present a read as a run or a plan as a result.
 - Entity dirs use role files: `contracts.ts`, `routes.ts`, `store.ts`,
   `service.ts`, `errors.ts`.
 - Keep protocol parsing, encoding, adapters, and errors separated.
+
+These describe the shape the repo actually has. A new folder that fits none of
+them is a reason to update this list, not a violation.
 
 ## 11. TypeScript and implementation rules
 
@@ -336,11 +361,13 @@ bun run scripts/ops-run-tests.ts test/providers/integrations/codex
 
 Report DB-gated skips separately from failures. Never claim a command passed
 unless executed. For UI changes use the real browser surface; for CLI/TUI,
-launch and exercise it. Do not declare completion from typecheck alone.
+launch and exercise it — but if that surface is genuinely unavailable, say so
+explicitly rather than implying you verified visually. Do not declare
+completion from typecheck alone.
 
 ## 13. Documentation and configuration currency
 
-Documentation is part of the change.
+Documentation is part of the change — the doc that describes what you changed.
 
 - `README.md` is product/runtime usage.
 - `.env.example` documents every literal `process.env.*` read; drift test is
@@ -359,6 +386,21 @@ Documentation is part of the change.
   the relevant reference before subsystem work; guards K1–K11 live in
   `references/guards.md`.
 
+- A new route group, provider capability, env var, DB table, generated
+  contract, or persisted envelope requires source, tests, layer doc, and
+  config/migration updates together.
+- A move/rename requires updated imports, tests, docs, map, and naming-contract
+  tests.
+- Do not document volatile test counts, line numbers, dependency versions,
+  generated hashes, secrets, or temporary debug output. State the invariant a
+  count expresses instead of the count, or cite the test that pins it.
+- If code and docs disagree, inspect the code and fix stale docs in the same
+  change unless the code is the defect.
+
+Update the docs that your change made wrong. Do not rewrite a layer doc you
+were not working in, and do not paste implementation detail into `AGENTS.md` —
+it belongs in the layer doc beside the code.
+
 ## Required guard registry
 
 Owned by `.skills/cartethyia-engineering/references/guards.md`:
@@ -370,6 +412,8 @@ Owned by `.skills/cartethyia-engineering/references/guards.md`:
 - K5 canonical naming/location
 - K6 persisted envelope/version boundaries
 - K7 dead keys and branches
+- K7b no suppression, no workaround
+- K7c goal-first testing, no search loops
 - K8 documentation synchronization
 - K9 bundled-provider coverage
 - K10 reusable skill self-improvement
@@ -378,15 +422,8 @@ Owned by `.skills/cartethyia-engineering/references/guards.md`:
 Report the applied guard and evidence in the change summary. Do not create a
 second skill or guard folder.
 
-- A new route group, provider capability, env var, DB table, generated
-  contract, or persisted envelope requires source, tests, layer doc, and
-  config/migration updates together.
-- A move/rename requires updated imports, tests, docs, map, and naming-contract
-  tests.
-- Do not document volatile test counts, line numbers, dependency versions,
-  generated hashes, secrets, or temporary debug output.
-- If code and docs disagree, inspect the code and fix stale docs in the same
-  change unless the code is the defect.
+Apply the guard that the change actually implicates; a one-line typecheck fix
+does not need a K1 report.
 
 ## 14. Deletion and data safety
 

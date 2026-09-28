@@ -17,7 +17,7 @@ creating competing skills.
 | Repository orientation, provider, version, schema, console-log, gates, removal, clean cutover, or consolidating duplicated logic | `references/development.md` |
 | Dispatch failure, routing, proxy proof, tool calling, duplicates, live request, or local DB reset | `references/debugging.md` |
 | Repeated cleanup mistake, new drift class, or improving this skill | `references/self-improvement.md` |
-| Any K1–K11 contract, architecture, provider, wire, schema, naming, dead-key, docs, deadness, or skill guard | `references/guards.md` |
+| Any K1–K11 contract, architecture, provider, wire, schema, naming, dead-key, docs, deadness, suppression (K7b), test-loop (K7c), or skill guard | `references/guards.md` |
 
 This is intentionally one discoverable Cartethyia skill. Use progressive
 disclosure: load only the reference needed for the current task.
@@ -26,6 +26,31 @@ Read the detailed reference before editing the owned subsystem. It contains the
 canonical authority map, procedures, pitfalls, commands, and verification
 checklists. Do not copy those details into this entry point or into product
 README files.
+
+## The fast path (read this before you search)
+
+The repository is large enough that a grep-and-read loop is the slowest way to
+work and the most likely to end in a plausible guess. Navigate by authority
+instead:
+
+1. **Name the layer, not the file.** Every top-level `src/` folder has exactly
+   one doc named for it (`src/transport/TRANSPORT.md`,
+   `src/providers/PROVIDERS.md`, …). That doc is the index for its whole
+   subtree. Read it before opening source.
+2. **Ask the index, not the filesystem.** A `.codegraph/codegraph.db` index
+   exists at the repo root. `codegraph_explore` returns the relevant symbols'
+   verbatim source plus the call paths between them — including dynamic-dispatch
+   hops grep cannot follow — in one call. Use it for "how does X work" and
+   "who calls X". Reserve `Read` for a specific range, and `Grep` for a literal
+   you already know.
+3. **Re-verify indexed hits** when the file changed after the index's sync
+   point. The index is a map, not an oracle.
+4. **Find the owner before the fix.** One behavior has one canonical owner.
+   Editing the nearest matching file is how a symptom gets suppressed instead of
+   fixed (see "Fix or suppression" below).
+
+Then load the reference for your section. Orientation costs a few minutes and
+replaces an unbounded search.
 
 ## Mandatory operating loop
 
@@ -44,6 +69,48 @@ README files.
    appropriate to the impact.
 9. Audit acceptance criteria, stale names, aliases, dead code, and unverified
    areas before reporting completion.
+
+## Fix or suppression
+
+The most common way this repository gets worse is a change that makes a failure
+stop being visible without removing its cause. Before you commit to an approach,
+answer these four questions in writing:
+
+1. **What is the cause?** If you cannot state it as a mechanism ("X reads Y,
+   which is undefined when Z"), you are not ready to fix.
+2. **Does my change remove the cause, or stop it being reported?** Removing a
+   throw, loosening validation, widening a type, adding a fallback, raising a
+   timeout, or catching an exception is suppression until proven otherwise.
+3. **What does the other arm do?** For a guard, probe, or capability check, the
+   branch you find "obviously dead" may be load-bearing for a partially
+   implemented dependency. Check before deleting (K11).
+4. **Is the degraded path the intended product behavior?** Capability
+   degradation, an operator-configured fallback, and a documented
+   compatibility boundary are legitimate design. Name them as such in a comment
+   and in the layer doc; do not let them masquerade as a bug fix.
+
+A workaround is acceptable only when it is a named release boundary with a
+removal condition. Otherwise it is a defect you are adding.
+
+## Test with a goal, not with a loop
+
+A test is an assertion about a goal, not an exploration tool. Write the goal
+first:
+
+- State the **observable** behavior you expect (result, boundary, error,
+  transition, security invariant, persistence contract — never "does not
+  throw" or an implementation detail).
+- State **how it fails today**, and why. If you cannot predict the failure, you
+  have a hypothesis, not a test.
+- Write the assertion, then run it **once**. A failing run that fails for the
+  predicted reason is confirmation of your model. A failing run you did not
+  predict is new information — read it, update the model, then change the code.
+- Re-running the same test repeatedly while poking at the implementation is a
+  search, not a verification, and it is the most expensive way to work. Change
+  what you observe instead: raw bytes vs parsed, request vs response, one
+  provider vs one surface.
+- After the fix passes, **mutation-test it**: break the fix, confirm the test
+  fails on the intended assertion, restore, confirm it passes.
 
 ## Deep-reasoning and loop control
 

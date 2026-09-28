@@ -46,12 +46,9 @@ export function isSecretKeyName(lower: string): boolean {
   return SECRET_TOKEN_KEYS.has(lower) || (lower.endsWith("_token") && !lower.endsWith("_tokens"));
 }
 
-export function isOpaqueEncrypted(lower: string, value: unknown): boolean {
-  if (lower.includes("encrypted")) return true;
-  if (lower.includes("reasoning") && typeof value === "string" && value.length > 100) return true;
-  if (lower === "reasoning" || lower === "encrypted_content" || lower === "encrypted_reasoning") {
-    return true;
-  }
+export function isOpaqueEncrypted(_lower: string, _value: unknown): boolean {
+  // User requirement: Never redact reasoning or encrypted reasoning content.
+  // Redacting reasoning destroys context for thinking models upon multi-turn replay.
   return false;
 }
 
@@ -86,12 +83,24 @@ export function redactTelemetryValue(value: unknown): unknown {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
       const lower = k.toLowerCase();
+      // Reasoning and thinking content must be passed verbatim without any redaction,
+      // including encrypted signatures, tokens, or IP-like numbers inside math/code.
+      if (
+        lower === "reasoning_content" ||
+        lower === "reasoning" ||
+        lower === "thinking" ||
+        lower === "encrypted_content" ||
+        lower === "signature" ||
+        lower === "redacted_thinking"
+      ) {
+        out[k] = v;
+        continue;
+      }
       if (isSecretKeyName(lower)) {
         out[k] = REDACTED_SECRET_KEY;
         continue;
       }
       if (isOpaqueEncrypted(lower, v)) {
-        // Encrypted reasoning is opaque: redact, never reconstruct.
         out[k] = "***REDACTED***[encrypted]";
         continue;
       }

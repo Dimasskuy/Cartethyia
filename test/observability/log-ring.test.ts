@@ -125,6 +125,31 @@ describe("console log ring", () => {
 describe("logger facade ring hook", () => {
   beforeEach(() => resetConsoleLogsForTests());
 
+  test("redacts structured secrets before both Pino output and the ring", () => {
+    const originalWrite = process.stdout.write;
+    let pinoOutput = "";
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      pinoOutput += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      log.info("upstream response", {
+        headers: { authorization: "Bearer supersecret-token-value" },
+        nested: { apiKey: "sk-secret-key-value" },
+      });
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    const ringMessage = getConsoleLogSnapshot().at(-1)?.msg ?? "";
+    expect(pinoOutput).toContain("***REDACTED***[secret-key]");
+    expect(ringMessage).toContain("***REDACTED***[secret-key]");
+    expect(pinoOutput).not.toContain("supersecret-token-value");
+    expect(pinoOutput).not.toContain("sk-secret-key-value");
+    expect(ringMessage).not.toContain("supersecret-token-value");
+    expect(ringMessage).not.toContain("sk-secret-key-value");
+  });
+
   test("every level lands in the ring with its message", () => {
     log.debug("debug line");
     log.info("info line");
@@ -139,8 +164,23 @@ describe("logger facade ring hook", () => {
   });
 
   test("redacts credential material carried by structured args with its category", () => {
-    log.error("upstream rejected", new Error("bad"), { headers: { authorization: "Bearer supersecret-token-value" } });
+    const originalWrite = process.stdout.write;
+    let pinoOutput = "";
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      pinoOutput += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      log.error("upstream rejected", new Error("Bearer error-secret-value-123456789"), {
+        headers: { authorization: "Bearer supersecret-token-value" },
+      });
+    } finally {
+      process.stdout.write = originalWrite;
+    }
     const line = getConsoleLogSnapshot().at(-1)?.msg ?? "";
+    expect(pinoOutput).toContain('"type":"Error"');
+    expect(pinoOutput).not.toContain("error-secret-value-123456789");
+    expect(pinoOutput).not.toContain("supersecret-token-value");
     expect(line).not.toContain("supersecret-token-value");
     expect(line).toContain("***REDACTED***[secret-key]");
   });

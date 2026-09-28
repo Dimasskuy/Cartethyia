@@ -253,7 +253,13 @@ export function buildPipelineHarness(options: PipelineHarnessOptions = {}): Pipe
             ? "chat"
             : input.canonicalRequest.source_surface,
         endpoint: "/v1/chat/completions",
-        capability_profile: {},
+        capability_profile: {
+          tools: true,
+          parallel_tool_calls: true,
+          reasoning: true,
+          image: true,
+          document: true,
+        },
         requires_account: false,
       };
       const plan: RoutePlan = {

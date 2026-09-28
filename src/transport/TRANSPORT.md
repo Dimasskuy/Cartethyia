@@ -28,51 +28,61 @@ src/transport/
                         SSE decode, retry classification, tool identity. `decodeSseEvents` is the
                         single decoder for every wire family: 4 MiB per-event cap, malformed line
                         → 502, `:`/`id:`/`retry:` lines ignored, abort cancels the reader
-  middleware/           ordered Elysia ingress pipeline (pipeline.ts, ingress.ts)
+  middleware/           ordered Elysia ingress pipeline (`pipeline.ts`) composed from
+                          `body-policy.ts`, `request-context.ts`, `gateway-guards.ts`, and
+                          `error-lifecycle.ts` by responsibility
   surface/              client-facing wire codecs: detection, parse, encode
   request/              per-request lifecycle state + the preparer/planner
   translation/          capability model, repairs, normalization, quirks
+                        `normalizeWireMaxTokens` fills `max_tokens` from
+                        `max_output_tokens` for wires that only accept the former
   routing/              snapshot build, plan order, provider routing, admission
   dispatch/             hot-path execution: attempt loop, leases, streaming, completion
 ```
 
 ## Ingress pipeline (`middleware/`)
 
-`pipeline.ts` fixes the stage order once; `ingress.ts` implements the factories. Composition code (`app.ts`) only mounts — it
-never assembles policy. `mountRoot()` applies request-context state, the root IP-abuse hook, and error normalization, and
+`pipeline.ts` fixes the stage order once; the factories are grouped by role:
+`body-policy.ts` owns single-read body policy, `request-context.ts` owns state/identity/parse/prepare,
+`gateway-guards.ts` owns authorization and guards, and `error-lifecycle.ts` owns public error normalization,
+telemetry, and cleanup. Composition code (`app.ts`) only mounts — it never assembles policy. `mountRoot()` applies request-context state, the root IP-abuse hook, and error normalization, and
 attaches the telemetry lifecycle (or plain cleanup when no telemetry buffer is configured); `createGateway()` mounts the
 ordered `/v1/*` chain and registers the caller's routes, registering no lifecycle of its own:
 
 1.  `createDependencyReadinessMiddleware` — fail closed on not-ready dependencies or shutdown drain.
 2.  `createIngressPolicyMiddleware` — single-read body decode + size/media enforcement.
-3.  `createClientIdentityMiddleware` — peer address → trusted client IP on state; logs `request_start`.
-4.  `createApiKeyAuthenticationMiddleware` — `routing:invoke` scope check; stores `ResolvedApiKey` on state (one inline
+3.  `request-context.ts:createClientIdentityMiddleware` — peer address → trusted client IP on state; logs `request_start`.
+4.  `gateway-guards.ts:createApiKeyAuthenticationMiddleware` — `routing:invoke` scope check; stores `ResolvedApiKey` on state (one inline
   policy, no per-route table).
-5.  `createCanonicalRequestMiddleware` — `detectOnce()` + adapter `parse()` into `state.canonicalRequest`.
-6.  `createProxyRoutePreparationMiddleware` — `ProxyRequestPreparer.prepare()` into `state.preparedRequest`.
+5.  `request-context.ts:createCanonicalRequestMiddleware` — `detectOnce()` + adapter `parse()` into `state.canonicalRequest`.
+6.  `request-context.ts:createProxyRoutePreparationMiddleware` — `ProxyRequestPreparer.prepare()` into `state.preparedRequest`.
 
 The per-IP abuse middleware is not in that chain: `mountRoot()` mounts it on the root `request` hook so it also covers
 `/v1/*` paths that match no route, and it resolves its own client identity because it runs ahead of the identity stage.
 
--  **Body and state** — `readIngressBody()` reads the body exactly once, enforces `application/json` on JSON routes (415) and
+-  **Body and state** — `body-policy.ts:readIngressBody()` reads the body exactly once, enforces `application/json` on JSON routes (`unsupported_media_type` 415) and
   `content-length` + incremental size caps (413, default 1 MiB), and a JSON nesting-depth cap of
   64 levels (400), and stashes the decoded value on `state.ingressBody`; later
-  stages never re-read `request.body`. `createRequestContextMiddleware` initializes `ProxyRequestState` for `/v1/*` only
+  stages never re-read `request.body`. `request-context.ts:createRequestContextMiddleware` initializes `ProxyRequestState` for `/v1/*` only
   (health/console/dashboard traffic gets no state, no deadline timer, and no in-flight count) and stamps security headers
   (`x-request-id`, content-security, frame options).
--  **Elysia trap** — `createClientIdentityMiddleware` must use `beforeHandle`; plugin `onRequest` does not fire under Elysia 2
-  beta. No peer address → 503. `createIpAbuseProtectionMiddleware` is the mirror image: it needs the **root** `request` hook,
+-  **Elysia trap** — `request-context.ts:createClientIdentityMiddleware` must use `beforeHandle`; plugin `onRequest` does not fire under Elysia 2
+  beta. No peer address → 503. `gateway-guards.ts:createIpAbuseProtectionMiddleware` is the mirror image: it needs the **root** `request` hook,
   because a `beforeHandle` (root or plugin) only runs for a request that matches a registered route, which left unregistered
   `/v1/*` paths uncounted. It resolves its own client identity for that reason.
 -  **Skips and failure modes** — canonical parse and route preparation skip GET/HEAD, non-JSON routes, and
   `/v1/responses/compact` (native path). Parse fails closed when the ingress stage did not run (`ingressBody === undefined`;
   an explicit `null` still flows to parse errors) and stashes a capped user-agent; preparation requires authorization +
   canonical request.
--  **Console, errors, lifecycle** — `createConsoleCsrfMiddleware` (double-submit `x-csrf-token` vs the readable `csrf_token`
-  cookie, scoped to unsafe `/console/api/*` mutations) and `createConsoleMutationLimiterMiddleware` are defined here but
-  mounted by the console router, not by the transport pipeline — they are not gateway stages. `createErrorNormalizationMiddleware` maps `GatewayError` (and unknown throws) to public JSON via
-  `explainGatewayError` / `publicGatewayErrorDetails`; stages throw and stay dumb. `registerTelemetryLifecycle` /
-  `registerRequestCleanup` run `afterResponse` finalization (telemetry for dispatch routes only — `isProxyDispatchRoute`
+-  **Console, errors, lifecycle** — `gateway-guards.ts:createConsoleCsrfMiddleware` (double-submit `x-csrf-token` vs the readable `csrf_token`
+  cookie, scoped to unsafe `/console/api/*` mutations) and `gateway-guards.ts:createConsoleMutationLimiterMiddleware` are defined here but
+  mounted by the console router, not by the transport pipeline — they are not gateway stages. `error-lifecycle.ts:createErrorNormalizationMiddleware` maps `GatewayError` (and unknown throws) to public JSON via
+  `explainGatewayError` / `publicGatewayErrorDetails`; stages throw and stay dumb. An unhandled throw that
+  arrived **before canonical parse** (`isInputError`: no `GatewayError`, no Elysia status/code, no
+  `state.canonicalRequest`) is classified 400 `invalid_request` with the error's own message rather than a
+  generic 500 — a malformed body that broke a parser is the caller's request, not a gateway fault. Anything
+  after canonical parse stays 500 `internal_error`. `error-lifecycle.ts:registerTelemetryLifecycle` /
+  `error-lifecycle.ts:registerRequestCleanup` run `afterResponse` finalization (telemetry for dispatch routes only — `isProxyDispatchRoute`
   excludes `/v1/models` and friends) plus guaranteed cleanup; streaming requests defer finalization to stream completion
   (`state.streaming`, `state.completed`). **They are mounted at the root by `mountRoot`, never on the gateway plugin**: a
   plugin-scoped `afterResponse` fires only for a request that matched a registered route, so an unregistered `/v1/*` path was
@@ -83,7 +93,7 @@ The per-IP abuse middleware is not in that chain: `mountRoot()` mounts it on the
 
 **Invariants.** No stage runs before its inputs exist on state. Single body read, single canonical parse, single route
 preparation. Non-dispatch gateway routes authenticate but never dispatch, never enqueue telemetry, and never appear as proxy
-lifecycle events. A new stage is a `create*Middleware` factory in `ingress.ts` inserted in `pipeline.ts` order, registered as
+lifecycle events. A new stage is a `create*Middleware` factory in the role file that owns it inserted in `pipeline.ts` order, registered as
 `beforeHandle` + `.as("plugin")` (plugin `onRequest` never fires under Elysia 2 beta) and touching request state only through
 `stateStore`; a new JSON proxy route is one `PROXY_JSON_ROUTES` entry that the body reader, canonical stage, preparation stage,
 and telemetry gate pick up together.
@@ -163,7 +173,9 @@ failing.
 ## Preparation and state (`request/`)
 
 The preparer resolves routing, degrades capabilities, and hands dispatch a `PreparedProxyRequest`.
-`ProxyRequestPreparer.prepare()` order: snapshot read → CLI-scope alias target → key-prefix check → key model allowlist
+`ProxyRequestPreparer.prepare()` order: abort check → **non-empty `model` guard** (400 `invalid_request`
+naming `field: "model"` — a blank id must not reach the snapshot read or reserve capacity) → snapshot read →
+CLI-scope alias target → key-prefix check → key model allowlist
 (requested or resolved name) → variant plan loop → repair/sanitize → intersect projection → token estimates.
 
 -  **Alias/allowlist** — `resolveAliasTarget()` honors CLI mappings only for keys with `routing:cli_mapping`;
@@ -281,7 +293,13 @@ cannot fix, degrade the rest in a fixed least-impact order.
   limit is enforced once, at the preflight boundary, by `validateCacheBreakpoints` in `translation/capabilities.ts`
   (a typed 400 before admission or dispatch); it is deliberately not re-checked in the payload builders. The OpenAI
   wire builders synthesize no top-level cache field: `prompt_cache_key` travels only when the caller supplied it, and
-  caller breakpoints are materialized per content block.
+  caller breakpoints are materialized per content block. On the Anthropic Messages wire, only `auto` and `standard_only`
+  are forwarded for `service_tier`; any unsupported tier is logged with a warning rather than rejected or silently discarded.
+  `normalizeWireMaxTokens()` fills `max_tokens` from `max_output_tokens` for wires that accept only the former, so a
+  Responses-authored request (`max_output_tokens`) keeps its ceiling when it is served on the chat or Messages wire
+  instead of falling back to that wire's default. The Messages builder reads its tool-call ceiling from the
+  normalized value, and the chat builder clamps *after* `pickWireSupportedControls` — the pick forwards the caller's
+  `max_tokens` verbatim, so clamping before it would be overwritten.
 
 **Invariants.** Capability derivation runs before repairs (the variant plan loop derives, then `repairRequestToolCalls()`
 runs against the winning plan); normalization runs after. `extension:*` generation controls are
@@ -371,6 +389,21 @@ reasoning-summary override; non-fatal), allowlists inbound headers once (`forwar
 `x-opencode-session`, `prompt-cache-key`, `prompt_cache_key`, `session-id` — a new header is one set entry),
 then runs `runAttemptLoop` over `eligibleRouteCandidates`.
 
+**Cache affinity reaches the adapter.** `handleProviderProxyRequest` resolves `conversationAffinity`
+once per request via `resolvePromptCacheKey(canonicalRequest, …)` and threads it onto the dispatch
+context (`buildUpstreamDispatchContext`, exposed as `ProviderDispatchContext.conversation_affinity`).
+An adapter that mints its own per-request session id uses it in place of a random value — opencode
+sends it as both `x-opencode-session` and `x-opencode-request` — so a repeated conversation keeps one
+stable upstream cache key instead of missing on every turn. Without it the affinity the session
+resolver already derived never reached the headers that carry it.
+
+**Dispatch-time projection.** When a candidate's `model_id` differs from the requested model (an alias,
+combo, or CLI mapping resolved to it), `handleProviderProxyRequest` re-projects the request through
+`projectForRoute(candidateRequest, routeCapabilitiesFor(candidate))` before dispatch. The preparer projected
+against the *intersection* of all candidates, so a failover target reached later may accept a narrower set —
+re-projecting per candidate keeps the request expressible on the wire actually chosen instead of relying on
+the intersection having been conservative enough.
+
 **Attempt phases** — three phases per candidate, unwound in reverse order:
 
 1.  **Prepare** — resolve the account credential via `resolveCredentialForAccount` (OAuth refresh through
@@ -386,6 +419,11 @@ then runs `runAttemptLoop` over `eligibleRouteCandidates`.
 last-candidate attempts are terminal, others back off with jittered `fallbackRetryDelayMs` and try the next candidate.
 Terminal attempts record their `errorCategory` via `classifyTerminalCategory` (GatewayError code passthrough, signal-reason
 deadline/close mapping, else `unknown_error`).
+
+A terminal `failed` state — written only by the upstream decoders — carries the upstream's failure, and
+`terminalFailure()` forwards it rather than flattening it to a bare 502: `provider_stop_reason` becomes
+`details.provider_code`, `stop_details` is spread into `details`, and a `message` inside those details becomes
+the public message. Losing that detail turned a provider's specific rejection into "upstream request failed".
 Provider 429s with provider scope flag a pool cooldown (`flagPoolCooldown`, in `../network/pool-health.ts`, writing the
 volatile flag and the durable `health_events` row through one call). A 403 is refreshed only when
 `isOAuthCredentialInvalidated()` finds credential evidence; policy rejections (e.g. CodeBuddy `11140`) are retryable but
@@ -495,6 +533,7 @@ Structured provider types may normalize the public code/status; the original HTT
 | `invalid_request` | 400 | cartethyia/upstream | no | malformed or explicitly invalid request |
 | `unsupported_field` | 400 | cartethyia | no | the request carried a field this route rejects |
 | `unsupported_media_type` | 415 | upstream | no | the upstream does not accept the request media type |
+| `unsupported_media_type` | 415 | cartethyia | no | a JSON proxy route received a non-`application/json` content-type |
 | `upstream_conflict` | 409 | upstream | no | the upstream rejected a conflicting request |
 | `upstream_unprocessable` | 422 | upstream | no | the upstream could not process the request content |
 | `internal_error` | 500 | cartethyia | no | an unexpected gateway exception; the client cannot fix it |
@@ -544,123 +583,59 @@ over the fallback: parking an account for 15 minutes when the provider said 10 h
 failed every request inside the stated window. Pool cooldown applies only on upstream 429 with provider scope; OAuth
 refresh only on evidence-based invalidation.
 
-## Unified API hardening task map
+## Unified API hardening: current state
 
-The user-reported Responses 400s, stream stalls/disconnects, and missing reasoning are **not
-reproduced here**. They are investigation inputs, not verified defects. Keep the inbound client
-surface (`chat`, `responses`, `messages`, legacy `completion`) separate from the selected provider
-wire (`chat`, `responses`, `messages`, or a bespoke adapter). The task sequence below hardens the
-existing canonical route instead of making every provider speak one invented protocol.
+The user-reported Responses 400s, stream stalls/disconnects, and missing reasoning were
+investigation inputs, **not** reproduced defects, and no reproduction has since been captured.
+Nothing below is an open work item unless a report reproduces it again; it records what the
+canonical route already guarantees so a future report can be triaged against fact instead of
+speculation.
 
-### P0 — Reproduce and classify the reported Responses failures
+Keep the inbound client surface (`chat`, `responses`, `messages`, legacy `completion`) separate
+from the selected provider wire (`chat`, `responses`, `messages`, or a bespoke adapter): a surface
+parser change does not imply a provider codec change, and matching path names does not make the
+payloads or stream envelopes interchangeable.
 
-- Capture one real request for each symptom: upstream 400, stalled/disconnected stream, and missing
-  reasoning. Retain request ID, client surface, selected provider/model/wire, terminal/status frame,
-  and redacted request/response bodies.
-- Decide where the 400 originates: ingress validation, capability projection, upstream HTTP status,
-  a `response.failed`/in-stream error event, SSE decoding, or client-side event interpretation.
-- For stalls, record whether upstream bytes/events continue, whether the TCP stream closes, and when
-  client-visible bytes/heartbeats occur. Do not treat HTTP 400 as a watchdog or heartbeat failure.
+**Already established on this path.**
 
-**Acceptance:** each report has a minimal real-path fixture and a failure owner. No timeout increase,
-retry, or schema relaxation is made without a reproduction showing that it fixes the cause.
+- **Distinct failure outcomes.** HTTP 400 mapping, explicit in-stream failure envelopes
+  (`gatewayErrorFromStreamError`), malformed/truncated SSE (`decodeSseEvents`), client cancellation
+  (`transport_closed` 499), the first-client-visible-chunk timeout, and the inter-event stall
+  watchdog are separate outcomes with separate codes — see "Stream-stall boundary and retry
+  semantics". Current bounds are 200s to first client-visible chunk and 360s between upstream
+  iterator events, and the gateway emits a downstream SSE `: keepalive` comment every 15s during
+  upstream silence. These comments reset neither watchdog and count as no visible content.
+- **One safe retry boundary.** A Responses prelude that carries no client-renderable content is
+  streamed immediately, and the adapter is re-created once — prelude discarded — only if the stream
+  ended before any reasoning, text, or tool event. Reasoning deltas are client-renderable and commit
+  the stream. Once output is visible the stream is never retried.
+- **Reasoning delivery and replay.** Reasoning survives a surface change: a Messages `thinking`
+  block, a Chat `reasoning_content` field, and a Responses `reasoning` item parse to one canonical
+  part, and the Responses request encoder replays a part with no encrypted artifact as a
+  `summary_text` item. `summary_index` is preserved from the decoder (`response/codex.ts`) through
+  the canonical part to the Responses part lifecycle.
+- **Modality re-encoding.** A canonical content part is an opaque origin payload and every builder
+  re-encodes it through `resolveImageSource` / `splitDataUrl`. Cross-protocol coverage is pinned by
+  `test/protocol/provider-fidelity.test.ts`. Unsupported Messages audio cannot vanish silently: the
+  Messages schema defines no audio block, so `routeCapabilitiesFor` narrows audio to
+  `AUDIO_CAPABLE_WIRE_FAMILIES` and the part degrades to a `[audio]` placeholder.
 
-### P1 — Establish the surface × provider-wire conformance matrix
+**Not implemented — do not assume otherwise.**
 
-- Cover `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/completions` against each
-  eligible provider wire independently. A surface parser change does not imply a provider codec
-  change.
-- For request and response directions, cover text, tool calls/results, image/file/document, audio
-  where the selected upstream supports it, reasoning, usage, errors, and stream termination.
-- Keep tool IDs, output-item identity, assistant phase, prompt-cache markers, usage, and opaque
-  provider state across a surface switch. Test the real adapter/transport path, not only pure
-  serializer output.
+- No protocol-native token counting. `/v1/responses/input_tokens` and `/v1/messages/count_tokens`
+  do not exist; `estimateInputTokens()` is a chars/4 admission estimate over message text only and
+  is not a count API. Adding one is a feature, not a bug fix.
+- No generic OpenAI Responses compaction. `/v1/responses/compact` is the Codex-native opaque-body
+  transport and nothing else; Anthropic threshold/on-demand `compaction` rides as a Messages
+  extension with no end-to-end contract of its own.
+- Cursor Editor BYOK is a Chat Completions client, kept separate from the bundled `cursor`
+  OAuth/Connect+protobuf adapter — see `README.md` for its verified limits.
 
-**Acceptance:** every matrix cell is lossless, explicitly capability-degraded, or returns a typed
-  unsupported error; no test passes by silently dropping a part or event.
-
-### P2 — Close modality and reasoning gaps at the canonical boundary
-
-- Compare the current `ContentPart`/`ReasoningIntent` union, `RouteCapabilities`, all four surface
-  parsers/encoders, and provider request/response codecs with the source contracts in
-  `src/protocol/PROTOCOL.md`.
-- Add a canonical video/frame representation only if an actual supported client/upstream wire needs
-  one; current canonical content has no video part. Track generated image/audio output separately
-  from input image/audio and preserve provider extensions until a typed common shape is justified.
-- Keep per-model capability truth: OpenAI reasoning effort and summaries differ between Chat and
-  Responses; Anthropic thinking/signatures are Messages-specific; raw/private reasoning is never
-  synthesized or exposed.
-
-**Acceptance:** cross-surface fixtures prove supported image/file/audio/reasoning behavior and prove
-  that unsupported Messages audio/video cannot vanish silently or be sent as invalid blocks.
-
-### P3 — Add protocol-native token counting, not a “count tokens” completion
-
-- Add explicit count operations for OpenAI Responses input tokens
-  (`POST /v1/responses/input_tokens`) and Anthropic Messages
-  (`POST /v1/messages/count_tokens`), preserving each endpoint's request/response contract.
-- Reuse routing, account credential resolution, SSRF-validated fetch, cancellation, typed upstream
-  errors, and model authorization, but do not run generation, commit output usage, or report the
-  existing `estimateInputTokens()` character heuristic as an exact count.
-- OpenAI Chat Completions has no exact count endpoint established by the sources reviewed; if a
-  Chat-facing estimate is exposed, label it as estimated and define its supported inputs. Do not
-  silently call the Responses counter with a Chat-shaped payload.
-
-**Acceptance:** input counts match the upstream response for text, tools, image/file inputs, and
-  protocol-specific structure; failures do not create completion telemetry or usage.
-
-### P4 — Separate compaction contracts and route ownership
-
-- Preserve the existing `/v1/responses/compact` Codex-native opaque-body behavior.
-- Add generic OpenAI Responses compaction only through a Responses-capable provider adapter, and
-  carry the complete returned compacted output into the next Responses request unchanged.
-- Implement Anthropic threshold/on-demand compaction as Messages request features with their own
-  beta negotiation, response `compaction` block/stop reason, replay rules, usage, and incompatibility
-  checks; it is not an alias for `/responses/compact`.
-
-**Acceptance:** tests cover Codex compact regression, OpenAI compact output replay, Anthropic
-  threshold append, Anthropic on-demand replacement, and rejection of incompatible mixed modes.
-
-### P5 — Harden Responses stream errors, liveness, and reasoning delivery
-
-- Keep HTTP 400 mapping, explicit in-stream failure envelopes, malformed/truncated SSE, client
-  cancellation, first-visible-chunk timeout, and inter-event stall timeout as distinct outcomes.
-- Current bounds are 200s to first client-visible chunk and 360s between upstream iterator events.
-  Once a streamed response is established, the gateway sends a downstream SSE `: keepalive`
-  comment every 15s when the reader has capacity, including during complete upstream silence.
-  These comments do not reset either watchdog or count as visible content. Cursor's native Connect
-  heartbeat is a separate provider-protocol mechanism (5s).
-- Preserve the current safe retry boundary: one Responses prelude retry only before client-visible
-  content. Reasoning summaries are client-visible output and commit the stream just like text/tools.
-  Once output is visible, do not retry a turn with possible duplicate content or tool side effects.
-- Preserve every `summary_index` across canonical reasoning, Responses part-added/delta/done events,
-  and the final output item. Test summary-only, interleaved multi-index streams, and summaries before
-  text.
-
-**Acceptance:** chunked real-path tests cover heartbeat, silent upstream, invisible reasoning,
-  summary-only output, explicit `response.failed`, missing terminal, malformed SSE, disconnect, and
-  exactly-once lease/telemetry cleanup. Change timeout policy only after the P0 trace identifies the
-  failing interval.
-
-### P6 — Validate Cursor Editor BYOK as a Chat client
-
-- Keep Cartethyia's built-in `cursor` OAuth/Connect+protobuf adapter separate from Cursor Editor
-  BYOK. The editor BYOK path is an OpenAI Chat Completions client; it is not the native Cursor
-  provider adapter and must not be routed through the protobuf path.
-- Test the installed Cursor version with `POST /v1/chat/completions`, a Cartethyia API key, and a
-  model ID returned by the gateway. Verify tool, image, stream, and error behavior only for features
-  that Cursor actually sends.
-- Cursor's current BYOK help says custom keys are for standard chat models and Tab completion stays
-  on Cursor's built-in models. Cursor staff describe `Override OpenAI Base URL` as global and warn
-  it can route Cursor-managed OpenAI models through the override; separate per-model endpoints are
-  not currently supported. Verify whether the installed build exposes that control and whether its
-  server-side request path can reach the configured Cartethyia origin before publishing a universal
-  setup claim.
-
-**Acceptance:** a real Cursor Editor request reaches the Chat Completions surface and a selected
-  Cartethyia route; the model/request path and the global override limitation are documented. Do not
-  claim that the custom route covers Cursor-managed models, Responses, reasoning models, or Tab
-  completion unless separately observed and tested.
+**Triage rule.** If a symptom is reported again, capture first — request ID, client surface,
+selected provider/model/wire, terminal/status frame, and redacted bodies — and classify where it
+originates (ingress validation, capability projection, upstream status, an in-stream error envelope,
+SSE decoding, or client-side event interpretation) before changing any timeout, retry, or schema.
+A timeout increase or schema relaxation without a reproduction removes evidence rather than a cause.
 
 External protocol/API evidence and Cursor setup caveats are linked in `src/protocol/PROTOCOL.md`,
 `src/providers/PROVIDERS.md`, and the root `README.md`.

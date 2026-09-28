@@ -11,6 +11,7 @@ import type { SurfaceAdapterRegistry } from "../surface/adapters";
 import { resolveClientIdentity } from "../../security/ip-boundary";
 import { GATEWAY_SECURITY_HEADERS } from "../../security/outbound-headers";
 import { pushStructuredConsoleLog } from "../../observability/log-ring";
+import { log } from "../../observability/logger";
 import { isJsonProxyRoutePath, isProxyDispatchRoute } from "./body-policy";
 
 interface RequestApp {
@@ -147,6 +148,13 @@ export function createCanonicalRequestMiddleware(deps: {
         headers[key] = value;
       });
       const detection = deps.surfaceRegistry.detectOnce({ body, headers, path });
+      if (detection.disagreement) {
+        log.warn("[surface] conflicting signals detected for surface routing", {
+          resolved: detection.surface,
+          winning_source: detection.winning_source,
+          signals: detection.signals,
+        });
+      }
       const adapter = deps.adapters.get(detection.surface);
       if (!adapter)
         throw new GatewayError(

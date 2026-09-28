@@ -326,9 +326,12 @@ export class ProxyRequestPreparer {
     const { canonicalRequest: request, authorization, signal } = input;
     if (signal?.aborted)
       throw new GatewayError("transport_closed", 499, "request was cancelled");
+    if (!request.model || request.model.trim().length === 0) {
+      throw new GatewayError("invalid_request", 400, "Request requires a non-empty model identifier", {
+        field: "model",
+      });
+    }
     const snapshot = await this.deps.snapshotService.getSnapshot();
-    if (signal?.aborted)
-      throw new GatewayError("transport_closed", 499, "request was cancelled");
     const allowCliMappings = authorization.scopes.includes("routing:cli_mapping");
     // CLI source→target mappings are an explicit API-key capability. Ordinary
     // tenant aliases remain available to every key; only selected keys may

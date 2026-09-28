@@ -236,13 +236,14 @@ export function jsonCompletion(
   };
   if (toolCalls.size > 0) {
     message.tool_calls = [...toolCalls.values()]
+      .filter((tool) => tool.name !== undefined && tool.name.trim().length > 0)
       .sort((a, b) => a.index - b.index)
       .map((tool) => ({
         id: tool.id,
         type: "function",
         // Zero-argument calls assemble as "{}": an empty string is not
         // valid JSON for the client's parser.
-        function: { name: tool.name ?? "", arguments: tool.arguments.length > 0 ? tool.arguments : "{}" },
+        function: { name: tool.name!, arguments: tool.arguments.length > 0 ? tool.arguments : "{}" },
       }));
   }
   const audio = events.map(eventAudio).findLast((value) => value !== undefined);

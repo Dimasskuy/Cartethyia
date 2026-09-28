@@ -261,7 +261,7 @@ export function resetCaptureFailureReportForTests(): void {
  * terminated"; the non-stream path cannot.
  */
 export function terminalFailure(
-  terminal: { readonly state: string } | undefined,
+  terminal: { readonly state: string; readonly stop_reason?: string; readonly provider_stop_reason?: string; readonly stop_details?: Record<string, unknown> } | undefined,
   options: { readonly truncated?: boolean } = {},
 ): GatewayError | undefined {
   if (terminal === undefined) {
@@ -279,7 +279,11 @@ export function terminalFailure(
     // A terminal `failed` state is only ever written by the upstream decoders
     // (a provider error envelope or a corrupt provider stream), so it carries
     // the upstream's failure, not the gateway's.
-    return new GatewayError("transport_unavailable", 502, "upstream request failed", {}, "upstream");
+    const details: Record<string, unknown> = {};
+    if (terminal.provider_stop_reason) details["provider_code"] = terminal.provider_stop_reason;
+    if (terminal.stop_details) Object.assign(details, terminal.stop_details);
+    const message = typeof details["message"] === "string" ? details["message"] : "upstream request failed";
+    return new GatewayError("transport_unavailable", 502, message, details, "upstream");
   }
   if (terminal.state === "aborted") {
     // A client-initiated cancellation is not an upstream fault; the stream path

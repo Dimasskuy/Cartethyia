@@ -708,7 +708,7 @@ describe("handleProviderProxyRequest — tenant compression settings", () => {
       model_id: "claude-test",
       wire_family: "chat" as const,
       endpoint: "/v1/messages",
-      capability_profile: {},
+      capability_profile: { image: true, tools: true, reasoning: true },
       provider_account_id: accountId,
     };
     const grepText = bigGrep();

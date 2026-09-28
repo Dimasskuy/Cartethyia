@@ -32,13 +32,16 @@ export function generateOpenCodeRequestId(): string {
   return `msg_${crypto.randomUUID().replaceAll("-", "").slice(0, 30)}`;
 }
 
-/** Build the full fingerprint headers matching the official OpenCode CLI client. */
-export function buildOpenCodeHeaders(version = getOpenCodeVersion()): Record<string, string> {
+/** Build fingerprint headers, reusing a stable session when affinity is known. */
+export function buildOpenCodeHeaders(
+  version = getOpenCodeVersion(),
+  affinity?: string,
+): Record<string, string> {
   refreshOpenCodeVersion();
   return {
     "x-opencode-client": "cli",
-    "x-opencode-session": generateOpenCodeSessionId(),
-    "x-opencode-request": generateOpenCodeRequestId(),
+    "x-opencode-session": affinity ?? generateOpenCodeSessionId(),
+    "x-opencode-request": affinity ?? generateOpenCodeRequestId(),
     "x-opencode-project": "global",
     "user-agent": `opencode/${version}`,
   };

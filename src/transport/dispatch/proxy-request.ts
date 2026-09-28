@@ -1,5 +1,5 @@
 import { isBundledProviderId } from "../../providers/provider-registry";
-import type { ProviderId, ProviderAdapter } from "../../providers/provider-registry";
+import type { ProviderDispatchContext, ProviderId, ProviderAdapter } from "../../providers/provider-registry";
 import { GatewayError, explainGatewayError, labelGatewayMessage, publicGatewayErrorDetails } from "../gateway-error";
 import { classifyTerminalCategory } from "../failure-policy";
 import type { CanonicalEvent, UsageRecord } from "../canonical-model";
@@ -16,6 +16,7 @@ import { responsesAdapter } from "../surface/responses/adapter";
 import { messagesAdapter } from "../surface/messages/adapter";
 import { completionAdapter } from "../surface/completion";
 import { forwardedRequestHeaders, proxySuccessHeaders, buildUpstreamDispatchContext } from "./upstream";
+import { resolvePromptCacheKey } from "../../providers/operations/session-resolution";
 import { createDispatchStreamEncoder } from "./stream-bridge";
 import { shouldCooldownPool } from "./retry-policy";
 import { applyTenantPreferences } from "./tenant-preferences";
@@ -36,6 +37,7 @@ import {
   terminalFailure,
 } from "./attempt-finalize";
 import { runAttemptLoop } from "./attempt-loop";
+import { projectForRoute, routeCapabilitiesFor } from "../translation/capabilities";
 
 export interface ProviderProxyHandlerDeps {
   readonly db: CartethyiaDatabase;
@@ -112,6 +114,12 @@ export async function handleProviderProxyRequest(
   // Inbound headers are safe to re-read (only bodies are single-read).
   // Allowlisted once per request, forwarded to every candidate attempt.
   const inboundHeaders = forwardedRequestHeaders(request);
+  // Stable per-conversation affinity for every attempt on every wire: caller
+  // key first, then inbound session headers, then a hash of the opening turn.
+  // The stub carries only the fields the resolver reads (request_headers).
+  const conversationAffinity = resolvePromptCacheKey(canonicalRequest, {
+    request_headers: inboundHeaders,
+  } as ProviderDispatchContext);
   return runAttemptLoop<Response, ProviderAdapter>({
     state,
     deps,
@@ -178,10 +186,14 @@ export async function handleProviderProxyRequest(
         capabilities: candidate.capability_profile,
         user_agent: candidate.user_agent,
       };
-      const dispatchRequest =
+      const candidateRequest =
         candidate.model_id === canonicalRequest.model
           ? canonicalRequest
           : { ...canonicalRequest, model: candidate.model_id };
+      const dispatchRequest = projectForRoute(
+        candidateRequest,
+        routeCapabilitiesFor(candidate),
+      );
       if (canonicalRequest.stream) {
         const outboundFetch = deps.networkBindingFactory?.fetch(
           networkPoolId,
@@ -195,6 +207,8 @@ export async function handleProviderProxyRequest(
           deadline: state.deadlineMs,
           signal: state.abortController.signal,
           headers: inboundHeaders,
+          requestIdentity: state,
+          ...(conversationAffinity ? { conversationAffinity } : {}),
           ...(candidate.user_agent === undefined ? {} : { userAgent: candidate.user_agent }),
           ...(wrappedOutboundFetch ? { outboundFetch: wrappedOutboundFetch } : {}),
         });
@@ -780,6 +794,8 @@ export async function handleProviderProxyRequest(
         deadline: state.deadlineMs,
         signal: state.abortController.signal,
         headers: inboundHeaders,
+        requestIdentity: state,
+        ...(conversationAffinity ? { conversationAffinity } : {}),
         ...(candidate.user_agent === undefined ? {} : { userAgent: candidate.user_agent }),
         ...(deps.networkBindingFactory
           ? {

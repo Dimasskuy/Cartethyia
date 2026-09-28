@@ -1,6 +1,6 @@
-import type { CanonicalRequest } from "../../transport/canonical-model";
+import type { CanonicalRequest, ContentPart } from "../../transport/canonical-model";
 import type { ProviderDispatchContext } from "../provider-registry";
-
+import { createHash } from "node:crypto";
 const SESSION_HEADERS = [
   "x-conversation-id",
   "x-session-id",
@@ -22,9 +22,36 @@ export function resolveInboundSessionId(
     if (value) return value;
   }
   const conversationId = request?.conversation?.conversation_id;
-  return typeof conversationId === "string" && conversationId.trim()
-    ? conversationId.trim()
-    : undefined;
+  if (typeof conversationId === "string" && conversationId.trim()) {
+    return conversationId.trim();
+  }
+  // When the client sends no session header or conversation ID, derive a stable
+  // affinity key from the opening turn (system prompt or first user turn).
+  // This enables prompt-cache hits across turns for stateless HTTP clients.
+  return deriveConversationAffinity(request);
+}
+
+function deriveConversationAffinity(request?: CanonicalRequest): string | undefined {
+  if (!request) return undefined;
+  // If request has system prompt, use that
+  if (request.system && request.system.length > 0) {
+    const text = request.system
+      .map((p: ContentPart) => (p.kind === "text" ? p.text : ""))
+      .join("");
+    if (text.trim().length >= 30) {
+      return `aff_${createHash("sha256").update(text.trim().slice(0, 2048)).digest("hex").slice(0, 24)}`;
+    }
+  }
+  // Otherwise use the first message
+  const first = request.messages[0];
+  if (!first) return undefined;
+  const firstText = first.content
+    .map((p: ContentPart) => (p.kind === "text" ? p.text : ""))
+    .join("");
+  if (firstText.trim().length >= 30) {
+    return `aff_${createHash("sha256").update(firstText.trim().slice(0, 2048)).digest("hex").slice(0, 24)}`;
+  }
+  return undefined;
 }
 
 /**

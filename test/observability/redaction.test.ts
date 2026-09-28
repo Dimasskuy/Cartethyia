@@ -53,11 +53,11 @@ describe("isSecretKeyName", () => {
 });
 
 describe("isOpaqueEncrypted", () => {
-  test("flags encrypted and long-reasoning values", () => {
-    expect(isOpaqueEncrypted("encrypted_content", "x")).toBe(true);
-    expect(isOpaqueEncrypted("some_encrypted_blob", "x")).toBe(true);
-    expect(isOpaqueEncrypted("reasoning", "x".repeat(101))).toBe(true);
-    expect(isOpaqueEncrypted("reasoning", "short")).toBe(true);
+  test("never flags reasoning or encrypted content to preserve context for LLMs", () => {
+    expect(isOpaqueEncrypted("encrypted_content", "x")).toBe(false);
+    expect(isOpaqueEncrypted("some_encrypted_blob", "x")).toBe(false);
+    expect(isOpaqueEncrypted("reasoning", "x".repeat(101))).toBe(false);
+    expect(isOpaqueEncrypted("reasoning", "short")).toBe(false);
     expect(isOpaqueEncrypted("model", "x")).toBe(false);
   });
 });
@@ -87,7 +87,16 @@ describe("redactTelemetryValue", () => {
       model: "m",
     });
     expect(redactTelemetryValue({ encrypted_content: "blob" })).toEqual({
-      encrypted_content: "***REDACTED***[encrypted]",
+      encrypted_content: "blob",
+    });
+    expect(redactTelemetryValue({ reasoning_content: "thinking trace with sk-12345678901234 and IP 192.168.1.1" })).toEqual({
+      reasoning_content: "thinking trace with sk-12345678901234 and IP 192.168.1.1",
+    });
+    expect(redactTelemetryValue({ thinking: "analyzing Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig" })).toEqual({
+      thinking: "analyzing Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+    });
+    expect(redactTelemetryValue({ signature: "opaque_signature_token" })).toEqual({
+      signature: "opaque_signature_token",
     });
   });
 

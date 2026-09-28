@@ -47,6 +47,8 @@ import { GatewayError } from "../../../transport/gateway-error";
 import { classifyUpstreamError, mapUpstreamHttpError } from "../../../transport/failure-policy";
 import { joinTextParts, toolResultParts } from "../../../transport/canonical-model";
 import type { CanonicalEvent, CanonicalMessage, CanonicalRequest, ToolDefinition, UsageRecord } from "../../../transport/canonical-model";
+import type { ModelDefinition } from "../../model-definition";
+import { modelsDevCatalog } from "../../discovery/models-dev-catalog";
 import type {
   ProviderDispatchTarget,
   ProviderAdapter,
@@ -85,16 +87,25 @@ const DEVIN_DEFAULT_STOP_PATTERNS = [
   "<|end_of_turn|>",
 ] as const;
 const MAX_CONNECT_FRAME_PAYLOAD = 16 * 1024 * 1024;
+/**
+ * Output-token ceiling for the Cascade wire. Discovery clamps a discovered cap
+ * to it: publishing a larger number makes admission reserve headroom the
+ * upstream rejects.
+ */
+const DEFAULT_DEVIN_OUTPUT_LIMIT = 64_000;
 /** GetUserJwt results are cached per credential hash; upstream JWTs are long-lived. */
 const USER_JWT_TTL_MS = 10 * 60 * 1_000;
 
-interface DevinDiscoveredModel {
-  readonly id: string;
-  readonly displayName: string;
-  readonly contextLimit: number;
-  readonly supportsImages: boolean;
-}
-
+/**
+ * One Devin catalog row projected into a `ModelDefinition`.
+ *
+ * Capabilities come from the config's own `ModelInfo` when it is present,
+ * because that is the upstream's declaration rather than a guess: `supportsImages`
+ * on the row says the *client* may attach an image, while
+ * `modelInfo.modelFeatures` carries the per-model capability set (thinking,
+ * tool calls, parallel calls). Falling back to the row-level flags when
+ * `modelInfo` is absent keeps an older upstream response usable.
+ */
 function devinModelFromConfig(config: {
   readonly label: string;
   readonly modelUid: string;
@@ -108,7 +119,17 @@ function devinModelFromConfig(config: {
   readonly maxTokens: number;
   readonly supportsImages: boolean;
   readonly disabled: boolean;
-}): DevinDiscoveredModel | null {
+  readonly modelInfo?: {
+    readonly maxTokens?: number;
+    readonly maxOutputTokens?: number;
+    readonly modelFeatures?: {
+      readonly supportsImages?: boolean;
+      readonly supportsThinking?: boolean;
+      readonly supportsToolCalls?: boolean;
+      readonly supportsParallelToolCalls?: boolean;
+    };
+  };
+}): ModelDefinition | null {
   if (config.disabled) return null;
   const rawUid = sanitizeUpstreamLabel(config.modelUid) ?? "";
   const choice = config.modelOrAlias?.choice;
@@ -120,12 +141,45 @@ function devinModelFromConfig(config: {
         : "";
   const id = sanitizeUpstreamLabel(rawUid || aliasUid || config.label);
   if (!id) return null;
-  const maxTokens = boundedUpstreamNumber(config.maxTokens, { min: 1, max: 100_000_000 });
+
+  // `ModelInfo` separates the two token ceilings; the row's own `maxTokens` is
+  // the context window. Publishing the window as the output cap reserved the
+  // whole context as output headroom, and the upstream rejected the request.
+  const info = config.modelInfo;
+  const contextLimit =
+    boundedUpstreamNumber(info?.maxTokens, { min: 1, max: 100_000_000 }) ??
+    boundedUpstreamNumber(config.maxTokens, { min: 1, max: 100_000_000 }) ??
+    null;
+  const declaredOutput =
+    boundedUpstreamNumber(info?.maxOutputTokens, { min: 1, max: 100_000_000 }) ??
+    boundedUpstreamNumber(config.maxTokens, { min: 1, max: 100_000_000 });
+  // An output cap above the context window is unsatisfiable, and a cap above
+  // the wire's own ceiling is rejected outright.
+  const outputLimit =
+    declaredOutput === undefined
+      ? null
+      : Math.min(declaredOutput, contextLimit ?? DEFAULT_DEVIN_OUTPUT_LIMIT, DEFAULT_DEVIN_OUTPUT_LIMIT);
+
+  const features = info?.modelFeatures;
+  const supportsImages = features?.supportsImages ?? config.supportsImages;
   return {
-    id,
-    displayName: sanitizeUpstreamLabel(config.label) ?? id,
-    contextLimit: maxTokens ?? 200_000,
-    supportsImages: config.supportsImages,
+    modelId: id,
+    // Served by the bespoke adapter's own RPC, so the endpoint is its path.
+    wireFamily: "chat",
+    endpointPath: DEVIN_CHAT_PATH,
+    contextLimit,
+    outputLimit,
+    // A bespoke wire gets `image`/`document`/`audio` only from this row (see
+    // `buildCapabilityProfile`), so writing the modality here is what keeps a
+    // caller's image from being degraded to text before dispatch.
+    modalities: {
+      input: ["text", ...(supportsImages ? ["image"] : [])],
+      output: ["text"],
+    },
+    reasoning: features?.supportsThinking ?? false,
+    toolCall: features?.supportsToolCalls ?? true,
+    webSearch: true,
+    cost: modelsDevCatalog.costFor(DEVIN_PROVIDER_ID, id),
   };
 }
 
@@ -137,7 +191,7 @@ export async function fetchDevinModels(
   credential: string,
   fetchFn: typeof fetch = globalThis.fetch,
   signal?: AbortSignal,
-): Promise<readonly DevinDiscoveredModel[] | null> {
+): Promise<readonly ModelDefinition[] | null> {
   const apiKey = normalizeDevinSessionToken(credential.trim());
   if (!apiKey) return null;
   try {
@@ -195,6 +249,32 @@ export async function fetchDevinModels(
         maxTokens: Number(config.maxTokens ?? 0),
         supportsImages: Boolean(config.supportsImages),
         disabled: Boolean(config.disabled),
+        // Typed as `ModelInfo | undefined` by the generator; read only the
+        // capability fields the projection above needs.
+        ...(config.modelInfo === undefined
+          ? {}
+          : {
+              modelInfo: {
+                ...(config.modelInfo.maxTokens === undefined
+                  ? {}
+                  : { maxTokens: Number(config.modelInfo.maxTokens) }),
+                ...(config.modelInfo.maxOutputTokens === undefined
+                  ? {}
+                  : { maxOutputTokens: Number(config.modelInfo.maxOutputTokens) }),
+                ...(config.modelInfo.modelFeatures === undefined
+                  ? {}
+                  : {
+                      modelFeatures: {
+                        supportsImages: Boolean(config.modelInfo.modelFeatures.supportsImages),
+                        supportsThinking: Boolean(config.modelInfo.modelFeatures.supportsThinking),
+                        supportsToolCalls: Boolean(config.modelInfo.modelFeatures.supportsToolCalls),
+                        supportsParallelToolCalls: Boolean(
+                          config.modelInfo.modelFeatures.supportsParallelToolCalls,
+                        ),
+                      },
+                    }),
+              },
+            }),
       });
       return model ? [model] : [];
     });

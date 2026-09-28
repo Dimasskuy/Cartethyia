@@ -20,10 +20,12 @@ Built with Bun, TypeScript, Elysia, PostgreSQL, and optional Redis coordination.
 
 ## Highlights
 
-- **45 bundled provider integrations** — OpenAI, Anthropic, Codex, Gemini, Grok,
+- **Bundled provider integrations** — OpenAI, Anthropic, Codex, Gemini, Grok,
   xAI Grok Subscription, Cursor, Devin, Mistral, Groq, OpenRouter, Cerebras, NVIDIA,
   DeepSeek-family gateways, and more, each with its own authentication, wire
-  quirks, and identity headers.
+  quirks, and identity headers. The set is declared once in
+  `src/providers/provider-metadata.ts`; mirrors (registry, capabilities, dashboard
+  names and icons) are synchronized consumers, so no document pins a count.
 - **Four client protocols, one canonical model** — Chat Completions, Responses,
   Messages, and legacy Completions all normalize into the same request shape.
   A client's protocol is a property of the connection, not of the route.
@@ -60,28 +62,6 @@ property of the connection, not of the route you configure.
 | Completions | `/v1/completions` | Legacy text completion |
 | Models | `/v1/models` | Read-only catalog listing (`/v1/models/info` for detail) |
 
-### Cursor Editor BYOK
-
-Cursor's current BYOK documentation describes OpenAI keys for standard, non-reasoning chat
-models, while Tab Completion continues to use Cursor's built-in models. If your installed Cursor
-build exposes **Override OpenAI Base URL**, point it at a Cartethyia origin ending in `/v1`, use a
-Cartethyia API key, and select a model ID returned by `GET /v1/models`; the request surface is
-`POST /v1/chat/completions`, not the native Cursor provider wire.
-
-The override is global, not per model: Cursor staff report that it can route Cursor-managed OpenAI
-models through the custom endpoint, and separate per-model base URLs are not currently supported.
-Cursor also says BYOK requests go through its servers for prompt building, so a local-only gateway
-address must not be assumed reachable. Verify the installed client and a real request before
-depending on this configuration. The bundled `cursor` provider is separate: it uses Cursor OAuth
-and Connect+protobuf.
-
-Sources: [Cursor BYOK help](https://cursor.com/help/models-and-usage/api-keys),
-[global override behavior](https://forum.cursor.com/t/does-adding-a-custom-model-override-cursor-s-native-models/157521),
-[per-model endpoint status](https://forum.cursor.com/t/custom-base-urls-for-each-custom-model/147219).
-
-Anything else under `/v1/` is not routed. A path the gateway does not serve
-returns `404` with `{"error":{"code":"not_found"}}` rather than being forwarded
-upstream, so a typo surfaces immediately instead of reaching a provider.
 
 ## Request lifecycle
 

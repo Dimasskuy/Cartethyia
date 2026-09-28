@@ -63,7 +63,11 @@ builders/parsers called directly by their adapters
 ## Request codecs (canonical → wire)
 
 - `request/chat.ts` — `canonicalToChatPayload(request,
-  supportsPromptCaching)`: system/instructions → `system`/`developer` messages;
+  supportsPromptCaching)`: `normalizeWireMaxTokens` fills `max_tokens` from
+  `max_output_tokens`, and `extension:responses.*` controls fall back to their
+  unprefixed `extension:*` spelling, so a Responses-authored request keeps its
+  ceiling and its passthrough fields when it is served on the chat wire;
+  system/instructions → `system`/`developer` messages;
   assistant tool calls → `tool_calls`; Messages-ledger tool results → `role:
   "tool"` with `[tool_error]` prefix; rich content → multipart (`image_url`,
   `input_audio` with MIME→`wav`/`mp3` map, `file`, document→`file`);
@@ -72,7 +76,11 @@ builders/parsers called directly by their adapters
   top-level `reasoning_effort`; `stream_options`, `modalities`, `audio`,
   `metadata`, `user`, plus `extension:*` passthrough.
 - `request/responses.ts` — `canonicalToResponsesPayload` +
-  `markLatestResponsesCacheBreakpoint`: system/instructions → message items;
+  `markLatestResponsesCacheBreakpoint`: `extension:responses.*` names the
+  canonical spelling and falls back to the bare `extension:*` one, and `verbosity`
+  resolves through `extension:responses.verbosity` → `extension:verbosity` →
+  `generation_controls.verbosity`, so the same intent arriving from any surface
+  reaches `text.verbosity`; system/instructions → message items;
   tool calls/results → `function_call` / `function_call_output` (never
   swallowed into bare messages); `computer_call` / `computer_call_output` with
   `pending_safety_checks` restored from `extension:responses.item_metadata`;
@@ -85,7 +93,10 @@ builders/parsers called directly by their adapters
   thinking is enabled; `stop_sequences` cap 4; `thinking{type,budget_tokens,
   display,block_binding}` + default `context_management`;
   `output_config{effort,task_budget}`; `container`, `inference_geo`,
-  `service_tier`, OAuth tool-name prefixing. Rich content is re-encoded per
+  `service_tier` (only `auto` and `standard_only` are forwarded — any other tier
+  is logged as a warning rather than rejected or silently discarded),
+  `extension:metadata_user_id` merged into top-level `metadata.user_id`,
+  OAuth tool-name prefixing. Rich content is re-encoded per
   part (`image` → `source`, `file`/`document` → `document.source`); an `audio`
   part degrades to a `[audio]` text placeholder because this schema defines no
   audio block — see `AUDIO_CAPABLE_WIRE_FAMILIES`, which keeps such a request
@@ -118,6 +129,11 @@ builders/parsers called directly by their adapters
   image carrying only a Files API `file_id` has no Gemini equivalent (the id
   belongs to the originating provider's store), so it degrades to a text
   reference naming the id rather than a `fileUri` the upstream cannot resolve.
+  A `toolResult` part becomes a `functionResponse` whose `response` is always a
+  JSON object: string content is parsed, and array content is carried as
+  `{ content: "<json text>" }` — `functionResponse.response` does not accept an
+  array, so parsing a just-stringified array back into a value produced a
+  non-record the upstream rejected.
 
 ## Response codecs (wire → canonical events)
 
@@ -147,7 +163,12 @@ never bills as success.
 - `response/codex.ts`: stateful `CodexStreamFrameProcessor` + `terminalEvent()`;
   `in_progress`/`queued` → `stop`, `completed` + tools → `tool_use`,
   `incomplete` + tools → `tool_use`, `failed`/`cancelled` → `error`/`aborted`;
-  whitespace-loop guard → `tool_call_loop_detected`.
+  whitespace-loop guard → `tool_call_loop_detected`. Reasoning deltas
+  (`response.reasoning_summary_text.delta` and
+  `response.reasoning_text.delta`) emit a `content_delta` carrying `summary`
+  **and** `summary_index` — read from the frame's `summary_index` when it is an
+  integer, else `0` — so multi-index summaries stay distinguishable through the
+  canonical part and the Responses encoder can rebuild each part separately.
 - `messages-errors.ts`: `mapClaudeHttpError` and `mapClaudeStreamError` use one structured classifier,
   preserving the raw upstream status and provider identifier for account-health decisions.
 - `stream-error-frames.ts`: `gatewayErrorFromStreamError` classifies explicit error envelopes inside
@@ -196,7 +217,7 @@ cannot fetch), hash/JSON helpers.
   need it; keep provider-identity-dependent helpers (e.g. Codex identity
   headers) with their provider.
 
-## Unified API hardening map
+## Surface × wire conformance
 
 ### Client surface is not provider wire
 
@@ -225,7 +246,7 @@ the declared policy, or rejected; it must not disappear silently.
 
 Input and output are separate contracts. Chat audio output currently travels as a wire-specific
 `audio` extension, not a canonical audio-generation result; generated-image calls and video frames
-also have no common typed output/content part. The hardening matrix must cover output items and
+also have no common typed output/content part. Conformance work must cover output items and
 stream events as well as input attachments, and only add a canonical type when at least two supported
 surfaces/adapters need the same semantics.
 
@@ -240,9 +261,10 @@ must preserve only what the source API actually returned and what the destinatio
 represent; never invent a reasoning summary.
 
 The current Responses decoder handles `response.reasoning_summary_text.delta` and the Responses
-surface encoder emits the summary-part lifecycle. The reported missing-reasoning symptom is still
-an un-reproduced report: P0 in `TRANSPORT.md` requires a captured request/event/client transcript
-before assigning cause.
+surface encoder emits the summary-part lifecycle, carrying `summary_index` end to end. The earlier
+missing-reasoning symptom was never reproduced; there is no confirmed defect to fix. If it recurs,
+capture the request id, the upstream event sequence, and what the client rendered before assigning
+a cause — see "Unified API hardening: current state" in `TRANSPORT.md`.
 
 ### Token counting and compaction are protocol-specific
 
@@ -258,10 +280,11 @@ before assigning cause.
   subject to upstream/model support. The standalone compact route at `/v1/responses/compact` is
   still the native Codex opaque-body transport. Generic OpenAI compact dispatch must keep the
   complete upstream compacted output intact for the next Responses request.
-- Anthropic `context_management` is currently carried as a Messages extension (with the existing
-  thinking-request default); the separate on-demand `compaction` field, returned compaction block,
-  and `stop_reason: "compaction"` need an explicit end-to-end contract. Unknown Messages response
-  blocks remain `messages:*` extensions, not a complete compaction implementation.
+- Anthropic `context_management` is carried as a Messages extension and forwarded when the caller
+  supplies it (alongside the existing thinking-request default). The separate on-demand `compaction`
+  field, the returned compaction block, and `stop_reason: "compaction"` are **not** implemented:
+  unknown Messages response blocks remain `messages:*` extensions. Treat generic compaction as a
+  feature to build, not a contract the gateway already honors.
 
 ### Primary-source references
 

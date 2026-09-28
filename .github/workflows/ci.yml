@@ -1,8 +1,9 @@
 # Cartethyia CI: backend + dashboard verification gates.
 #
 # Mirrors AGENTS.md §12 "Tests and verification" using the repo's own runners:
-# - backend job: typecheck -> test -> check:coverage (with Postgres + Redis
-#   services so DB-gated suites run; COVERAGE_MIN=90 applies).
+# - backend job: typecheck -> coverage+tests (with Postgres + Redis services so
+#   DB-gated suites run; COVERAGE_MIN=90 applies). The coverage run is the one
+#   backend suite run and also enforces the line threshold.
 # - dashboard job: dashboard:typecheck + dashboard:test + test:contracts.
 #
 # DB-gated suites skip gracefully without CARTETHYIA_TEST_DATABASE_URL
@@ -59,15 +60,6 @@ jobs:
           bun-version: "1.4.2"
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - run: bun run test
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/cartethyia_test
-          CARTETHYIA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/cartethyia_test
-          # A dedicated index so the live TTL suite cannot collide with REDIS_URL state.
-          CARTETHYIA_TEST_REDIS_URL: redis://localhost:6379/15
-          CARTETHYIA_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
-          REDIS_URL: redis://localhost:6379
-          REDIS_MODE: normal
       - run: bun run check:coverage
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/cartethyia_test

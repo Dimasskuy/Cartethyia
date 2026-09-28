@@ -504,6 +504,28 @@ describe("security header middleware", () => {
     expect(response.headers.get("x-frame-options")).toBe("DENY");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   });
+
+  test("normalizes parse-stage input errors to 400 invalid_request", async () => {
+    const stateStore = new ProxyRequestStateStore();
+    const app = new Elysia()
+      .use(createErrorNormalizationMiddleware({ stateStore }))
+      .post("/v1/chat/completions", ({ request }) => {
+        stateStore.initialize(request, Date.now(), 30_000);
+        throw new Error("Chat request malformed content");
+      });
+    const response = await app.handle(new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ invalid: true }),
+    }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: "invalid_request",
+        message: "Cartethyia Error: Chat request malformed content",
+      },
+    });
+  });
 });
 
 describe("retry-after emission on normalized errors", () => {

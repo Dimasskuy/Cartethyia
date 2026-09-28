@@ -67,17 +67,24 @@ export function createErrorNormalizationMiddleware(deps: {
       const builtinStatus = typeof builtin?.status === "number" ? builtin.status : undefined;
       const builtinCode = typeof builtin?.code === "string" ? builtin.code : undefined;
       const isBuiltinError = builtinStatus !== undefined || builtinCode !== undefined;
+      const isInputError =
+        !gateway &&
+        !isBuiltinError &&
+        state &&
+        !state.canonicalRequest;
       const status =
-        gateway?.status ?? builtinStatus ?? (isBuiltinError ? 400 : 500);
+        gateway?.status ?? builtinStatus ?? (isBuiltinError || isInputError ? 400 : 500);
       const code =
-        gateway?.code ?? builtinCode ?? (isBuiltinError ? "invalid_request" : "internal_error");
+        gateway?.code ?? builtinCode ?? (isBuiltinError || isInputError ? "invalid_request" : "internal_error");
       const message =
         gateway !== undefined
           ? explainGatewayError(gateway)
-          : labelGatewayMessage(
-              "cartethyia",
-              isBuiltinError ? builtin?.message ?? "Unable to process request" : "Internal server error",
-            );
+          : isInputError && error instanceof Error
+            ? labelGatewayMessage("cartethyia", error.message)
+            : labelGatewayMessage(
+                "cartethyia",
+                isBuiltinError ? builtin?.message ?? "Unable to process request" : "Internal server error",
+              );
       const origin = gateway?.origin ?? "cartethyia";
       // `afterResponse` telemetry hook can enqueue it even when the request
       // never reached canonical parse / auth / preparation.

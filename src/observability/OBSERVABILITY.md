@@ -23,7 +23,7 @@ src/observability/
 
 One row per terminal request in `telemetry_events`, via `completeAttempt` (in
 `transport/dispatch/attempt-finalize.ts`) -> `finalizeRequestTelemetry`
-(`transport/middleware/ingress.ts`) -> `TelemetryBatchBuffer.enqueue` ->
+(`transport/middleware/error-lifecycle.ts`) -> `TelemetryBatchBuffer.enqueue` ->
 batched `insertEvents` -> scheduled retention prune:
 
 - `completeAttempt` runs capture + telemetry only for the terminal attempt
@@ -82,17 +82,30 @@ batched `insertEvents` -> scheduled retention prune:
 ## Logger, redaction, log ring
 
 - `logger.ts` exposes `log.debug/info/warn/error` on pino (pretty-printed in
-  dev, JSON in production, level from `LOG_LEVEL`). Every call also appends to
-  the console ring via a pre-pass: `decycle` (circular-safe, depth 5, Errors
-  collapse to name + message) then `redactTelemetryValue`. The ring path is
-  wrapped so it can never throw into the log call.
+  dev, JSON in production, level from `LOG_LEVEL`). Every call sanitizes **once**
+  and uses the same sanitized value for both sinks: `decycle` (circular-safe,
+  depth 5, Errors collapse to name + message) then `redactTelemetryValue`, via
+  `safeLogArgs` / `safeErrorForPino`. `log.error` rebuilds a redacted `Error`
+  for pino rather than handing it the original object, so custom enumerable
+  fields that carry credential material cannot reach the JSON transport while
+  the ring line still shows them scrubbed. Every path falls back to
+  `[unserializable args]`; the ring and the logger are each wrapped so neither
+  can throw into the log call.
 - `redaction.ts` is the canonical secret scrubber. `isSecretKeyName` matches
   credential/api_key/authorization/secret/password plus token names;
-  `isOpaqueEncrypted` masks encrypted reasoning blobs; `redactTelemetryValue`
+  `redactTelemetryValue`
   redacts embedded `sk-`/`Bearer`/`rk_` shapes (whole string), credential-like
-  prefixes, keeps only a 5-char `rk_` hint, and masks IPv4 literals. Redaction
+  prefixes, keeps only a 5-char `rk_` hint, and masks IPv4 literals.
+  **Reasoning content is never redacted**: `reasoning_content`, `reasoning`,
+  `thinking`, `encrypted_content`, `signature`, and `redacted_thinking` pass
+  through verbatim before any other rule runs — including encrypted signatures
+  and IP-like numbers inside math or code. Redacting them destroyed the
+  chain of thought a thinking model needs on multi-turn replay, so the object
+  walk short-circuits on those keys first. `isOpaqueEncrypted` now returns
+  `false` unconditionally for the same reason and is kept as the single place
+  that policy is stated. Redaction
   markers retain the `***REDACTED***` prefix and add `[credential]`,
-  `[secret-key]`, `[encrypted]`, or `[ip]` so payload diagnosis can tell why
+  `[secret-key]`, or `[ip]` so payload diagnosis can tell why
   a value is hidden without exposing the value. The module also exports
   `maskClientIp`, the read-path IP masker: IPv4 keeps its first three octets,
   IPv6 its first four hextets, an IPv4-mapped IPv6 address masks the embedded

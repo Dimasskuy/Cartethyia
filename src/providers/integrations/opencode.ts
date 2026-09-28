@@ -1,5 +1,5 @@
 import { completeRequiredSchema } from "../../protocol/primitives";
-import type { ModelDefinition } from "../provider-registry";
+import type { ModelDefinition, ProviderDispatchContext } from "../provider-registry";
 import type { CanonicalRequest, ToolDefinition } from "../../transport/canonical-model";
 import { isRecord } from "../../protocol/primitives";
 import { PROVIDER_COMPATIBILITY_PROFILES } from "../provider-metadata";
@@ -60,11 +60,11 @@ export function isFreeTierZenModel(modelId: string): boolean {
   return modelId.endsWith("-free") || KNOWN_FREE_ZEN_IDS.includes(modelId);
 }
 
-async function opencodeDesktopHeaders(): Promise<Record<string, string>> {
+async function opencodeDesktopHeaders(context?: ProviderDispatchContext): Promise<Record<string, string>> {
   // Await discovery so the true latest client version is stamped on every
   // dispatch; the pinned fallback only applies on a real network failure.
   await resolveOpenCodeVersion();
-  return buildOpenCodeHeaders();
+  return buildOpenCodeHeaders(undefined, context?.conversation_affinity);
 }
 /** Canonical agent-tool fingerprint OpenCode Free requires on every dispatch.
  * Upstream rejects tool-less or non-agent requests with `FreeTierError`

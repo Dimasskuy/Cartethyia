@@ -16,7 +16,11 @@ import {
   withBearerAuthentication,
 } from "../../compatible-adapter";
 import type { ProviderDispatchTarget, ProviderAdapter, ProviderDispatchContext } from "../../provider-registry";
-import { providerBaseUrl } from "../../provider-metadata";
+import { providerBaseUrl, boundedUpstreamArray, boundedUpstreamNumber, sanitizeUpstreamLabel } from "../../provider-metadata";
+import { isRecord } from "../../../protocol/primitives";
+import { modelsDevCatalog } from "../../discovery/models-dev-catalog";
+import type { ReasoningEffortLevel } from "../../../transport/translation/thinking";
+import type { FetchLike } from "../../quota/quota-contracts";
 import { resolveInboundSessionId, resolvePromptCacheKey } from "../../operations/session-resolution";
 import {
   buildGrokUserAgent,
@@ -24,6 +28,7 @@ import {
   resolveGrokVersion,
 } from "../../operations/client-versions";
 import { resolveGrokTurnIndex } from "./grok-turn-index";
+import { getGrokInstallId } from "./grok-install-id";
 
 export const GROK_PROVIDER_ID = "grok" as const;
 export const GROK_BASE_URL = providerBaseUrl("grok");
@@ -60,10 +65,15 @@ const GROK_ALLOWED_FIELDS = new Set([
 ]);
 const GROK_SERVER_ID = /^(rs|fc|resp|msg)_/i;
 const GROK_NATIVE_ID = /^(rs|msg|fc)_[0-9a-f-]{20,}$/i;
+const GROK_EFFORTS = new Set<ReasoningEffortLevel>(["minimal", "low", "medium", "high", "xhigh", "max"]);
+const GROK_MODELS_URL = `${GROK_BASE_URL}/v1/models`;
 
+interface GrokModelDiscoveryOptions {
+  readonly credential: string;
+  readonly signal?: AbortSignal;
+  readonly fetcher?: FetchLike;
+}
 
-
-import { defineModel } from "../../model-definition";
 import type { ModelDefinition } from "../../provider-registry";
 
 const grokModel = (
@@ -71,25 +81,163 @@ const grokModel = (
   contextLimit: number,
   outputLimit: number,
   reasoning: boolean,
-): ModelDefinition =>
-  defineModel({
-    id: modelId,
-    wireFamily: "responses",
-    endpoint: "/v1/responses",
-    ctx: contextLimit,
-    out: outputLimit,
-    vision: true,
-    reasoning,
-    toolCall: true,
-    webSearch: true,
-  });
+  reasoningEfforts?: readonly ReasoningEffortLevel[],
+): ModelDefinition => ({
+  modelId,
+  wireFamily: "responses",
+  endpointPath: "/v1/responses",
+  contextLimit,
+  outputLimit,
+  modalities: { input: ["text", "image"], output: ["text"] },
+  reasoning,
+  ...(reasoningEfforts === undefined ? {} : { reasoningEfforts }),
+  toolCall: true,
+  webSearch: true,
+  cost: modelsDevCatalog.costFor(GROK_PROVIDER_ID, modelId),
+});
 
 /** Static fallback catalog used before (or when) the per-account live catalog is available. */
 export const GROK_MODELS: readonly ModelDefinition[] = [
-  grokModel("grok-4.7", 500_000, 64_000, true),
-  grokModel("grok-4.5", 500_000, 64_000, true),
-  grokModel("grok-4.6", 500_000, 64_000, true),
+  // Upstream /v1/models advertises a 500k context and 1M max-completion
+  // budget separately; keep the output ceiling independent from context.
+  grokModel("grok-4.7", 500_000, 1_000_000, true, ["low", "medium", "high", "xhigh"]),
+  grokModel("grok-4.5", 500_000, 64_000, true, ["low", "medium", "high", "xhigh"]),
+  grokModel("grok-4.6", 500_000, 64_000, true, ["low", "medium", "high", "xhigh"]),
 ];
+
+interface GrokModelCatalogEntry extends Record<string, unknown> {
+  readonly id?: unknown;
+  readonly model?: unknown;
+  readonly modelId?: unknown;
+  readonly name?: unknown;
+  readonly hidden?: unknown;
+  readonly _meta?: unknown;
+  readonly context_window?: unknown;
+  readonly contextWindow?: unknown;
+  readonly max_completion_tokens?: unknown;
+  readonly maxCompletionTokens?: unknown;
+  readonly reasoning_effort?: unknown;
+  readonly reasoningEffort?: unknown;
+  readonly supports_reasoning_effort?: unknown;
+  readonly supportsReasoningEffort?: unknown;
+  readonly reasoning_efforts?: unknown;
+  readonly reasoningEfforts?: unknown;
+  readonly supports_backend_search?: unknown;
+  readonly supportsBackendSearch?: unknown;
+}
+
+function modelEntries(payload: unknown): readonly Record<string, unknown>[] | null {
+  if (Array.isArray(payload)) return payload.filter(isRecord);
+  if (!isRecord(payload)) return null;
+  for (const key of ["data", "models", "results"] as const) {
+    const entries = boundedUpstreamArray(payload[key]);
+    if (entries !== undefined) return entries.filter(isRecord);
+  }
+  return null;
+}
+
+function parseGrokReasoningMenu(value: unknown): {
+  readonly efforts: readonly ReasoningEffortLevel[];
+  readonly defaultEffort?: ReasoningEffortLevel;
+} {
+  if (!Array.isArray(value)) return { efforts: [] };
+  const efforts: ReasoningEffortLevel[] = [];
+  let defaultEffort: ReasoningEffortLevel | undefined;
+  for (const entry of value) {
+    const option = typeof entry === "string" ? { value: entry } : isRecord(entry) ? entry : undefined;
+    const effort = typeof option?.value === "string" ? option.value.trim() : "";
+    if (!GROK_EFFORTS.has(effort as ReasoningEffortLevel) || efforts.includes(effort as ReasoningEffortLevel)) continue;
+    efforts.push(effort as ReasoningEffortLevel);
+    if (option?.default === true && defaultEffort === undefined) defaultEffort = effort as ReasoningEffortLevel;
+  }
+  return { efforts, ...(defaultEffort === undefined ? {} : { defaultEffort }) };
+}
+
+/**
+ * Discovers the Grok Build Responses catalog with Grok-specific completion,
+ * reasoning and backend-search metadata preserved.
+ */
+export async function fetchGrokModels(
+  options: GrokModelDiscoveryOptions,
+): Promise<readonly ModelDefinition[] | null> {
+  const fetcher = options.fetcher ?? globalThis.fetch;
+  try {
+    const response = await fetcher(GROK_MODELS_URL, {
+      headers: {
+        authorization: `Bearer ${options.credential}`,
+        "x-xai-token-auth": GROK_TOKEN_AUTH,
+        "x-grok-client-identifier": GROK_CLIENT_IDENTIFIER,
+        "x-grok-client-mode": "headless",
+        "x-grok-client-version": getGrokVersion(),
+        "user-agent": buildGrokUserAgent(),
+        accept: "application/json",
+      },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    if (!response.ok) return null;
+    const entries = modelEntries(await response.json());
+    if (entries === null) return null;
+    const models = new Map<string, ModelDefinition>();
+    const profiles = new Map<string, ModelDefinition>();
+    const defaultEfforts = new Map<string, ReasoningEffortLevel>();
+    for (const raw of entries) {
+      const entry = raw as GrokModelCatalogEntry;
+      const metadata = isRecord(entry._meta) ? entry._meta : undefined;
+      if (entry.hidden === true || metadata?.hidden === true) continue;
+      const id = sanitizeUpstreamLabel(
+        entry.id ?? entry.model ?? entry.modelId ?? metadata?.model ?? metadata?.modelId,
+      );
+      if (!id) continue;
+      const reference = GROK_MODELS.find((model) => model.modelId.toLowerCase() === id.toLowerCase());
+      const contextLimit =
+        boundedUpstreamNumber(entry.context_window ?? entry.contextWindow, { min: 1, max: 10_000_000 }) ??
+        reference?.contextLimit ?? 500_000;
+      const outputLimit =
+        boundedUpstreamNumber(entry.max_completion_tokens ?? entry.maxCompletionTokens, {
+          min: 1,
+          max: 10_000_000,
+        }) ?? reference?.outputLimit ?? 64_000;
+      const menu = parseGrokReasoningMenu(entry.reasoning_efforts ?? entry.reasoningEfforts);
+      const metadataEffort = normalizeEffort(entry.reasoning_effort ?? entry.reasoningEffort);
+      const supportsReasoning =
+        entry.supports_reasoning_effort ?? entry.supportsReasoningEffort;
+      const reasoning =
+        supportsReasoning === true ||
+        (supportsReasoning === undefined && menu.efforts.length > 0) ||
+        (supportsReasoning === undefined && menu.efforts.length === 0 && reference?.reasoning === true);
+      const model: ModelDefinition = {
+        modelId: id,
+        wireFamily: "responses",
+        endpointPath: "/v1/responses",
+        contextLimit,
+        outputLimit,
+        modalities: reference?.modalities ?? { input: ["text"], output: ["text"] },
+        reasoning,
+        ...(menu.efforts.length === 0 ? {} : { reasoningEfforts: menu.efforts }),
+        toolCall: true,
+        webSearch:
+          (entry.supports_backend_search ?? entry.supportsBackendSearch) === true ||
+          reference?.webSearch === true,
+        cost: modelsDevCatalog.costFor(GROK_PROVIDER_ID, id),
+      };
+      models.set(id, model);
+      profiles.set(id.toLowerCase(), model);
+      if (metadataEffort !== undefined) defaultEfforts.set(id.toLowerCase(), metadataEffort);
+    }
+    if (models.size === 0) return null;
+    discoveredModels.clear();
+    for (const [id, model] of profiles) discoveredModels.set(id, model);
+    // Replace discovered defaults, retaining the static defaults as fallback
+    // only for catalog ids absent from this upstream response.
+    for (const id of defaultGrokEfforts.keys()) {
+      if (profiles.has(id)) defaultGrokEfforts.delete(id);
+    }
+    for (const [id, effort] of defaultEfforts) defaultGrokEfforts.set(id, effort);
+    return [...models.values()].sort((a, b) => a.modelId.localeCompare(b.modelId));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Whether the wire accepts a `reasoning.effort` for this model.
@@ -102,8 +250,35 @@ export const GROK_MODELS: readonly ModelDefinition[] = [
  * declares as reasoning-capable. Suffixed variants of a served model (e.g.
  * `grok-4.6-high`) inherit that capability, matching the previous prefix rule.
  */
+const discoveredModels = new Map<string, ModelDefinition>();
+const defaultGrokEfforts = new Map<string, ReasoningEffortLevel>([
+  ["grok-4.7", "high"],
+  ["grok-4.5", "high"],
+  ["grok-4.6", "high"],
+]);
+
+function grokModelDefinition(modelId: string): ModelDefinition | undefined {
+  const normalized = modelId.toLowerCase();
+  return (
+    discoveredModels.get(normalized) ??
+    GROK_MODELS.find((model) => model.modelId.toLowerCase() === normalized)
+  );
+}
+
+function grokDefaultEffort(modelId: string): ReasoningEffortLevel | undefined {
+  const exact = modelId.toLowerCase();
+  const discovered = defaultGrokEfforts.get(exact);
+  if (discovered !== undefined) return discovered;
+  for (const [id, effort] of defaultGrokEfforts) {
+    if (exact === id || exact.startsWith(`${id}-`)) return effort;
+  }
+  return undefined;
+}
+
 function supportsReasoningEffort(modelId: string): boolean {
   const normalized = modelId.toLowerCase();
+  const exact = grokModelDefinition(normalized);
+  if (exact?.reasoningEfforts !== undefined) return exact.reasoningEfforts.length > 0;
   return GROK_MODELS.some(
     (model) =>
       model.reasoning &&
@@ -111,8 +286,6 @@ function supportsReasoningEffort(modelId: string): boolean {
         normalized.startsWith(`${model.modelId.toLowerCase()}-`)),
   );
 }
-
-
 
 async function grokHeaders(
   context: ProviderDispatchContext,
@@ -127,6 +300,7 @@ async function grokHeaders(
   // dispatch; the pinned fallback only applies on a real network failure.
   await resolveGrokVersion();
   const version = getGrokVersion();
+  const agentId = await getGrokInstallId();
   const headers: Record<string, string> = {
     accept: "text/event-stream",
     "accept-encoding": "identity",
@@ -136,21 +310,11 @@ async function grokHeaders(
     "x-grok-client-mode": "headless",
     "x-authenticateresponse": "authenticate-response",
     "user-agent": buildGrokUserAgent(version),
+    "x-grok-agent-id": agentId,
     "x-grok-req-id": randomUUID(),
   };
-  // Deliberately absent, matching what the real Grok CLI sends rather than what
-  // a reference gateway adds for its own bookkeeping:
-  // - `x-grok-agent-id` only exists when a CLI runs in agent mode. This gateway
-  //   has no agent id, and minting one would fingerprint a mode that is not
-  //   running.
-  // - Account `email` and `userId` headers need identity the OAuth credential
-  //   store does not keep. Dispatch only has `account_id`, and the fingerprint
-  //   that actually identifies the client is already covered above.
-  // Hosted tools (`web_search`, `x_search`) and freeform tool parameters are not
-  // reshaped here either. The shared Responses payload forwards `tools` and
-  // `tool_choice` verbatim, so a Grok-only rewrite would clobber a shape that is
-  // already valid. A reference gateway needs that rewrite only because it
-  // converts from Chat Completions first.
+  // The auth store retains the display label, not xAI's upstream user ID, so
+  // do not substitute a local account or tenant id in identity headers.
   if (candidate?.model_id) {
     headers["x-grok-model-override"] = candidate.model_id;
   }
@@ -163,7 +327,9 @@ async function grokHeaders(
       // A real `grok` CLI client tracks its own prompt index; never override it.
       headers["x-grok-turn-idx"] = turn;
     } else {
-      headers["x-grok-turn-idx"] = String(resolveGrokTurnIndex(session, request));
+      headers["x-grok-turn-idx"] = String(
+        resolveGrokTurnIndex(session, request, context.request_identity),
+      );
     }
   }
   const traceId = randomBytes(16).toString("hex");
@@ -172,12 +338,13 @@ async function grokHeaders(
   return headers;
 }
 
-function normalizeEffort(value: unknown): string | undefined {
+function normalizeEffort(value: unknown): ReasoningEffortLevel | undefined {
   if (typeof value !== "string") return undefined;
   const effort = value.trim().toLowerCase();
-  if (effort === "minimal") return "low";
-  if (effort === "max") return "xhigh";
-  return ["low", "medium", "high", "xhigh"].includes(effort) ? effort : undefined;
+  const normalized = effort === "minimal" ? "low" : effort === "max" ? "xhigh" : effort;
+  return GROK_EFFORTS.has(normalized as ReasoningEffortLevel)
+    ? (normalized as ReasoningEffortLevel)
+    : undefined;
 }
 
 function normalizeInput(input: unknown): unknown {
@@ -293,11 +460,33 @@ function normalizeGrokPayload(
       ? { ...(payload.reasoning as Record<string, unknown>) }
       : {};
   reasoning.summary ??= "concise";
+  const modelDefinition = grokModelDefinition(requestedModel);
   const supportsEffort = supportsReasoningEffort(requestedModel);
-  if (supportsEffort && requestedEffort) reasoning.effort = requestedEffort;
-  else delete reasoning.effort;
+  const normalizedEffort = requestedEffort ?? grokDefaultEffort(requestedModel);
+  if (
+    supportsEffort &&
+    normalizedEffort &&
+    (modelDefinition?.reasoningEfforts === undefined ||
+      modelDefinition.reasoningEfforts.includes(normalizedEffort as ReasoningEffortLevel))
+  ) {
+    reasoning.effort = normalizedEffort;
+  } else {
+    delete reasoning.effort;
+  }
   delete payload.reasoning_effort;
   payload.reasoning = reasoning;
+
+  const modelOutputLimit = modelDefinition?.outputLimit;
+  if (modelOutputLimit !== null && modelOutputLimit !== undefined) {
+    const requestedOutput = boundedUpstreamNumber(payload.max_output_tokens, {
+      min: 1,
+      max: 10_000_000,
+    });
+    payload.max_output_tokens =
+      requestedOutput === undefined
+        ? modelOutputLimit
+        : Math.min(requestedOutput, modelOutputLimit);
+  }
 
   const include = Array.isArray(payload.include) ? [...payload.include] : [];
   if (!include.includes("reasoning.encrypted_content")) include.push("reasoning.encrypted_content");

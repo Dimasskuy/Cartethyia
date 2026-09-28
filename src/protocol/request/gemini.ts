@@ -200,7 +200,14 @@ function toGeminiPart(
   }
   if (part.kind === "toolResult") {
     const name = toolNames.get(part.call_id) ?? part.call_id ?? "tool";
-    const response = typeof part.content === "string" ? parseJsonObject(part.content) : parseJsonObject(JSON.stringify(part.content));
+    // Gemini's functionResponse accepts a JSON object. Canonical tool content
+    // is either text or a ContentPart array; the existing parser wraps an array's
+    // JSON text in `{ content }`, so preserve that wire shape without parsing a
+    // just-stringified array back into a value that will be rejected as non-record.
+    const response =
+      typeof part.content === "string"
+        ? parseJsonObject(part.content)
+        : { content: JSON.stringify(part.content) };
     return [{ functionResponse: { name, response, ...(part.call_id ? { id: part.call_id } : {}) } }];
   }
   return [];

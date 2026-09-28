@@ -26,6 +26,7 @@ interface TurnEntry {
 }
 
 const turns = new Map<string, TurnEntry>();
+const requestTurns = new WeakMap<object, number>();
 
 /** User turns in the request, floored at 1 (a turn is never index 0). */
 function userTurnCount(request: CanonicalRequest | undefined): number {
@@ -48,8 +49,13 @@ function userTurnCount(request: CanonicalRequest | undefined): number {
 export function resolveGrokTurnIndex(
   sessionId: string | undefined,
   request: CanonicalRequest | undefined,
+  requestKey?: object,
 ): number {
   const fromInput = userTurnCount(request);
+  if (requestKey !== undefined) {
+    const previousRequestTurn = requestTurns.get(requestKey);
+    if (previousRequestTurn !== undefined) return previousRequestTurn;
+  }
   if (sessionId === undefined || sessionId.length === 0) return fromInput;
 
   const now = Date.now();
@@ -70,6 +76,7 @@ export function resolveGrokTurnIndex(
     if (!oldest.done) turns.delete(oldest.value);
   }
   turns.set(sessionId, { turn, lastUsedAt: now });
+  if (requestKey !== undefined) requestTurns.set(requestKey, turn);
   return turn;
 }
 

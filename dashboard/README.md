@@ -21,8 +21,8 @@ Production serves the built files from `dist/dashboard`.
 `dashboard/test/`, mirroring `src/` the way the root `test/` tree mirrors
 `src/`:
 
-- `test/` mirrors `src/` one-for-one — `test/lib/api.test.ts` covers
-  `src/lib/api.ts`, `test/routes/Studio.tools.test.tsx` covers
+- `test/` mirrors `src/` by role — `test/lib/api.test.ts` covers
+  `src/data/api.ts`, `test/routes/Studio.tools.test.tsx` covers
   `src/routes/Studio.tsx`, and so on.
 - `test/helpers/` holds shared scaffolding that imports `bun:test` and is never
   imported by `src/` (`test/helpers/test-helpers.ts`).
@@ -66,10 +66,10 @@ tenant data.
 
 ## Contracts and parity
 
-- `src/lib/contracts.ts` is the dashboard's API mirror. Backend DTOs remain the
+- `src/data/contracts.ts` is the dashboard's API mirror. Backend DTOs remain the
 authority; update the mirror in the same change and keep `dashboard/test/*-parity.test.ts`
   checks green.
-- Provider display names in `src/lib/provider-names.ts` mirror the canonical
+- Provider display names in `src/shared/provider-names.ts` mirror the canonical
   bundled provider registry. Keep the exact bundled count and ids synchronized;
   BYOK providers are runtime data, not bundled registry entries.
 - `src/components/ProviderIcon.tsx`'s `iconAssets` map and `features/providers/ProvidersPage.tsx`'s
@@ -78,16 +78,16 @@ authority; update the mirror in the same change and keep `dashboard/test/*-parit
   `test/provider-lists-parity.test.ts`. The icon map may carry extra keys for
   ids a user can type into a compatible-provider form; every bundled id must
   have one.
-- `src/lib/contracts.ts` derives the session mirror from the backend
+- `src/data/contracts.ts` derives the session mirror from the backend
   `SessionStatusResponse` (a discriminated union on `status`) and pins it in
   `test/session-parity.test.ts`, so the wire arm and the dashboard view cannot
   drift field-by-field.
-- `src/lib/contracts.ts` re-exports the backend `USAGE_DIMENSIONS` tuple as a value, not a
+- `src/data/contracts.ts` re-exports the backend `USAGE_DIMENSIONS` tuple as a value, not a
   type-only copy, because the Usage page validates `?dim=` against it at runtime and offers one
   breakdown tab per member. It comes from `console/observability/usage-dimensions`, a module
   with no imports, rather than from `observability/contracts`, which imports Elysia and reaches
   `node:crypto` through the console error path. Pinned by `test/usage-dimensions-parity.test.ts`.
-- Usage periods are generated into `src/lib/generated/usage-periods.json` by
+- Usage periods are generated into `src/data/generated/usage-periods.json` by
   `bun run codegen`; do not hand-maintain a second period list.
 - Query keys, hooks, and route components must use the existing `consoleRequest`
   API boundary instead of constructing another HTTP client or importing backend

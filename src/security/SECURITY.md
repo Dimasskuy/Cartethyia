@@ -27,9 +27,11 @@ src/security/
 
 ## Layer order on the data plane
 
-Ingress (`src/transport/middleware/ingress.ts`, `pipeline.ts`) applies these
+Ingress (`src/transport/middleware/pipeline.ts` fixes the order; the factories live in `body-policy.ts`,
+`request-context.ts`, `gateway-guards.ts`, and `error-lifecycle.ts` by responsibility) applies these
 in order; prepare/dispatch consult the snapshot the authentication layer
-produces:
+produces. A request with no `model`, or a blank one, is rejected 400 `invalid_request` at the top of
+`ProxyRequestPreparer.prepare()` — before the snapshot read — so it never reserves capacity.
 
 1. `ip-boundary.ts: resolveClientIdentity` — three modes. `disabled` (unset
    `TRUSTED_PROXY_CIDRS`) trusts the normalized TCP peer and ignores forwarding

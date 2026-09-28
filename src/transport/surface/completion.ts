@@ -213,13 +213,14 @@ export class CompletionAdapter implements SurfaceAdapter {
   encodeOutput(events: readonly CanonicalEvent[], options: CompletionEncodingOptions = {}): SurfaceOutput {
     const model = modelFor(events, options);
     const reason = stopReason(events);
+    const responseUsage = usage(events);
     const response = {
       id: options.response_id ?? `cmpl-${crypto.randomUUID()}`,
       object: "text_completion",
       created: options.created ?? Math.floor(Date.now() / 1000),
       model,
       choices: [{ text: outputText(events, options), index: 0, logprobs: null, finish_reason: reason }],
-      ...(usage(events) === undefined ? {} : { usage: usage(events) }),
+      ...(responseUsage === undefined ? {} : { usage: responseUsage }),
     };
     return { bytes: TEXT_ENCODER.encode(JSON.stringify(response)), content_type: "application/json" };
   }

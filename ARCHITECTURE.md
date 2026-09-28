@@ -69,7 +69,7 @@ that matches no route, which puts it ahead of readiness and client identity.
 
 | Layer | Doc | Covers |
 |---|---|---|
-| transport | `src/transport/TRANSPORT.md` | Canonical core, lifecycle, ingress pipeline, surface codecs, preparation/state, capability/alias/combo, routing plan, dispatch, error taxonomy |
+| transport | `src/transport/TRANSPORT.md` | Canonical core, lifecycle, ingress pipeline (`middleware/` split by role: `body-policy`, `request-context`, `gateway-guards`, `error-lifecycle`), surface codecs, preparation/state, capability/alias/combo, routing plan, dispatch, error taxonomy |
 | protocol | `src/protocol/PROTOCOL.md` | Canonical↔wire codecs, registry dispatcher, shared primitives |
 | network | `src/network/NETWORK.md` | Validated egress, SSRF policy, pool agents, weighted admission, retry/dedup rules |
 | security | `src/security/SECURITY.md` | Data plane: identity → IP-abuse → API-key auth → admission; shared primitives: crypto, headers; console-scoped CSRF |

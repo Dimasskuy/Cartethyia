@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildGeminiPayload } from "../../../src/protocol/request/gemini";
-import type { CanonicalRequest } from "../../../src/transport/canonical-model";
+import type { CanonicalRequest, ContentPart } from "../../../src/transport/canonical-model";
 
 function requestWithTools(tools: CanonicalRequest["tools"]): CanonicalRequest {
   return {
@@ -17,6 +17,52 @@ function declarationsOf(payload: Record<string, unknown>): Array<Record<string, 
   const tools = payload["tools"] as Array<Record<string, unknown>>;
   return (tools[0]?.["functionDeclarations"] ?? []) as Array<Record<string, unknown>>;
 }
+
+function toolResponsesOf(payload: Record<string, unknown>): Array<Record<string, unknown>> {
+  const contents = payload["contents"] as Array<Record<string, unknown>>;
+  return contents
+    .flatMap((content) => (content["parts"] ?? []) as Array<Record<string, unknown>>)
+    .filter((part) => "functionResponse" in part)
+    .map((part) => part["functionResponse"] as Record<string, unknown>);
+}
+
+function requestWithToolResult(content: Extract<ContentPart, { kind: "toolResult" }>["content"]): CanonicalRequest {
+  return {
+    model: "gemini-2.0-flash",
+    messages: [{ role: "tool", content: [{ kind: "toolResult", call_id: "call-1", content }] }],
+    generation_controls: {},
+    stream: false,
+    source_surface: "chat",
+  } as CanonicalRequest;
+}
+
+describe("buildGeminiPayload tool result projection", () => {
+  test("keeps structured tool content under Gemini's content field without a stringify/parse round trip", () => {
+    const payload = buildGeminiPayload(requestWithToolResult([
+      { kind: "text", text: "created" },
+      { kind: "text", text: "id: 42" },
+    ]));
+    expect(toolResponsesOf(payload)).toEqual([
+      {
+        name: "call-1",
+        id: "call-1",
+        response: {
+          content: JSON.stringify([
+            { kind: "text", text: "created" },
+            { kind: "text", text: "id: 42" },
+          ]),
+        },
+      },
+    ]);
+  });
+
+  test("parses an object-shaped JSON string and wraps other strings as content", () => {
+    const object = buildGeminiPayload(requestWithToolResult('{"ok":true}'));
+    expect(toolResponsesOf(object)[0]?.["response"]).toEqual({ ok: true });
+    const text = buildGeminiPayload(requestWithToolResult("not-json"));
+    expect(toolResponsesOf(text)[0]?.["response"]).toEqual({ content: "not-json" });
+  });
+});
 
 describe("buildGeminiPayload schema sanitization", () => {
   test("maps const to single-value enum and flattens oneOf", () => {

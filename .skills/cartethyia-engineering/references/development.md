@@ -8,6 +8,7 @@ The single skill for every repo modification. Jump to your section; all share on
 | Symptom | Section |
 |---|---|
 | New to the repo / where is the authority? | 0 Orientation |
+| Changing behavior and unsure how to test it | 0.1 Goal-first testing |
 | Add or extend a bundled provider | 1 Add provider |
 | Provider stamps a CLI/client version in headers | 2 Version resolver |
 | New Postgres column or routing setting | 3 Schema change |
@@ -16,6 +17,7 @@ The single skill for every repo modification. Jump to your section; all share on
 | Delete a whole feature cluster | 6 Feature removal |
 | Delete files / measure a tree / check path readers | 7 Safe removal |
 | Refactor left re-exports or type aliases | 8 Compat shims |
+| Same logic in several places | 9 Consolidating duplication |
 
 ## 0 Orientation
 
@@ -25,23 +27,30 @@ Use when new to the repo or unsure which file owns a behavior; done when you can
 
 ### Procedure
 
-1. Capture state first: `git status --short` plus `git diff --stat`. Treat uncommitted work as the real state. If `.codegraph/codegraph.db` exists the index is usable, but re-verify indexed hits with `Grep`/`Read` when files changed after its sync point.
-2. Read in order: `README.md`, `ARCHITECTURE.md`, `AGENTS.md`, `CHANGELOG.md` head (`## Unreleased` first), then the canonical layer doc for your area — one doc per top-level `src/` folder, named for the layer (`src/transport/TRANSPORT.md`, `src/providers/PROVIDERS.md`, `src/persistence/PERSISTENCE.md`, `src/observability/OBSERVABILITY.md`), then `package.json` scripts, then the boot chain `src/main.ts` → `src/runtime/lifecycle.ts` → `src/runtime/dependencies.ts` → `src/app.ts`.
-3. Authority map (no others):
-   - Ingress: `src/transport/middleware/pipeline.ts` (composition); `src/transport/middleware/ingress.ts` (stages, `finalizeRequestTelemetry`, `isProxyDispatchRoute`).
-   - Eligibility: `src/transport/routing/router.ts` only (`RoutingEngine.plan`, admission reading `candidate.max_inflight`).
-   - Model/errors: `src/transport/canonical-model.ts` (wire families, canonical request/event vocabulary); `src/transport/gateway-error.ts` (`GatewayError`, stable codes, public-detail sanitizers).
-   - Surfaces: `src/transport/surface/` (`chat/adapter.ts`, `responses/adapter.ts`, `messages/adapter.ts`, `completion.ts`).
-   - Codecs: `src/protocol/request/`, `src/protocol/response/` (`chat.ts`, `responses.ts`, `messages.ts`, `codex.ts`), `src/protocol/registry.ts`, `src/protocol/transport/openai.ts`, `src/protocol/primitives.ts`.
-   - Capabilities: `src/transport/translation/capabilities.ts` plus `src/transport/request/preparer.ts` (degrade order: generation controls/extensions, prompt caching, structured output, reasoning, tools, then attached media; hosted `web_search` is not degradable and fails the request when the chosen model lacks it). Tool tracking: `src/transport/tool-identity.ts`.
-   - Dispatch: `src/providers/compatible-adapter.ts` (awaited `buildExtraHeaders`), `src/transport/dispatch/proxy-request.ts`, `src/transport/dispatch/attempt-finalize.ts` (`completeAttempt`), `src/transport/dispatch/leases.ts`, `src/transport/dispatch/upstream.ts`.
-   - Registry: `src/providers/provider-registry.ts`, `src/providers/default-registry.ts`, `src/providers/provider-metadata.ts`, `src/providers/model-definition.ts` (`defineModel`).
-   - Config: `src/config.ts` is the only sanctioned multi-subsystem env reader; single-subsystem reads live next to their consumer and must be documented in `.env.example` (`test/config-env-drift.test.ts` enforces this).
-   - Network: `src/network/ssrf.ts`, `src/network/outbound-fetch.ts`, `src/network/pool/`.
-   - Observability: `src/observability/log-ring.ts`, `src/observability/payload-capture.ts`, `src/observability/telemetry-buffer.ts`.
-   - Console: `src/console/providers/catalog/`, `src/console/providers/detail/` (`contracts.ts`, `store.ts`, `routes.ts` each), `src/console/observability/` (logs, live streams, performance, and usage stats).
-   - Persistence: `src/persistence/schema.ts`, `src/persistence/postgres.ts` (`DATABASE_URL` only source, `MIGRATION_LEDGER_TABLE`), `migrations/` (tracked numbered `NNNN_*.sql` files, applied in order at boot; `0000_baseline.sql` is the whole schema for a database created today).
-   - Scripts are flat under `scripts/` (`ops-run-tests.ts`, `ops-setup.ts`, `ops-doctor.ts`, `build-aot.ts`, `ci-check-coverage.ts`); no `scripts/ops/` exists.
+1. Capture state first: `git status --short` plus `git diff --stat`. Treat uncommitted work as the real state — a working tree mid-change is authoritative over any doc, including this one.
+2. Navigate by authority, not by search:
+   - `README.md` (product/runtime) → `ARCHITECTURE.md` (the map, with canonical paths) → `AGENTS.md` (repo rules) → `CHANGELOG.md` head (`## Unreleased` first).
+   - Then the **one** canonical layer doc for your area. There is exactly one per top-level `src/` folder, named for the layer in caps, and it covers its whole subtree — `src/transport/TRANSPORT.md` also covers `middleware/`, `surface/`, `request/`, `translation/`, `routing/`, and `dispatch/`; `src/providers/PROVIDERS.md` also covers `integrations/`, `operations/`, `authentication/`, `quota/`, and `discovery/`. Subfolders carry no doc of their own.
+   - Read that doc *before* opening source. A layer doc is the index for its subtree and is the fastest way in.
+3. Use the code index for "how/where/what calls X": a `.codegraph/codegraph.db` index sits at the repo root, and `codegraph_explore` returns the relevant symbols' verbatim source plus the call paths between them in one call — including dynamic-dispatch hops grep cannot follow. Re-verify indexed hits with `Grep`/`Read` when the file changed after the index's sync point; the index is a map, not an oracle.
+4. Then `package.json` scripts, then the boot chain `src/main.ts` → `src/runtime/lifecycle.ts` → `src/runtime/dependencies.ts` → `src/app.ts`.
+
+**Authority map (current).** If a path here disagrees with the repo, the repo wins — fix this file in the same change.
+
+- **Ingress:** `src/transport/middleware/pipeline.ts` fixes the stage order; the factories are grouped by responsibility — `body-policy.ts` (single-read body policy, `isProxyDispatchRoute`), `request-context.ts` (state, identity, canonical parse, route prepare), `gateway-guards.ts` (auth, CSRF, readiness, per-IP abuse), `error-lifecycle.ts` (public error normalization, `finalizeRequestTelemetry`, cleanup).
+- **Eligibility:** `src/transport/routing/router.ts` only (`RoutingEngine.plan`, admission reading `candidate.max_inflight`).
+- **Model/errors:** `src/transport/canonical-model.ts` (wire families, canonical request/event vocabulary); `src/transport/gateway-error.ts` (`GatewayError`, stable codes, public-detail sanitizers).
+- **Surfaces:** `src/transport/surface/` (`chat/adapter.ts`, `responses/adapter.ts`, `messages/adapter.ts`, `completion.ts`).
+- **Codecs:** `src/protocol/request/`, `src/protocol/response/` (`chat.ts`, `responses.ts`, `messages.ts`, `codex.ts`, `gemini.ts`), `src/protocol/registry.ts`, `src/protocol/transport/openai.ts`, `src/protocol/primitives.ts`. Codex and Gemini bypass the registry by design.
+- **Capabilities:** `src/transport/translation/capabilities.ts` plus `src/transport/request/preparer.ts`.
+- **Dispatch:** `src/providers/compatible-adapter.ts` (awaited `buildExtraHeaders`), `src/transport/dispatch/proxy-request.ts`, `attempt-finalize.ts` (`completeAttempt`), `leases.ts`, `upstream.ts`, `retry-policy.ts`.
+- **Registry:** `src/providers/provider-registry.ts`, `default-registry.ts`, `provider-metadata.ts`, `model-definition.ts` (`defineModel`).
+- **Config:** `src/config.ts` is the only sanctioned multi-subsystem env reader; single-subsystem reads live next to their consumer and must be documented in `.env.example` (`test/config-env-drift.test.ts` enforces this).
+- **Network:** `src/network/ssrf.ts`, `outbound-fetch.ts`, `pool/`.
+- **Observability:** `src/observability/log-ring.ts`, `payload-capture.ts`, `telemetry-buffer.ts`, `telemetry-status.ts` (the one definition of "is this a gateway error").
+- **Console:** `src/console/providers/catalog/`, `providers/detail/`, `observability/` (logs, live streams, performance, usage stats).
+- **Persistence:** `src/persistence/schema.ts`, `postgres.ts` (migration ledger), `migrations/` (tracked numbered `NNNN_*.sql`, applied in order at boot; `0000_baseline.sql` is the whole schema for a database created today).
+- **Scripts** are flat under `scripts/` (`ops-run-tests.ts`, `ops-setup.ts`, `ops-doctor.ts`, `build-aot.ts`, `ci-check-coverage.ts`); no `scripts/ops/` subdirectory exists.
 
 ```bash
 git status --short
@@ -51,14 +60,40 @@ bun run typecheck
 
 ### Pitfalls
 
-- WIP beats docs: a stale canonical layer doc never overrides the code in
-  `router.ts`, `route-catalog.ts`, or `compatible-adapter.ts`.
+- WIP beats docs: a stale canonical layer doc never overrides the code in `router.ts`, `route-catalog.ts`, or `compatible-adapter.ts`. Conversely a doc that names a path the repo does not have is a bug in the doc — fix it.
+- Provider identity is mirrored, not imported: the dashboard keeps hand-copied display names, icon maps, and provider-id sets. A backend rename is not done until those mirrors move (K9).
 - Capability flags change the upstream payload; modalities fuse while structural gaps degrade-then-reject. Telemetry is metadata-only and never blocks requests.
 - Ambiguous bare model ids are rejected, not guessed; route-contract changes need `dashboard:typecheck`; renames must pass `test/architecture/*-naming.test.ts`; dispatch errors use `GatewayError`.
 
 ### Verify checklist
 
 - [ ] You can state the authority file for your change from the map above; shared Verify block: `bun run typecheck` plus the focused suite for your tree.
+
+## 0.1 Goal-first testing
+
+### Goal
+
+Use whenever you are about to add or change a test; done when the test asserts one observable behavior, you predicted how it fails, and you have proven it has teeth.
+
+### Procedure
+
+1. **Write the goal sentence first.** "A `<surface>` request carrying `<input>` produces `<observable outcome>`." Observable means a result, boundary, error, transition, security invariant, or persistence contract. "Does not throw" and "the function was called" are not goals.
+2. **Predict the failure.** State the mechanism: which line reads which value, and why it is wrong today. If you cannot predict it, you have a hypothesis — run one probe to get the fact, do not write the test yet. A test written before the cause is known tests your guess, not the code.
+3. **Run it once.** A failure for the predicted reason confirms your model. A failure you did not predict is new information: read it, correct the model, then change the implementation. Do not re-run the same test while nudging the code — that is a search loop, and each iteration costs more than the probe that would have answered it.
+4. **Change what you observe, not how many times you look.** If the failure is unexplained, switch the layer: raw bytes vs parsed, request vs response, one provider instead of one surface, a stub fetch instead of the pipeline. Re-instrumenting the same path and re-running is the loop to avoid.
+5. **Prove the teeth (mutation test).** Break the fix, confirm the test fails *on the intended assertion*, restore, confirm it passes. A test that passes both ways proves nothing about the fix.
+6. **Keep it when infrastructure exists:** a regression test in `test/` mirroring `src/`, or `dashboard/test/` for browser code. Delete throwaway scripts before reporting; they are evidence only for the path they ran.
+
+### Pitfalls
+
+- Adding a test to "see what happens" — the test then encodes whatever the buggy code did, and passes after the wrong fix.
+- Asserting on an implementation detail (`toHaveBeenCalled`, internals, source text) so a correct refactor breaks it. Assert the outcome; let the mechanism change.
+- Re-running the full suite to find a failure a single targeted probe would name.
+- Leaving the mutation in place — verify the restore actually took effect before reporting.
+
+### Verify checklist
+
+- [ ] Goal sentence and predicted failure stated before the first run; one run per model change; mutation test reported; shared Verify block green.
 
 ## 1 Add provider
 
@@ -68,13 +103,13 @@ Use when adding or extending a bundled provider; done when the provider dispatch
 
 ### Procedure
 
-1. Identity row in `src/providers/provider-metadata.ts`: append to `RAW_BUNDLED_PROVIDER_METADATA` (`id`, `displayName`, `baseUrl` as the true origin root, no version segment unless genuine, e.g. `https://api.openai.com`). Optional `wireFamilyDefault` (default `chat`), `requiresAccount` (only `false` for genuinely public endpoints like `opencodeft`), `defaultBypassProxy`, `jwtVerification`, `credentialUrl`. `BundledProviderId` derives from this array.
+1. Identity row in `src/providers/provider-metadata.ts`: append to `RAW_BUNDLED_PROVIDER_METADATA` (`id`, `displayName`, `baseUrl` as the true origin root, no version segment unless genuine, e.g. `https://api.openai.com`). Optional `wireFamilyDefault` (default `chat`), `requiresAccount` (only `false` for genuinely public endpoints like `opencodeft`), `defaultBypassProxy`, `jwtVerification`, `credentialUrl`, `credentialHint`, `hasAdapterUserAgent`. `BundledProviderId` derives from this array, so no second id list exists.
 2. Capabilities entry in `src/providers/default-registry.ts`: add `PROVIDER_CAPABILITIES.<id>` — a missing key is a compile error via the `satisfies Record<BundledProviderId, …>` check. Keep every loader lazy (`await import()`; `oauthCapability()`, `quotaCapability()`, `openAIModelDiscovery()` helpers). Key-only hosts reuse `configuredProvider(id)` backed by `GENERIC_API_KEY_SPECS` in `src/providers/integrations/configured-openai-providers.ts`.
 3. Integration module under `src/providers/integrations/`: mirror a sibling. Nested dirs (`buddy/`, `claude-code/`, `cline/`, `codex/`, `grok/`, `cursor/`, `devin/`, `antigravity/`, `muse/`, `kimi/`, `zai/`) for OAuth/quota providers: `<id>.ts` (`OpenAICompatibleAdapter` + `withBearerAuthentication`), `<id>-shared.ts` (awaited `buildExtraHeaders`, in-place `prePayload`, `defineModel` from `../../model-definition`), `<id>-oauth.ts`, `<id>-quota.ts`. Versioned providers register their resolver in `src/providers/operations/client-versions.ts`. Flat files (`commandcode.ts`, `qoder.ts`, `gemini.ts`, `agentrouter.ts`, `inferhub.ts`) for simple or bespoke wires. Catalog rows use `defineModel({ id, endpoint, vision, reasoning, toolCall })`; `endpoint` becomes `ModelDefinition.endpointPath` (family defaults `/chat/completions`, `/responses`, `/messages` when omitted).
 4. Endpoint gotcha: dispatch reads each row's `ModelDefinition.endpointPath` (via `candidate.endpoint_path` in `compatible-adapter.ts` `executeTransport`), not `endpoint_paths_by_wire_family`. `bundledModelCatalog()` in `src/providers/operations/provider-catalog-service.ts` throws on same-family conflicts, so a version-less `baseUrl` plus a versioned chat path means setting explicit `endpoint` on every row of that family.
-5. Dashboard mirrors (all hand-maintained copies — browser code must never import a backend module; see `dashboard/README.md`): the display name in `BUILT_IN_PROVIDER_DISPLAY_NAMES` (`dashboard/src/shared/provider-names.ts`), an `iconAssets` entry in `dashboard/src/components/ProviderIcon.tsx`, placement in `SECTIONS` plus `FOUNDING_IDS` / `FREE_LIMITED_IDS` / `FREE_AVAILABLE_IDS` in `dashboard/src/features/providers/ProvidersPage.tsx`, and `PROXY_UNSUPPORTED_HINT_PROVIDERS` in `dashboard/src/hooks/use-routing-strategy.ts` when the provider cannot route through a network pool. The OAuth section derives from `oauthFlows` presence, so it needs no list edit. Two parity tests fail the moment a bundled ID is missing from the display-name or icon map (`dashboard/test/provider-display-names-parity.test.ts`, `dashboard/test/provider-lists-parity.test.ts`), so run `bun run dashboard:test` before claiming the provider is wired. Touch `README.md` only if it already carries a provider count/table.
+5. Dashboard mirrors (all hand-maintained copies — browser code must never import a backend module; see `dashboard/README.md`): the display name in `BUILT_IN_PROVIDER_DISPLAY_NAMES` (`dashboard/src/shared/provider-names.ts`), an `iconAssets` entry in `dashboard/src/components/ProviderIcon.tsx`, placement in `SECTIONS` plus `FOUNDING_IDS` / `FREE_LIMITED_IDS` / `FREE_AVAILABLE_IDS` in `dashboard/src/features/providers/ProvidersPage.tsx`, and `PROXY_UNSUPPORTED_HINT_PROVIDERS` in `dashboard/src/hooks/use-routing-strategy.ts` when the provider cannot route through a network pool. The OAuth section derives from `oauthFlows` presence, so it needs no list edit. Two parity tests fail the moment a bundled ID is missing from the display-name or icon map (`dashboard/test/provider-display-names-parity.test.ts`, `dashboard/test/provider-lists-parity.test.ts`), so run `bun run dashboard:test` before claiming the provider is wired.
 6. Seed/restart: `seedBundledModels()` in `src/providers/operations/provider-catalog-seeder.ts` upserts on `(provider_id, model_id, endpoint_path)` and deletes stale `source = 'builtin'` rows; `enabled` is operator-owned and never reset. Static catalog changes need a backend restart (boot path `bundledModelCatalog()` plus `seedBundledModels()` in `src/runtime/dependencies.ts`).
-7. Tests in `test/providers/integrations/<id>/`: stub fetch as `as typeof fetch`, never hit the network. Nothing pins a provider *number* — the contract is coverage: `test/providers/default-registry.test.ts` asserts set equality between `BUNDLED_PROVIDER_IDS`, the registry's registered ids, `PROVIDER_CAPABILITIES` keys, and `BUNDLED_PROVIDER_MODULES`, and the dashboard parity tests assert every bundled id has a display name and icon, so a new id must land in every mirror rather than a count being bumped.
+7. Tests in `test/providers/integrations/<id>/`: stub fetch as `as typeof fetch`, never hit the network. **No file pins a provider count** — the contract is set equality: `test/providers/default-registry.test.ts` asserts equality between `BUNDLED_PROVIDER_IDS`, the registry's registered ids, `PROVIDER_CAPABILITIES` keys, and `BUNDLED_PROVIDER_MODULES`, and the dashboard parity tests assert every bundled id has a display name and icon. A new id must land in every mirror; bumping a number is never the change. Do not add a count to `README.md` either — it drifts on the next provider.
 
 ```bash
 bun run typecheck
@@ -100,7 +135,7 @@ qoder: {
 
 ### Verify checklist
 
-- [ ] `bun run typecheck`, focused `bun run scripts/ops-run-tests.ts test/providers`, `bun run test:contracts`, `bun run dashboard:typecheck`; shared Verify block green.
+- [ ] `bun run typecheck`, focused `bun run scripts/ops-run-tests.ts test/providers`, `bun run test:contracts`, `bun run dashboard:typecheck`, `bun run dashboard:test`; shared Verify block green.
 
 ## 2 Version resolver
 
@@ -111,19 +146,9 @@ Use when a provider gates requests on a CLI/client version stamped into headers;
 ### Procedure
 
 1. The race: `OpenAICompatibleAdapter.prepareHeaders()` in `src/providers/compatible-adapter.ts` awaits `buildExtraHeaders`, but a sync builder calling only sync `get()` plus fire-and-forget `refresh()` stamps the pinned fallback until discovery lands. Fix: `await` the resolver's `ensure()` inside the async header builder before `get()`. Fallback applies only on a real network error.
-2. Add or change a provider entry in `VERSION_SOURCES` (`src/providers/operations/client-versions.ts`)
-   plus its instance in the `resolvers` map in the same file: unique `key`,
-   pinned `fallback`, and source URLs/parsers. The factory
-   `createClientVersionResolver()` itself lives in
-   `src/providers/operations/client-version-resolver.ts`. Keep non-version
-   upstream fingerprint parsing in its dedicated helper. The shared cache
-   deduplicates concurrent fetches, evicts failures, and keeps dispatch on the
-   pinned fallback offline.
-3. Await the resolver at every async header builder that needs a fresh version;
-   sync builders may use `get()` only after an awaited warm-up.
-4. Tests mirror the provider surface: reset the shared resolver, stub fetch as
-   `as typeof fetch`, and assert the discovered value and the fallback on
-   failure.
+2. Add or change a provider entry in `VERSION_SOURCES` (`src/providers/operations/client-versions.ts`) plus its instance in the `resolvers` map in the same file: unique `key`, pinned `fallback`, and source URLs/parsers. The factory `createClientVersionResolver()` itself lives in `src/providers/operations/client-version-resolver.ts`. Keep non-version upstream fingerprint parsing in its dedicated helper. The shared cache deduplicates concurrent fetches, evicts failures, and keeps dispatch on the pinned fallback offline.
+3. Await the resolver at every async header builder that needs a fresh version; sync builders may use `get()` only after an awaited warm-up.
+4. Tests mirror the provider surface: reset the shared resolver, stub fetch as `as typeof fetch`, and assert the discovered value and the fallback on failure.
 
 ```ts
 import { VERSION_SOURCES, resolveQoderVersion } from "../providers/operations/client-versions";
@@ -142,18 +167,16 @@ bun run scripts/ops-run-tests.ts test/providers/integrations/qoder.test.ts
 
 ### Pitfalls
 
-- Calling `get()` before an awaited `resolve*Version()` serves the pinned
-  fallback on cold start; that is intentional only for offline/error paths.
-- Duplicate table keys or provider-specific parsers in the shared table can
-  cross-wire versions; keep keys unique and isolate non-version fingerprints.
+- Calling `get()` before an awaited `resolve*Version()` serves the pinned fallback on cold start; that is intentional only for offline/error paths.
+- Discovery must move a client forward, never backward — `minVersion` discards a discovered version below it. npm's `cline` package is the 3.x CLI while Cline's API gates on the 4.x extension version, so probing npm first "downgraded" Cline and the API rejected every request.
+- Duplicate table keys or provider-specific parsers in the shared table can cross-wire versions; keep keys unique and isolate non-version fingerprints.
 - PowerShell operators translate POSIX env assignments to `$env:NAME="value"`.
+
 ### Verify checklist
 
-- [ ] Stub-fetch proof shows the discovered version on first dispatch, and
-  offline/failure uses the pinned fallback; shared Verify block green.
+- [ ] Stub-fetch proof shows the discovered version on first dispatch, and offline/failure uses the pinned fallback; shared Verify block green.
 
 ## 3 Schema and routing-setting change
-
 
 ### Goal
 
@@ -162,14 +185,14 @@ Use when adding a Postgres column or per-provider routing setting; done when the
 ### Procedure
 
 1. Fold the column into `0000_baseline.sql` at the same position/order as `src/persistence/schema.ts`, same commit. The baseline is the whole schema for a database created today; `test/contracts/migration-integrity.contract.test.ts` asserts it carries the folded-in shape, and `test/integration/isolated-db.test.ts` compares a freshly migrated database against `schema.ts` column by column. Nullable pattern: when null means inherit/unlimited (`max_inflight`, `tenant_id`), omit `.notNull()` and `.default()` — `maxInflight: integer("max_inflight")` on `providerRoutingSettings` is the template.
-2. Add the next numbered file beside it so an existing database converges — `migrations/0001_…sql`, `0002_…sql`. `applySqlMigrations()` reads numbered `NNNN_*.sql` files from the top level (non-recursive) and applies each in order at boot, recording it in `cartethyia_schema_migrations`, so a deployment migrates itself with no hand-run step. Every such file must be idempotent (`IF NOT EXISTS` / `IF EXISTS` / `EXCEPTION WHEN`): a file that fails midway leaves no ledger row and is retried on the next boot.
+2. Add the next numbered file beside it so an existing database converges — `migrations/0001_….sql`, `0002_….sql`. `applySqlMigrations()` reads numbered `NNNN_*.sql` files from the top level (non-recursive) and applies each in order at boot, recording it in `cartethyia_schema_migrations`, so a deployment migrates itself with no hand-run step. Every such file must be idempotent (`IF NOT EXISTS` / `IF EXISTS` / `EXCEPTION WHEN`): a file that fails midway leaves no ledger row and is retried on the next boot.
    ```sql
    ALTER TABLE provider_routing_settings
      ADD COLUMN IF NOT EXISTS max_inflight integer;
    ```
    URL comes from `.env`; docs use placeholders like `<tenant-id>`, never real secrets.
 3. Thread every point or the value drops. Backend order: `src/console/providers/catalog/contracts.ts` (`ProviderRoutingResponse` plus `UpdateProviderRoutingRequest`) → `src/transport/routing/route-model.ts` (`RouteCandidate` / `ProviderRoutingSetting` / `ProviderRoutingMap`) → `src/transport/routing/route-catalog.ts` (`RouteCatalogRepository.loadRouteCatalogSnapshot`; precedence account value, then tenant setting, then global `__global__`, then `DEFAULT_PROXY_BYPASS_PROVIDER_IDS`; `null`/`undefined` means unlimited/globally-routable) → `src/console/providers/detail/store.ts` (`DrizzleProviderDetailStore.updateRouting`: extend `values` plus the `setClause` guard `if (patch.x !== undefined)`; `null` clears to unlimited, `undefined` leaves untouched; upsert target `[tenantId, providerId]` or the global partial unique index) → `src/console/providers/detail/routes.ts` (`updateRoutingBody = t.Object({ … })` AND operation validation — Elysia strips unknown keys, so a field missing from either never reaches the store). Prove the consumer read site first (e.g. `src/transport/routing/router.ts` reads `candidate.max_inflight` in `admit`).
-4. Dashboard same change: `dashboard/src/data/contracts.ts` (re-export, no second type source) → `assertProviderRouting` in `dashboard/src/hooks/common.ts` → `dashboard/src/hooks/routing.ts` (`useProviderRouting`, `useUpdateProviderRouting`) and `dashboard/src/hooks/use-routing-strategy.ts` (`useRoutingStrategy`, saves via `dashboard/src/hooks/use-debounced-save.ts`) → `dashboard/src/routes/provider-detail/RoutingStrategyCard.tsx` (`RoutingStrategyCard`, parity with `dashboard/src/routes/Proxy.tsx`). Backend `updateRouting` calls `await snapshotInvalidator?.invalidate()` so the next `/v1/*` request picks up operator edits; new static columns still need the numbered migration applied at boot (restart the process to run it).
+4. Dashboard same change: `dashboard/src/data/contracts.ts` (re-export, no second type source) → `assertProviderRouting` in `dashboard/src/hooks/common.ts` → `dashboard/src/hooks/routing.ts` (`useProviderRouting`, `useUpdateProviderRouting`) and `dashboard/src/hooks/use-routing-strategy.ts` (`useRoutingStrategy`, saves via `dashboard/src/hooks/use-debounced-save.ts`) → `dashboard/src/routes/provider-detail/RoutingStrategyCard.tsx` (parity with `dashboard/src/routes/Proxy.tsx`). Backend `updateRouting` calls `await snapshotInvalidator?.invalidate()` so the next `/v1/*` request picks up operator edits; new static columns still need the numbered migration applied at boot (restart the process to run it).
 
 ```bash
 bun run typecheck
@@ -199,7 +222,7 @@ Use when adding a field to the Console Log line; done when the value flows from 
 ### Procedure
 
 1. Source is `pushStructuredConsoleLog` in `src/observability/log-ring.ts` (`ConsoleLogLine`, `ConsoleLogMetadata`, ring `CAPACITY = 500`, `getConsoleLogSnapshot` / `subscribeConsoleLogs`). Add the optional key to BOTH interfaces or it never emits.
-2. Thread the backend chain in order: `src/transport/routing/route-model.ts` (`RouteCandidate`, by reference, never serialized) → `src/transport/request/state.ts` (`ProxyRequestOutcome`: outcome `status` is the internal terminal state, `httpStatus` its wire projection) → `src/transport/dispatch/attempt-finalize.ts` (`AttemptCompletion extends ProxyRequestOutcome`; `completeAttempt` copies each field via explicit `=== undefined ? {} : {…}` spreads — an unspread field vanishes even when passed; terminal-only capture plus `finalizeRequestTelemetry` run only when `terminal: true` under the `state.completed` idempotency guard, one telemetry row per request) → every `completeAttempt(…)` site in `src/transport/dispatch/proxy-request.ts` that knows the value (grep it — five sites at time of writing across `runAttemptLoop` and terminal settle paths) → finalize emit in `src/transport/middleware/ingress.ts` (`finalizeRequestTelemetry` spreads `state.outcome` plus `model` from the canonical request and `routedModel` from `preparedRequest.plan`; `request_complete` vs `request_error`; `request_start` emitted separately; non-dispatch `/v1` routes like `/v1/models` return early via `isProxyDispatchRoute`). Console `src/console/observability/logs.ts` serves snapshot plus SSE (`src/console/observability/sse.ts`); nothing touches the database.
+2. Thread the backend chain in order: `src/transport/routing/route-model.ts` (`RouteCandidate`, by reference, never serialized) → `src/transport/request/state.ts` (`ProxyRequestOutcome`: outcome `status` is the internal terminal state, `httpStatus` its wire projection) → `src/transport/dispatch/attempt-finalize.ts` (`AttemptCompletion extends ProxyRequestOutcome`; `completeAttempt` copies each field via explicit `=== undefined ? {} : {…}` spreads — an unspread field vanishes even when passed; terminal-only capture plus `finalizeRequestTelemetry` run only when `terminal: true` under the `state.completed` idempotency guard, one telemetry row per request) → every `completeAttempt(…)` site in `src/transport/dispatch/proxy-request.ts` that knows the value (grep it — the count changes, so grep rather than trusting a number) → finalize emit in `src/transport/middleware/error-lifecycle.ts` (`finalizeRequestTelemetry` spreads `state.outcome` plus `model` from the canonical request and `routedModel` from `preparedRequest.plan`; `request_complete` vs `request_error`; `request_start` emitted separately; non-dispatch `/v1` routes like `/v1/models` return early via `body-policy.ts:isProxyDispatchRoute`). Console `src/console/observability/logs.ts` serves snapshot plus SSE (`src/console/observability/sse.ts`); nothing touches the database.
 3. Dashboard: extend `ConsoleLogLine` in `dashboard/src/hooks/logs.ts`, add the field to the search haystack and `LogRow` in `dashboard/src/features/logs/ConsoleLogPage.tsx` (single-line row, `title` plus ellipsis for long values).
 4. Labels, not secrets: log `accountLabel`, never credential material; never enrich via a dashboard-side account lookup — thread from the backend candidate; network pools are the one exception via `useNetworkPools()`.
 5. The ring is an in-memory SSE tail — restarts clear it by design. Backend emit changes need an operator restart; pure display changes need only `dashboard:build` plus reload.
@@ -256,6 +279,7 @@ git status --short
 - Zero-fail with no pinned counts: baseline BEFORE the change. The suite runs `--parallel`, so a failure that only appears under load is a real defect, not noise: DB-gated suites share one isolated database and run as concurrent worker processes, so a suite that cleans up table-wide (or asserts on a table-wide read) will clobber another suite's fixtures. Find the suite that over-reaches and scope it by id or `tenant_id` — do not re-run until it passes.
 - DB-gated suites (`test/helpers/db-gate.ts`) skip without a database — report skips separately, never as green.
 - Build order: `dashboard:build` before `bun run build` (the server embeds `dist/`). Windows docs use POSIX `bun run …`; PowerShell env form is `$env:NAME="value"`. Never `find | xargs` in instructions.
+- Do not lower the coverage floor or delete a test to reach green. Coverage is a signal that a change is untested, not an obstacle.
 
 ### Verify checklist
 
@@ -310,7 +334,7 @@ Use when deleting files, measuring a tree, or checking who reads a path; done wh
        tests = [f for f in files if f.endswith(".test.ts")]
        print(root, len(ts), len(tests))
    ```
-2. Trace readers BEFORE deleting across `src`, `test`, `scripts`, `dashboard`, `package.json`, `Dockerfile`, `*.sh`, `*.yml` (flat files plus nested dirs). Generated output under `src/providers/integrations/…/generated/` drops only with its importer. Confirm hits with word-boundary `Grep` on the exact symbol.
+2. Trace readers BEFORE deleting across `src`, `test`, `scripts`, `dashboard`, `package.json`, `Dockerfile`, `*.sh`, `*.yml` (flat files plus nested dirs). Generated output under `src/providers/integrations/…/generated/` drops only with its importer. Confirm hits with word-boundary `Grep` on the exact symbol. A `.codegraph` query naming the symbol also surfaces call paths grep misses — use both; neither alone is proof.
 3. Critical path: typecheck is `tsc --noEmit`; build is `dashboard:build && build:aot && build:binary` (the compile entrypoint is the AOT output `dist/main.js`, never `src/main.ts` — bundling the raw source leaves Elysia's lazy `require("typebox/type")` unresolved and the binary dies at startup); tests go through `scripts/ops-run-tests.ts`; `scripts/` is flat (no `scripts/ops/`).
 4. `git ls-files <path>` decides tracked vs ignored; removing a path Docker or the build reads means removing that reader in the same change. `git diff --stat` must match expectations — no silent extras, no missing halves.
 

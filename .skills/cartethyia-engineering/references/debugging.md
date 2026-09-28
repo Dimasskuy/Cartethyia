@@ -7,6 +7,7 @@ The single skill for every diagnosis or live-verification task. Jump to your sec
 
 | Symptom | Go to |
 |---|---|
+| Any diagnosis, before you pick a section | 0 Diagnose first |
 | 403 FreeTierError, model_not_found / not-allowed, tool_call_sequence_broken, transport_unavailable, egress faults | 1 Dispatch |
 | "Failover / round robin not working" | 2 Routing |
 | "Did it go via proxy?", `network_pool_id` null, bypass doubt | 3 Proxy check |
@@ -14,6 +15,31 @@ The single skill for every diagnosis or live-verification task. Jump to your sec
 | Same call emitted twice | 5 Duplicates |
 | Proof against the running backend | 6 Live verify |
 | Local `cartethyia` / `cartethyia_test` ledger drift | 7 DB reset |
+
+## 0 Diagnose first
+
+### Goal
+
+Use before any debugging section; done when you have named the failing stage, stated the mechanism you expect, and chosen one observation that would distinguish it — instead of re-running the same probe.
+
+### Procedure
+
+1. **Locate the stage before the cause.** A `/v1/*` request passes: surface parse → canonical request → routing plan → capability projection → leases (admission → pool → reservation) → adapter → upstream → `completeAttempt` → surface encode. Name which stage owns the symptom. Most "provider bugs" are routing or capability decisions made earlier, so never start at the adapter.
+2. **Form one hypothesis as a mechanism.** Not "the provider is broken" but "`X` reads `Y`, which is `undefined` when `Z`". A hypothesis you cannot falsify is not yet a hypothesis.
+3. **Pick the observation that discriminates.** One probe, chosen to tell your hypothesis apart from the next-most-likely one. Raw bytes vs parsed, request vs response, one provider vs one surface, stub vs live — pick the axis that differs between the two candidate causes, not the axis that is easiest to log.
+4. **Run it once and read the result.** A predicted failure confirms the model. An unpredicted one is information; correct the model, then act. Re-running the same probe while nudging the code is the loop that wastes hours.
+5. **Then go to the section for that stage.** If you cannot yet name the stage, go to §1 step 1–2 (telemetry split) — it names the stage from data rather than inference.
+
+### Anti-loop rules
+
+- Never add the same log/assertion twice. If a tap did not answer, it never will — change *what* you observe.
+- Before re-running a process, confirm it picked up your change (a version string, a log line). A hot-reload that silently missed the edit looks exactly like a fix that did not work.
+- Test one model/case/provider before widening. A broad harness run before the cause is known produces noise, not signal.
+- Write the test only after the cause is known, and mutation-test it (break the fix, confirm the intended assertion fails).
+
+### Verify checklist
+
+- [ ] Stage named, mechanism stated, one discriminating observation run once; shared Verify block green.
 
 ## 1 Dispatch debug
 
@@ -24,15 +50,16 @@ Use when a `/v1/*` request fails or misroutes; done when you can name the exact 
 ### Procedure
 
 1. Identify the wire path first: surface (`chat` / `responses` / `messages` / `completion`) → canonical request → router candidate (`provider_id` + `wire_family`) → adapter codec. Never start at the adapter; most "provider bugs" are routing or capability decisions made earlier.
-2. Split causes with the two telemetry tables. `telemetry_events` carries `requested_model`, `provider_id`, `network_pool_id`, `status`, `error_category`. `telemetry_payloads` is only an index: `request_body` holds `{ _payload_ref }` and every captured body lives in the frame file that reference names, so read the frame for `provider_request_body` (top-level keys, tools count/names) plus the client and provider bodies. Fingerprint vs pool vs routing separates here:
+2. Split causes with the two telemetry tables. `telemetry_events` carries `requested_model`, `provider_id`, `network_pool_id`, `status`, `error_category`, `error_origin`. `telemetry_payloads` is only an index: `request_body` holds `{ _payload_ref }` and every captured body lives in the frame file that reference names, so read the frame for `provider_request_body` (top-level keys, tools count/names) plus the client and provider bodies. Fingerprint vs pool vs routing separates here:
    ```sql
-   SELECT requested_model, provider_id, network_pool_id, status, error_category
+   SELECT requested_model, provider_id, network_pool_id, status, error_category, error_origin
      FROM telemetry_events ORDER BY created_at DESC LIMIT 20;
    ```
+   Payload capture is off by default (`telemetryPayloads: "none"`) — turn it on for the tenant, reproduce, then read the frame.
 3. FreeTierError 403 on the opencode family: the upstream requires agent tools. `FREE_AGENT_TOOLS` (read + bash only) and `ensureFreeAgentRequest()` live in `src/providers/integrations/opencode.ts`, wired as `prepareRequest` for `opencodeft`. The fix belongs in canonical `prepareRequest`, never in wire JSON; `prePayload` handles only `store: false` / `stream_options`.
-4. Tool-sequence 400: every assistant `toolCall` needs a surviving `toolResult`. The user-homed repair else-branch is in `src/protocol/request/chat.ts`; confirm the result survived encode before blaming the provider.
+4. Tool-sequence 400: every assistant `toolCall` needs a surviving `toolResult`. The shared repair is `repairRequestToolCalls()` in `src/transport/translation/tool-repair.ts` (drop orphan results → synthesize missing ones → make results contiguous); confirm the result survived encode before blaming the provider. The buddy family (`cb`/`cbcn`/`workbuddy`) additionally runs `dropIncompleteToolRounds()` **before** that repair — order is load-bearing, because the repair would synthesize a placeholder and make a partial batch look complete.
 5. A request the chosen model cannot serve is never rerouted to a different model — capability fusion was removed. The planner degrades the request in place (controls dropped, media replaced by placeholders) and re-plans; what cannot be degraded fails as `capability_unsupported`. The error taxonomy lives in `src/transport/routing/route-model.ts`: `modelNotFoundError` (genuinely no match), `ambiguousModelError` (bare id across providers), `accountsUnavailableError` (matches exist but all unhealthy — 503, retryable), `capabilityUnsupportedError` (caught by the planner to try the next degraded variant).
-6. CLI variant ids (`model[1m]`, effort suffixes): `normalizeAliasKey()` (`src/transport/routing/router.ts`) strips trailing `[...]` and falls back through the `claude-<slot>` family slot; verbatim match always wins. The allowlist gates on the resolved target via `resolveAliasTarget()` (`resolveAlias` itself is private). Reasoning effort clamps in `clampReasoningEffort` (`src/transport/translation/thinking.ts`).
+6. CLI variant ids (`model[1m]`, effort suffixes): the `[...]`-stripping and `claude-<slot>` family fallback live in `src/transport/routing/router.ts` (`normalizeAliasKey` is module-private there, reached through `resolveAlias`; the allowlist gates on the resolved target via `resolveAliasTarget`). Verbatim match always wins. Reasoning effort clamps in `clampReasoningEffort` (`src/transport/translation/thinking.ts`).
 7. Unsupported features on a new surface (e.g. prompt caching on `/zen`): follow the canonical capability workflow — parse the client feature into the canonical model, declare support on the adapter spec (`promptCache: false` in the provider spec flows through `src/providers/integrations/configured-provider.ts` to `supports_prompt_caching: false`, gated by the `promptCaching` predicate in `src/transport/translation/capabilities.ts`), gate the wire builder, drop only that semantic, add an adapter test, then live-replay (§6).
 8. CodeBuddy 403 code `11140` ("request illegal", "did not pass the safety review") is content policy, NOT auth. `src/providers/operations/account-health-service.ts` excludes it (plus `safety review` / `content did not pass` / `request illegal` / `content blocked` strings) from credential-invalidation: no OAuth refresh via `isOAuthCredentialInvalidated()` (`src/transport/dispatch/retry-policy.ts`, consulted by `attempt-loop.ts`), no `auth_invalidated` / `disabled` flip. A fix that refreshes or disables the account on 11140 is wrong by construction. The buddy family (`cb`/`cbcn`/`workbuddy`) is the one deliberate exception: because its 11140 block keeps failing every subsequent invocation, the classifier returns a 24h `policy_blocked` **cooldown** (never `disabled`) so routing stops selecting the account; this requires `providerId` on the failure evidence, threaded through `classifyUpstreamFailure`.
 9. Egress DNS is advisory for pool/relay-bound dials and must not abort the request; only direct dials require target resolution. An aborted outbound DNS resolution maps to `transport_closed` 499 "request was cancelled", never `invalid_request` 400 (`resolveAllAddresses`, `src/network/ssrf.ts`).
@@ -43,6 +70,7 @@ Use when a `/v1/*` request fails or misroutes; done when you can name the exact 
 - Fixing at the wrong layer: opencodeft tool injection belongs in `prepareRequest`, CodeBuddy 11140 belongs nowhere near the refresh path.
 - Treating `accounts_unavailable` (503) as "model missing" — the fix is capacity/health, not catalog.
 - Assuming a bare model id resolves to one provider; ambiguity rejection is correct behavior.
+- Reading `error_category` and ignoring `error_origin`: the origin is what tells you whether to look at the router, the provider, or the network.
 
 ### Verify checklist
 
@@ -111,7 +139,7 @@ Use when a model cannot tool-call, calls vanish, or arguments arrive truncated; 
 
 ### Procedure
 
-1. Check the degradation log first — the fastest signal. `degradeRequestForCapability()` (`src/transport/request/preparer.ts`) logs `[routing] degraded request capabilities` with a `degraded: [...]` list (throttled per model + capability set). `"tools"` or `"reasoning"` in that list is NOT a capability-row problem: `buildCapabilityProfile()` (`src/transport/routing/route-catalog.ts`) grants `tools`, `parallelToolCalls`, `reasoning`, and `reasoningEncryptedContent` unconditionally, so a `false` in `models.tool_call` or `models.reasoning` never strips them. If the log still names them, the request asked for a capability the *wire* cannot carry, not one the row denied.
+1. Check the degradation log first — the fastest signal. The degrade loop in `src/transport/request/preparer.ts` (`degradeRequestForCapability`, module-private, driven by the variant planner) logs `[routing] degraded request capabilities` with a `degraded: [...]` list (throttled per model + capability set). `"tools"` or `"reasoning"` in that list is NOT a capability-row problem: `buildCapabilityProfile()` (`src/transport/routing/route-catalog.ts`) grants `tools`, `parallelToolCalls`, `reasoning`, and `reasoningEncryptedContent` unconditionally, so a `false` in `models.tool_call` or `models.reasoning` never strips them. If the log still names them, the request asked for a capability the *wire* cannot carry, not one the row denied.
 2. What the row still controls is content modalities and `web_search`. `image`/`document`/`audio` come from the row's declared modalities, falling open for every codec-backed wire because those codecs can carry the parts; `webSearch` follows `models.web_search`. Requirements derive in `deriveRequiredCapabilities()` and `projectForRoute()` (`src/transport/translation/capabilities.ts`) throws `capability_unsupported` per requirement the profile does not grant. A `tool_call = false` or `reasoning = false` on a capable model is recorded metadata, not a routing denial — do not chase it as the cause of a stripped request.
 3. Find why a modality or `web_search` row is wrong — check `source` first. `manual` rows repair through `DrizzleProviderCatalogStore.registerModels` (`src/console/providers/catalog/store.ts`), which upserts via `.onConflictDoUpdate`; re-adding the model fixes rows stuck on schema defaults. `discovered` rows record `toolCall`/`reasoning` from the known definition, the discovered definition, or `false` when neither declares one (`src/providers/discovery/probing-service.ts`), and that `false` is an absence of metadata the profile ignores. `builtin` rows reconcile through `seedBundledModels` (`src/providers/operations/provider-catalog-seeder.ts`), which forces `source: 'builtin'`; only builtin rows reconcile on restart, so manual and discovered rows need a console re-add, never just a restart. `InMemoryRouteSnapshotService` (`src/transport/routing/route-model.ts`) caches in-process and rebuilds only on `invalidate()`, so after a DB fix restart or trigger a console mutation — `/v1/models` may list the model while routing still serves the stale snapshot.
 4. If capabilities are fine, check wire decoding. Responses wire (`wire_family: "responses"`): `decodeResponsesSseStream` is an async generator (`src/protocol/response/responses.ts`) and must handle argument deltas AND complete-item `response.output_item.done` (`function_call`) plus `response.function_call_arguments.done` — some backends emit only the complete item. Guard the complete-item fallback with a delta-seen set so an already-streamed call is not emitted twice; `mapResponsesStopReason()` in the same file must yield `tool_use` when a call was seen. An unterminated stream is truncated (`status === undefined` → `failed`). Chat wire (`src/protocol/response/chat.ts`): `finish_reason: "tool_calls"` → `tool_use`; missing finish reason means truncated.
@@ -178,14 +206,14 @@ Green suites are not proof. Use when a change must be proven against the running
      -d '{"model":"<provider>/<model>","messages":[{"role":"user","content":"Reply with exactly: PONG"}],"max_tokens":20}' \
      http://127.0.0.1:12800/v1/chat/completions
    ```
-4. Read `GET /console/api/logs?limit=200` (ring capacity 500 — see `CAPACITY` in `src/observability/log-ring.ts`). Lines carrying `event` are lifecycle events (the `event` union on `ConsoleLogLine` in the same file): `request_start` (method, endpoint, clientIp), `request_complete` (model, providerId, accountId, networkPoolId, status, durationMs, `details` with tokens + cost), `request_error` (status, errorCode), `token_refresh` (accountId, providerId, `details.expiresAt`). Assert real values matching the observed HTTP result, not mere line existence.
-5. Forcing `token_refresh`: the sweep covers only accounts expiring within `OAUTH_REFRESH_SKEW_MS` (5 min, `src/providers/operations/provider-credential-service.ts`). Move one into the window rather than waiting:
+4. Read `GET /console/api/logs?limit=200` (ring capacity 500 — `CAPACITY`, module-private, in `src/observability/log-ring.ts`; messages truncate at `MAX_MSG` 2000 chars). Lines carrying `event` are lifecycle events (the `event` union on `ConsoleLogLine` in the same file): `request_start` (method, endpoint, clientIp), `request_complete` (model, providerId, accountId, networkPoolId, status, durationMs, `details` with tokens + cost), `request_error` (status, errorCode), `token_refresh` (accountId, providerId, `details.expiresAt`). Assert real values matching the observed HTTP result, not mere line existence.
+5. Forcing `token_refresh`: the sweep covers only accounts expiring within `OAUTH_REFRESH_SKEW_MS` (5 min, exported from `src/providers/authentication/oauth-refresh-service.ts`). Move one into the window rather than waiting:
    ```sql
    UPDATE provider_oauth_states SET expires_at = now() + interval '90 seconds'
      WHERE provider_account_id = '<id>';
    ```
    Wait ~75 s, re-read the log, and confirm the expiry actually advanced (proves refresh happened, not just attempted).
-6. Database reads via the `pg` package (`new pg.Client(...)`), as throwaway repo-root `.mjs` files deleted afterwards. Assert the newest `telemetry_events` row: endpoint, `telemetry_status` (`completed` / `failed` / `cancelled` / `truncated`, the `telemetryStatus` pgEnum in `src/persistence/schema.ts`), requested model; and the payload row: `expires_at - captured_at` equals the 15-minute retention (`CARTETHYIA_TELEMETRY_PAYLOAD_RETENTION_MS` default, `payloadRetentionMs()` in `src/observability/payload-capture.ts`).
+6. Database reads via the `pg` package (`new pg.Client(...)`), as throwaway repo-root `.mjs` files deleted afterwards. Assert the newest `telemetry_events` row: endpoint, `telemetry_status` (`completed` / `failed` / `cancelled` / `truncated`, the `telemetryStatus` pgEnum in `src/persistence/schema.ts`), requested model; and the payload row: `expires_at - captured_at` equals the 15-minute retention (`CARTETHYIA_TELEMETRY_PAYLOAD_RETENTION_MS` default, read by `payloadRetentionMs()` — module-private — in `src/observability/payload-capture.ts`).
 7. Drawer + kill-switch matrix: `GET /console/api/system/usage/requests/:requestId` (route in `src/console/observability/contracts.ts`) — masked IP by default, payload keys `request` / `response` / `clientResponse` / `providerRequest` / `providerResponse` (the `UsageRequestDetail.payloads` projection of `StoredPayload` in `src/observability/payload-capture.ts`); `PATCH /console/api/settings/runtime` `{"telemetryPayloads":"none"}` → zero new payload rows, then back to `bounded`; `PATCH {"privacyMode":"full"}` reveals IPs, then reset to `masked`.
 8. Client capture (last resort): run a tiny logging proxy on a nearby port (bodies live outside the repo), redirect via the client's settings file (stored values beat env — back up, restore byte-identical, verify), drive in a real TTY. Proof is the newest `telemetry_events` row flipping to `completed` with a real provider and non-trivial latency. Stop the proxy, delete temps, and confirm `git status` shows only the intended change.
 

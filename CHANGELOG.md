@@ -5,6 +5,73 @@
 > All changes below are pre-release. Cartethyia has not been tagged or
 > released; this document reflects the current production codebase architecture and capabilities.
 
+### Reasoning and encrypted reasoning are no longer redacted
+
+`redactTelemetryValue` now passes `reasoning_content`, `reasoning`, `thinking`, `encrypted_content`,
+`signature`, and `redacted_thinking` through verbatim, before any other rule runs, and
+`isOpaqueEncrypted` returns `false` unconditionally. Redacting them stripped the chain of thought a
+thinking model needs on multi-turn replay, so a replayed turn arrived without the reasoning the
+upstream demanded back. The exemption is key-based rather than value-based, so encrypted signatures
+and IP-like numbers inside math or code inside a reasoning block are preserved too; credential,
+secret-key, and IPv4 rules are unchanged for every other field.
+
+### The logger sanitizes once, and for both sinks
+
+`log.debug/info/warn/error` now build one sanitized argument list and use it for the console ring and
+pino alike, instead of sanitizing separately per sink. `log.error` additionally rebuilds a redacted
+`Error` for pino rather than handing it the original object, so custom enumerable fields carrying
+credential material cannot reach the JSON transport. Every path falls back to
+`[unserializable args]`, and a failure in one sink still cannot throw into the log call.
+
+### Cache affinity reaches the adapter that mints session ids
+
+Dispatch resolves `conversationAffinity` once per request from `resolvePromptCacheKey` and threads it
+onto the dispatch context as `conversation_affinity`. An adapter that generates its own per-request
+session id consumes it instead of a random value — opencode sends it as both `x-opencode-session`
+and `x-opencode-request` — so a repeated conversation keeps one stable upstream cache key instead of
+missing on every turn. `resolveInboundSessionId` also derives a stable `aff_<sha256 prefix>` key from
+the opening turn when the client sends no session header and no conversation id, so a stateless HTTP
+client that repeats its opening turn keeps hitting the upstream prompt cache. Text under the
+30-character threshold derives nothing, so a trivial prompt cannot collapse unrelated conversations
+onto one key.
+
+### Buddy gateway requests keep the caller's system prompt
+
+`applyBuddySystemPrompt` still guarantees the fixed leading `system` turn the upstream validates
+(`11128`/`11151`), but now appends the caller's own `system`/`developer` text behind it instead of
+dropping it. The upstream constrains which turn comes first, not its text, so merging is safe and
+prompt caching keeps hitting the same prefix. The CN variant installs its neutralizer the same way.
+
+### Dispatch re-projects per candidate, and terminal upstream failures keep their detail
+
+When a candidate's `model_id` differs from the requested model, dispatch re-runs
+`projectForRoute` against that candidate's own capabilities. The preparer projected against the
+intersection of all candidates, so a failover target reached later may accept a narrower set than
+the one that produced the request. Separately, `terminalFailure` now forwards an upstream `failed`
+state's `provider_stop_reason` as `details.provider_code` and spreads its `stop_details`, instead of
+flattening every such failure to a bare 502 "upstream request failed".
+
+### Request validation and error classification tighten at the edges
+
+A request with no `model`, or a blank one, is rejected 400 `invalid_request` at the top of
+`ProxyRequestPreparer.prepare()` — before the snapshot read, so it never reserves capacity. An
+unhandled throw reaching the ingress normalizer before canonical parse is classified 400
+`invalid_request` with the error's own message rather than a generic 500, because a body that broke
+a parser is the caller's request. A JSON proxy route receiving a non-`application/json` content-type
+now returns `unsupported_media_type` 415 instead of `invalid_request`.
+
+### Wire builders accept the other surface's spelling of shared controls
+
+`normalizeWireMaxTokens` fills `max_tokens` from `max_output_tokens` on wires that accept only the
+former, so a Responses-authored request keeps its ceiling when served on the chat or Messages wire
+instead of falling back to that wire's default. Chat and Responses passthrough fields now fall back
+between the `extension:responses.*` and bare `extension:*` spellings, and `verbosity` resolves from
+any of its three sources. On the Messages wire an unsupported `service_tier` is logged as a warning
+rather than rejected or silently discarded, and `extension:metadata_user_id` merges into
+`metadata.user_id`. Gemini `functionResponse.response` is always a JSON object — array content is
+carried as `{ content: "<json text>" }`, since parsing a just-stringified array back into a value
+produced a non-record the upstream rejected. Codex reasoning deltas now carry `summary_index`, so
+multi-index summaries stay distinguishable through the canonical part.
 
 ### Error envelopes name the failing side
 

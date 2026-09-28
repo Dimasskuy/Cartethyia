@@ -145,6 +145,10 @@ export interface ProviderDispatchContext {
   readonly user_agent?: string | undefined;
   /** Original inbound headers needed only for provider-specific negotiation. */
   readonly request_headers?: Readonly<Record<string, string>> | undefined;
+  /** Stable per-conversation cache affinity passed through dispatch. */
+  readonly conversation_affinity?: string | undefined;
+  /** Opaque identity shared by retries of one logical gateway request. */
+  readonly request_identity?: object | undefined;
 }
 
 const USER_AGENT_HEADER_NAME = /^user-agent$/i;

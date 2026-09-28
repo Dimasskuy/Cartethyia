@@ -437,3 +437,12 @@ export function normalizeGenerationControls(controls: GenerationControls): Gener
   return normalized;
 }
 
+/** Normalizes maximum output tokens for wires that only accept `max_tokens`. */
+export function normalizeWireMaxTokens(controls: GenerationControls): GenerationControls {
+  const normalized = normalizeGenerationControls(controls);
+  if (normalized.max_tokens === undefined && normalized.max_output_tokens !== undefined) {
+    normalized.max_tokens = normalized.max_output_tokens;
+  }
+  return normalized;
+}
+

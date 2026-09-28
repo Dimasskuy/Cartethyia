@@ -576,9 +576,21 @@ deadlines. Routing, console, and discovery consume providers through these servi
   Probe dispatch preserves adapter-native `User-Agent` without injecting gateway-level markers.
   `resolveInboundSessionId` extracts affinity from session headers in declaration order (`x-conversation-id`, `x-session-id`,
   `x-session-affinity`, `x-opencode-session`, `x-claude-code-session-id`, `prompt_cache_key`,
-  `prompt-cache-key`, `session-id`) or the canonical conversation id; `resolvePromptCacheKey(request, context)` prefers an explicit caller cache key from any surface
+  `prompt-cache-key`, `session-id`), then the canonical conversation id; when a client sends neither, it
+  derives a stable `aff_<sha256 prefix>` key from the opening turn — the system prompt when it carries at
+  least 30 characters, otherwise the first message's text — hashed over the first 2048 trimmed characters.
+  A stateless HTTP client that repeats the same opening turn therefore keeps hitting the upstream prompt
+  cache across turns instead of missing on every call. Text shorter than the threshold derives nothing, so a
+  trivial prompt cannot collapse unrelated conversations onto one affinity key.
+  `resolvePromptCacheKey(request, context)` prefers an explicit caller cache key from any surface
   (chat `prompt_cache_key`, responses `prompt_cache_key`, messages `metadata.user_id`) before that
-  session fallback (headers on `context`, then conversation id), and never includes the client IP. `withUpstreamDeadline` binds the dispatch `deadline` to an abort signal (aborts →
+  session fallback (headers on `context`, then conversation id), and never includes the client IP.
+  Dispatch resolves that key once and threads it onto the dispatch context as
+  `conversation_affinity`, which an adapter that mints its own session id consumes instead of
+  a random value — `buildOpenCodeHeaders` sends it as both `x-opencode-session` and
+  `x-opencode-request`. Without the pass-through a derived affinity never reached the header that
+  carries it, and every turn minted a new upstream cache key.
+  `withUpstreamDeadline` binds the dispatch `deadline` to an abort signal (aborts →
   `transport_closed` 499) with a releasable lifecycle so timers never leak. The deadline bounds **TTFB
   only**: a streaming adapter must call `lifecycle.release()` as soon as response headers arrive, because
   from there the gateway's stall/first-chunk watchdog owns the body. Leaving the timer armed silently
@@ -736,7 +748,13 @@ coalescing adjacent assistant items (including parallel function calls) into one
 replayed `reasoning_content` stays on that turn. Tool outputs and user turns remain boundaries;
 missing reasoning is never fabricated. The shared message-envelope tail (`finalizeBuddyMessages`)
 coalesces consecutive `user` turns, drops empty-content turns the upstream rejects with `11151`,
-and guarantees a leading `system` turn for `11128`. A request
+and guarantees a leading `system` turn for `11128`.
+
+`applyBuddySystemPrompt` installs the variant's fixed persona as that leading `system` turn **and keeps the
+caller's own `system`/`developer` text behind it**, joined with a blank line: the upstream validates that the
+wire *opens* with a `system` turn (`11128`/`11151`) but does not constrain its text, so merging is safe and
+prompt caching keeps hitting the same prefix. Dropping the caller's text — the earlier behavior — threw away
+the system prompt the client actually configured. The CN variant installs a neutralizer the same way. A request
 bound for any of the three additionally drops incomplete tool rounds in the preparer (`dropIncompleteToolRounds`):
 the buddy gateway rejects a partial batch outright with `11148`, where the generic policy synthesizes an
 error-labeled placeholder result for strict Anthropic/Gemini wires. They share the Tencent billing-meter

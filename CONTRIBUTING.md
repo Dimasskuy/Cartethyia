@@ -67,7 +67,7 @@ bun run dashboard:test        # dashboard suite (bun test inside dashboard/)
 
 ## Verification gate (required before every PR)
 
-From `AGENTS.md` §12 — backend change:
+From `AGENTS.md` §12 — for a backend change:
 
 ```bash
 bun run typecheck
@@ -119,9 +119,10 @@ contributors:
   agent-only rules; `CHANGELOG.md` entries under `Unreleased` stay historical
   once written. Keep all four synchronized with the source you change.
 - Anti-drift rules (what must change together, what must never be recorded
-  in docs, and what to do when doc and code disagree) live in
-  `AGENTS.md` under "Documentation and configuration currency" — read that
-  section before touching any doc.
+  in docs, and what to do when doc and code disagree) live in `AGENTS.md` §13
+  "Documentation and configuration currency" — read that section before touching
+  any doc. Update the docs your change made wrong; do not rewrite a layer doc
+  you were not working in.
 
 ## Pull requests
 

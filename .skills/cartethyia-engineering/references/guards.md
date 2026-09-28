@@ -4,7 +4,17 @@
 This is the single guard skill for repository-wide invariants. Choose the
 relevant sections before editing; multiple sections may apply. These checks are
 about preventing silent drift, duplicate authorities, dead compatibility paths,
-and unsafe cleanup.
+suppressed symptoms, verification loops, and unsafe cleanup.
+
+Two guards apply to almost every change, not only to removals:
+
+- **K7b — No suppression, no workaround:** state the cause as a mechanism and
+  classify your change as fix vs suppression vs intended design.
+- **K7c — Goal-first testing:** predict the failure, run once, change the
+  observation instead of re-running.
+
+Apply the guard your change implicates; a one-line typecheck fix does not need a
+full K1 report.
 
 ## K1 — No compatibility aliases
 
@@ -104,6 +114,55 @@ branches.
 
 Evidence: report reader inventory and why each retained key is live or each
 removed key is unreachable.
+
+## K7b — No suppression, no workaround
+
+Use for every bug fix, especially one that touches validation, error handling,
+timeouts, retries, or a capability check.
+
+1. State the cause as a mechanism before changing anything: "X reads Y, which is
+   `undefined`/wrong when Z". If you cannot, you are not fixing yet — you are
+   guessing, and a guess encoded in production outlives the symptom.
+2. Classify the change. **Suppression** removes the report: deleting or widening
+   a throw, loosening a validator, catching an exception, raising a timeout,
+   adding a fallback, special-casing one input, pinning a fixture. **Fix**
+   removes the cause. A suppression is acceptable only as a named release
+   boundary with a removal condition.
+3. Distinguish intended design from suppression. Capability degradation, an
+   operator-configured fallback, and a documented compatibility path are product
+   behavior — keep them, name them in a comment and in the layer doc, and never
+   let one be described as a bug fix.
+4. For a guard or probe, ask what the *other* arm does before deleting it.
+   `typeof x === "function"`, a capability check, or a fallback branch can be
+   load-bearing for a partially-implemented dependency that production happens
+   never to hit.
+
+Evidence: the stated mechanism, the classification (fix vs suppression vs
+intended design), and the reproduction that fails before and passes after.
+"A timeout increase / retry / schema relaxation without a reproduction removes
+evidence rather than a cause."
+
+## K7c — Goal-first testing, no search loops
+
+Use whenever a test is added or a diagnosis stalls.
+
+1. A test asserts one **observable** behavior — a result, boundary, error,
+   transition, security invariant, or persistence contract. Never "does not
+   throw", never an implementation detail, never "the function was called".
+2. Predict the failure *before* running it. A test written before the cause is
+   known encodes the buggy behavior and passes after the wrong fix.
+3. Run once, read the result. An unpredicted failure is information — correct
+   the model, then act. Re-running the same test while nudging the code is a
+   search, and each iteration costs more than one well-chosen probe.
+4. If the failure stays unexplained, change **what** you observe — raw bytes vs
+   parsed, request vs response, one provider vs one surface, stub vs pipeline —
+   not how many times you look. Never add the same log or assertion twice.
+5. Prove the teeth: break the fix, confirm the test fails on the intended
+   assertion, restore, confirm it passes. A test that passes both ways proves
+   nothing.
+
+Evidence: the goal sentence, the predicted failure, the single run's result, and
+the mutation-test outcome.
 
 ## K8 — Documentation synchronization
 
