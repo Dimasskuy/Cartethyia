@@ -74,22 +74,26 @@ describe("CodexStreamFrameProcessor tool-call identity", () => {
 });
 
 describe("Codex reasoning summary decoding", () => {
-  test("multi-part summary array joins with double newlines", () => {
+  test("multi-part summary array joins with double newlines, not readable payload", () => {
     const event = reasoningEvent(
       {
         type: "reasoning",
+        id: "rs_summary",
         summary: [
           { type: "summary_text", text: "A." },
           { type: "summary_text", text: "B." },
         ],
       },
       0,
+      4,
     );
     expect(event).toMatchObject({
       type: "content_delta",
+      item_id: "rs_summary",
+      output_index: 4,
       content: {
         kind: "reasoning",
-        payload: "A.\n\nB.",
+        payload: null,
         summary: "A.\n\nB.",
       },
     });
@@ -104,6 +108,7 @@ describe("Codex reasoning summary decoding", () => {
       },
       {
         type: "response.reasoning_summary_text.delta",
+        output_index: 0,
         item_id: "rs_1",
         summary_index: 0,
         delta: "Think one",
@@ -132,6 +137,54 @@ describe("Codex reasoning summary decoding", () => {
         event.content.encrypted_content === "encrypted-state",
     );
     expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({ content: { payload: null } });
     expect(encrypted).toHaveLength(1);
+  });
+  test("streamed summary deltas do not become duplicate reasoning-text content", () => {
+    const events = processFrames([
+      {
+        type: "response.reasoning_summary_text.delta",
+        item_id: "rs_stream",
+        output_index: 2,
+        summary_index: 0,
+        delta: "visible summary",
+      },
+    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "content_delta",
+      item_id: "rs_stream",
+      output_index: 2,
+      content: {
+        kind: "reasoning",
+        payload: null,
+        summary: "visible summary",
+        summary_index: 0,
+      },
+    });
+  });
+
+  test("reasoning_text deltas stay separate from summary parts", () => {
+    const events = processFrames([
+      {
+        type: "response.reasoning_text.delta",
+        item_id: "rs_text",
+        output_index: 1,
+        delta: "readable reasoning",
+      },
+    ]);
+    expect(events[0]).toMatchObject({
+      type: "content_delta",
+      item_id: "rs_text",
+      output_index: 1,
+      content: {
+        kind: "reasoning",
+        payload: "readable reasoning",
+      },
+    });
+    const event = events[0];
+    if (event?.type !== "content_delta" || event.content.kind !== "reasoning")
+      throw new Error("expected a reasoning content delta");
+    expect(event.content.summary).toBeUndefined();
   });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { isRecord } from "../../../src/protocol/primitives";
+
 import type { CanonicalEvent, CanonicalMessage, CanonicalStopReason, UsageRecord } from "../../../src/transport/canonical-model";
 import { MessagesAdapter } from "../../../src/transport/surface/messages/adapter";
 import { MessagesStreamEncoder } from "../../../src/transport/surface/messages/stream";
@@ -363,6 +365,42 @@ describe("MessagesAdapter.encode", () => {
     expect(response.content[3]).toMatchObject({ id: "call-1", name: "lookup", input: { x: 1 } });
   });
 
+  test("separates summary items sharing index zero in JSON and streaming", () => {
+    const events: CanonicalEvent[] = [
+      { type: "message_start", sequence_number: 1, event_id: "msg-1", model: "claude" },
+      {
+        type: "content_delta",
+        sequence_number: 2,
+        item_id: "reasoning-1",
+        output_index: 0,
+        content: { kind: "reasoning", payload: null, summary: "**Feasibility**", summary_index: 0 },
+      },
+      {
+        type: "content_delta",
+        sequence_number: 3,
+        item_id: "reasoning-2",
+        output_index: 1,
+        content: { kind: "reasoning", payload: null, summary: "**Schedule**", summary_index: 0 },
+      },
+      { type: "terminal", sequence_number: 4, state: "complete" },
+    ];
+    const response = adapter.encode(events);
+    if (response.type !== "message") throw new Error("expected a Messages response");
+    expect(response.content.filter((part) => part.type === "thinking").map((part) => part.thinking)).toEqual([
+      "**Feasibility**",
+      "\n\n**Schedule**",
+    ]);
+
+    const encoder = new MessagesStreamEncoder({ response_id: "msg-1", model: "claude" });
+    const wireEvents = events.flatMap((event) => encoder.push(event));
+    const thinkingDeltas = wireEvents.flatMap((event) => {
+      if (event.type !== "content_block_delta" || !isRecord(event.delta)) return [];
+      if (event.delta["type"] !== "thinking_delta" || typeof event.delta["thinking"] !== "string")
+        return [];
+      return [event.delta["thinking"]];
+    });
+    expect(thinkingDeltas).toEqual(["**Feasibility**", "\n\n**Schedule**"]);
+  });
   test("drops foreign extensions instead of emitting rejectable block types", () => {
     const withExtensions: CanonicalEvent[] = [
       { type: "message_start", sequence_number: 1, event_id: "msg-1", model: "claude" },

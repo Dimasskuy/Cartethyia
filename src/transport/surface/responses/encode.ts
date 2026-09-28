@@ -40,7 +40,12 @@ type OpenOutputBase = {
 
 type OpenOutput =
   | (OpenOutputBase & { kind: "text" })
-  | (OpenOutputBase & { kind: "reasoning"; summaryParts: Map<number, string[]> })
+  | (OpenOutputBase & {
+      kind: "reasoning";
+      summaryParts: Map<number, string[]>;
+      sourceSummaryIndexes: Map<string, number>;
+      nextSummaryIndex: number;
+    })
   | (OpenOutputBase & { kind: "tool" });
 
 /** Stateful Responses event lifecycle encoder. */
@@ -315,6 +320,8 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
       contentIndex: 0,
       chunks: [],
       summaryParts: new Map(),
+      sourceSummaryIndexes: new Map(),
+      nextSummaryIndex: 0,
     };
     this.outputItems.push({ ...item });
     events.push(
@@ -324,9 +331,35 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
   }
 
   /**
-   * Open a summary part the first time a particular summary index arrives.
-   * The Responses wire uses a dedicated part lifecycle for each index.
+   * Maps a source reasoning-item/summary-index pair to one Responses summary
+   * part. Separate source items can both start at summary_index 0; remap those
+   * collisions so their summaries remain distinct instead of overwriting or
+   * concatenating at one index.
    */
+  private outputSummaryIndex(
+    open: OpenOutput & { kind: "reasoning" },
+    event: Extract<CanonicalEvent, { type: "content_delta" }>,
+  ): number {
+    const sourceIndex =
+      event.content.kind === "reasoning" ? (event.content.summary_index ?? 0) : 0;
+    const sourceIdentity =
+      event.item_id !== undefined
+        ? `item:${event.item_id}`
+        : `output:${event.output_index ?? 0}`;
+    const key = `${sourceIdentity}:${sourceIndex}`;
+    const existing = open.sourceSummaryIndexes.get(key);
+    if (existing !== undefined) return existing;
+    let outputIndex = sourceIndex;
+    if (open.summaryParts.has(outputIndex)) {
+      outputIndex = open.nextSummaryIndex;
+      while (open.summaryParts.has(outputIndex)) outputIndex += 1;
+    }
+    open.sourceSummaryIndexes.set(key, outputIndex);
+    open.nextSummaryIndex = Math.max(open.nextSummaryIndex, outputIndex + 1);
+    return outputIndex;
+  }
+
+  /** Open a summary part the first time a particular summary index arrives. */
   private openReasoningSummaryPart(
     open: OpenOutput & { kind: "reasoning" },
     summaryIndex: number,
@@ -386,7 +419,10 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
     return events;
   }
 
-  private processContent(content: ContentPart): ResponsesWireEvent[] {
+  private processContent(
+    content: ContentPart,
+    sourceEvent: Extract<CanonicalEvent, { type: "content_delta" }>,
+  ): ResponsesWireEvent[] {
     if (content.kind === "text") {
       const events = this.openText();
       events.push(
@@ -412,23 +448,30 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
     }
     if (content.kind === "reasoning") {
       const events = this.openReasoning(content);
-      const summaryIndex = content.summary_index ?? 0;
       if (content.summary !== undefined && this.open?.kind === "reasoning") {
         const open = this.open;
+        const summaryIndex = this.outputSummaryIndex(open, sourceEvent);
         // Open the matching summary part before its first delta.
         events.push(...this.openReasoningSummaryPart(open, summaryIndex));
+        const summaryChunks = open.summaryParts.get(summaryIndex);
+        if (summaryChunks === undefined)
+          throw new Error("reasoning summary state missing after opening its part");
+        const separator =
+          summaryChunks.length === 0 &&
+          open.summaryParts.size > 1 &&
+          !/^\s/.test(content.summary)
+            ? "\n\n"
+            : "";
+        const delta = `${separator}${content.summary}`;
         events.push(
           this.emit("response.reasoning_summary_text.delta", {
             item_id: open.itemId,
             output_index: open.outputIndex,
             summary_index: summaryIndex,
-            delta: content.summary,
+            delta,
           }),
         );
-        const summaryChunks = open.summaryParts.get(summaryIndex);
-        if (summaryChunks === undefined)
-          throw new Error("reasoning summary state missing after opening its part");
-        summaryChunks.push(content.summary);
+        summaryChunks.push(delta);
       }
       if (content.encrypted_content !== undefined)
         events.push(
@@ -595,7 +638,8 @@ export class ResponsesEventEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
       return this.start();
     }
     const events = this.start();
-    if (event.type === "content_delta") return events.concat(this.processContent(event.content));
+    if (event.type === "content_delta")
+      return events.concat(this.processContent(event.content, event));
     if (event.type === "tool_call_delta") {
       const toolEvents = this.openTool(event.call_id, event.name);
       const delta = event.arguments_delta ?? "";

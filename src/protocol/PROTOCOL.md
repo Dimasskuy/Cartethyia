@@ -169,6 +169,11 @@ never bills as success.
   **and** `summary_index` — read from the frame's `summary_index` when it is an
   integer, else `0` — so multi-index summaries stay distinguishable through the
   canonical part and the Responses encoder can rebuild each part separately.
+  When a surface flattens separate summary parts into one visible reasoning
+  string (Chat) or independently rendered blocks/items (Messages/Responses),
+  it preserves token fragments within a part and inserts a blank-line boundary
+  between distinct parts/items, including source items whose indices restart at
+  zero.
 - `messages-errors.ts`: `mapClaudeHttpError` and `mapClaudeStreamError` use one structured classifier,
   preserving the raw upstream status and provider identifier for account-health decisions.
 - `stream-error-frames.ts`: `gatewayErrorFromStreamError` classifies explicit error envelopes inside

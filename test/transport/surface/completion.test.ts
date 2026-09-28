@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CanonicalEvent, UsageRecord } from "../../../src/transport/canonical-model";
+import { isRecord } from "../../../src/protocol/primitives";
 import { CompletionAdapter, CompletionStreamEncoder } from "../../../src/transport/surface/completion";
 
 const usage: UsageRecord = {
@@ -95,5 +96,45 @@ describe("CompletionAdapter", () => {
     const wire = JSON.stringify(chunks);
     expect(wire).toContain('"text":"world"');
     expect(wire).toContain('"finish_reason":"stop"');
+  });
+
+  test("keeps reasoning summaries out of the text-only legacy completion surface", () => {
+    const reasoningEvents: CanonicalEvent[] = [
+      { type: "response_start", sequence_number: 1, model: "test-model" },
+      {
+        type: "content_delta",
+        sequence_number: 2,
+        item_id: "reasoning-a",
+        output_index: 0,
+        content: { kind: "reasoning", payload: null, summary: "**One**", summary_index: 0 },
+      },
+      {
+        type: "content_delta",
+        sequence_number: 3,
+        item_id: "reasoning-b",
+        output_index: 1,
+        content: { kind: "reasoning", payload: null, summary: "**Two**", summary_index: 0 },
+      },
+      { type: "content_delta", sequence_number: 4, content: { kind: "text", text: "answer" } },
+      { type: "terminal", sequence_number: 5, state: "complete" },
+    ];
+    const response = new CompletionAdapter().encodeOutput(reasoningEvents);
+    const json = JSON.parse(new TextDecoder().decode(response.bytes)) as {
+      choices: Array<{ text: string }>;
+    };
+    expect(json.choices).toMatchObject([{ text: "answer" }]);
+    expect(JSON.stringify(json)).not.toContain("**One**");
+    const encoder = new CompletionStreamEncoder({ model: "test-model" });
+    const chunks = reasoningEvents.flatMap((event) => encoder.push(event));
+    const texts = chunks.flatMap((chunk) => {
+      const choices = chunk["choices"];
+      if (!Array.isArray(choices)) return [];
+      return choices.flatMap((choice) => {
+        if (!isRecord(choice) || typeof choice["text"] !== "string" || choice["text"].length === 0)
+          return [];
+        return [choice["text"]];
+      });
+    });
+    expect(texts).toEqual(["answer"]);
   });
 });

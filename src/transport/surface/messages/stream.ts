@@ -1,5 +1,10 @@
 import type { CanonicalEvent, UsageRecord } from "../../canonical-model";
-import { SurfaceStreamEncoder } from "../stream-base";
+import {
+  reasoningSummaryHasBoundary,
+  reasoningSummaryIdentity,
+  reasoningSummarySeparator,
+  type ReasoningSummaryIdentity,
+} from "../reasoning-summary";
 import {
   createToolCallTracker,
   resetToolCallTracker,
@@ -14,6 +19,7 @@ import {
 } from "./encode";
 import { usageToMessagesWire } from "../../../providers/usage";
 import type { ToolCallState } from "../../tool-identity";
+import { SurfaceStreamEncoder } from "../stream-base";
 /**
  * Incremental streaming encoder for Anthropic Messages.
  * Emits `message_start` on first event and then translates each
@@ -25,7 +31,8 @@ export class MessagesStreamEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
   private finished = false;
   private nextIndex = 0;
   private openBlock: { type: string; index: number } | undefined;
-  private openReasoningSummaryIndex: number | undefined;
+  private openReasoningIdentity: ReasoningSummaryIdentity | undefined;
+  private previousReasoningText: string | undefined;
   // Tool index pinning + arguments accumulation via the shared tracker
   // (transport/tool-identity.ts). `nextIndex` stays ledger-global (text and
   // tool blocks share one numbering) and is passed as the tracker's
@@ -210,7 +217,8 @@ export class MessagesStreamEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
             content_block: { type: "text", text: "" },
           });
           this.openBlock = { type: "text", index: idx };
-          this.openReasoningSummaryIndex = undefined;
+          this.openReasoningIdentity = undefined;
+          this.previousReasoningText = undefined;
         }
         out.push({
           type: "content_block_delta",
@@ -232,13 +240,20 @@ export class MessagesStreamEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
         // (same fragmentation as the empty-text case above).
         if (!isRedacted && summary.length === 0 && signature.length === 0) return out;
         const blockType = isRedacted ? "redacted_thinking" : "thinking";
-        const summaryIndex = part.summary_index;
+        const identity = reasoningSummaryIdentity(event);
+        const separator =
+          blockType === "thinking"
+            ? reasoningSummarySeparator(
+                this.openReasoningIdentity,
+                identity,
+                this.previousReasoningText,
+                summary,
+              )
+            : "";
         if (
           blockType === "thinking" &&
-          this.openBlock?.type === blockType &&
-          summaryIndex !== undefined &&
-          this.openReasoningSummaryIndex !== undefined &&
-          summaryIndex !== this.openReasoningSummaryIndex
+          reasoningSummaryHasBoundary(this.openReasoningIdentity, identity) &&
+          this.openBlock?.type === blockType
         ) {
           out.push({ type: "content_block_stop", index: this.openBlock.index });
           this.openBlock = undefined;
@@ -251,7 +266,10 @@ export class MessagesStreamEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
             : { type: "thinking", thinking: "" };
           out.push({ type: "content_block_start", index: idx, content_block: initial });
           this.openBlock = { type: blockType, index: idx };
-          this.openReasoningSummaryIndex = summaryIndex;
+        }
+        if (blockType === "thinking") {
+          this.openReasoningIdentity = identity;
+          this.previousReasoningText = summary;
         }
         if (isRedacted) {
           out.push({
@@ -264,7 +282,7 @@ export class MessagesStreamEncoder extends SurfaceStreamEncoder<CanonicalEvent, 
             out.push({
               type: "content_block_delta",
               index: this.openBlock.index,
-              delta: { type: "thinking_delta", thinking: summary },
+              delta: { type: "thinking_delta", thinking: `${separator}${summary}` },
             });
           if (signature.length > 0) {
             out.push({

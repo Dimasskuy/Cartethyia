@@ -1,4 +1,5 @@
 import type { CanonicalEvent, CanonicalStopReason } from "../../canonical-model";
+import { reasoningSummaryIdentity, reasoningSummarySeparator, type ReasoningSummaryIdentity } from "../reasoning-summary";
 import { eventText } from "../adapters";
 import { isRecord } from "../../../protocol/primitives";
 import {
@@ -79,29 +80,24 @@ export function eventReasoningText(event: CanonicalEvent): string | undefined {
 }
 
 function mergedReasoningText(events: readonly CanonicalEvent[]): string {
-  let previousSummaryIndex: number | undefined;
-  let hadReasoning = false;
-  return events
-    .map((event) => {
-      const text = eventReasoningText(event);
-      if (text === undefined) return undefined;
-      const index =
-        event.type === "content_delta" && event.content.kind === "reasoning"
-          ? event.content.summary_index
-          : undefined;
-      const separator =
-        hadReasoning &&
-        (index === undefined ||
-          previousSummaryIndex === undefined ||
-          index !== previousSummaryIndex)
-          ? "\n\n"
-          : "";
-      hadReasoning = true;
-      if (index !== undefined) previousSummaryIndex = index;
-      return `${separator}${text}`;
-    })
-    .filter((value): value is string => value !== undefined)
-    .join("");
+  const chunks: string[] = [];
+  let previousIdentity: ReasoningSummaryIdentity | undefined;
+  let previousText: string | undefined;
+  for (const event of events) {
+    const text = eventReasoningText(event);
+    if (text === undefined) continue;
+    const identity = reasoningSummaryIdentity(event);
+    let separator = "";
+    if (previousText !== undefined && (previousIdentity === undefined || identity === undefined)) {
+      separator = "\n\n";
+    } else {
+      separator = reasoningSummarySeparator(previousIdentity, identity, previousText, text);
+    }
+    chunks.push(separator, text);
+    previousIdentity = identity;
+    previousText = text;
+  }
+  return chunks.join("");
 }
 
 export function finishReason(stopReason: CanonicalStopReason | undefined): string {
@@ -301,7 +297,8 @@ export class ChatStreamEncoder extends SurfaceStreamEncoder<CanonicalEvent, Json
   private readonly includeUsage: boolean | undefined;
   private readonly cancelled: boolean;
   private emittedAny = false;
-  private previousReasoningSummaryIndex: number | undefined;
+  private previousReasoningSummaryIdentity: ReasoningSummaryIdentity | undefined;
+  private previousReasoningSummaryText: string | undefined;
   private baseModel: string;
   private baseId: string;
   private readonly created: number;
@@ -393,17 +390,15 @@ export class ChatStreamEncoder extends SurfaceStreamEncoder<CanonicalEvent, Json
     }
     const reasoningText = eventReasoningText(event);
     if (reasoningText !== undefined) {
-      const summaryIndex =
-        event.type === "content_delta" && event.content.kind === "reasoning"
-          ? event.content.summary_index
-          : undefined;
-      const separator =
-        summaryIndex !== undefined &&
-        this.previousReasoningSummaryIndex !== undefined &&
-        summaryIndex !== this.previousReasoningSummaryIndex
-          ? "\n\n"
-          : "";
-      if (summaryIndex !== undefined) this.previousReasoningSummaryIndex = summaryIndex;
+      const identity = reasoningSummaryIdentity(event);
+      const separator = reasoningSummarySeparator(
+        this.previousReasoningSummaryIdentity,
+        identity,
+        this.previousReasoningSummaryText,
+        reasoningText,
+      );
+      this.previousReasoningSummaryIdentity = identity;
+      this.previousReasoningSummaryText = reasoningText;
       result.push(
         this.withBase(
           [{ index: 0, delta: { reasoning_content: `${separator}${reasoningText}` }, finish_reason: null }],

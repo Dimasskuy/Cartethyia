@@ -378,7 +378,7 @@ describe("Responses event lifecycle", () => {
     );
     expect(summaryDone.map((event) => [event.summary_index, event.text])).toEqual([
       [0, "first"],
-      [1, "second"],
+      [1, "\n\nsecond"],
     ]);
     const summaryPartsDone = events.filter(
       (event) => event.type === "response.reasoning_summary_part.done",
@@ -387,16 +387,57 @@ describe("Responses event lifecycle", () => {
       summaryPartsDone.map((event) => [event.summary_index, event.part]),
     ).toEqual([
       [0, { type: "summary_text", text: "first" }],
-      [1, { type: "summary_text", text: "second" }],
+      [1, { type: "summary_text", text: "\n\nsecond" }],
     ]);
     const outputItem = events.find((event) => event.type === "response.output_item.done")?.item;
     expect(outputItem).toMatchObject({
       summary: [
         { type: "summary_text", text: "first" },
-        { type: "summary_text", text: "second" },
+        { type: "summary_text", text: "\n\nsecond" },
       ],
     });
   });
+  test("keeps separate source reasoning items distinct when both use index zero", () => {
+    const encoder = new ResponsesEventEncoder({ model: "m" });
+    const events = [
+      ...encoder.push({
+        type: "content_delta",
+        sequence_number: 1,
+        item_id: "source-reasoning-a",
+        output_index: 0,
+        content: { kind: "reasoning", payload: null, summary: "**First**", summary_index: 0 },
+      }),
+      ...encoder.push({
+        type: "content_delta",
+        sequence_number: 2,
+        item_id: "source-reasoning-a",
+        output_index: 0,
+        content: { kind: "reasoning", payload: null, summary: " fragment", summary_index: 0 },
+      }),
+      ...encoder.push({
+        type: "content_delta",
+        sequence_number: 3,
+        item_id: "source-reasoning-b",
+        output_index: 1,
+        content: { kind: "reasoning", payload: null, summary: "**Second**", summary_index: 0 },
+      }),
+      ...encoder.push({ type: "terminal", sequence_number: 4, state: "complete" }),
+    ];
+    const deltas = events.filter((event) => event.type === "response.reasoning_summary_text.delta");
+    expect(deltas.map((event) => [event.summary_index, event.delta])).toEqual([
+      [0, "**First**"],
+      [0, " fragment"],
+      [1, "\n\n**Second**"],
+    ]);
+    const outputItem = events.find((event) => event.type === "response.output_item.done")?.item;
+    expect(outputItem).toMatchObject({
+      summary: [
+        { type: "summary_text", text: "**First** fragment" },
+        { type: "summary_text", text: "\n\n**Second**" },
+      ],
+    });
+  });
+
 
   test("surfaces readable reasoning payload as reasoning_text content", () => {
     const events = adapter.encode([

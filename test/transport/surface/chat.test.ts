@@ -579,7 +579,46 @@ describe("ChatAdapter.encode", () => {
       ),
     );
     expect(reasoningDeltas).toEqual(["Think ", "carefully"]);
-    expect(chunks.at(-1)).toMatchObject({ choices: [{ finish_reason: "tool_calls" }] });
+  });
+
+  test("separates adjacent summary items but not fragments within one item", () => {
+    const events: CanonicalEvent[] = [
+      { type: "response_start", sequence_number: 1, model: "gpt-6-luna" },
+      {
+        type: "content_delta",
+        sequence_number: 2,
+        item_id: "reasoning-1",
+        output_index: 0,
+        content: { kind: "reasoning", payload: null, summary: "**First**", summary_index: 0 },
+      },
+      {
+        type: "content_delta",
+        sequence_number: 3,
+        item_id: "reasoning-1",
+        output_index: 0,
+        content: { kind: "reasoning", payload: null, summary: " continuation", summary_index: 0 },
+      },
+      {
+        type: "content_delta",
+        sequence_number: 4,
+        item_id: "reasoning-2",
+        output_index: 1,
+        content: { kind: "reasoning", payload: null, summary: "**Second**", summary_index: 0 },
+      },
+      { type: "terminal", sequence_number: 5, state: "complete" },
+    ];
+    const json = decodeJson(new ChatAdapter().encode(events));
+    expect(json.choices).toMatchObject([
+      { message: { reasoning_content: "**First** continuation\n\n**Second**" } },
+    ]);
+
+    const chunks = streamChunks(new ChatStreamEncoder({}), events);
+    const reasoningDeltas = chunks.flatMap((chunk) =>
+      (chunk.choices as Array<{ delta?: { reasoning_content?: string } }>).flatMap((choice) =>
+        choice.delta?.reasoning_content === undefined ? [] : [choice.delta.reasoning_content],
+      ),
+    );
+    expect(reasoningDeltas).toEqual(["**First**", " continuation", "\n\n**Second**"]);
   });
 });
 

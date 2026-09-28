@@ -1,5 +1,11 @@
 import type { CanonicalEvent, CanonicalStopReason, ContentPart, UsageRecord } from "../../canonical-model";
 import { isRecord } from "../../../protocol/primitives";
+import {
+  reasoningSummaryHasBoundary,
+  reasoningSummaryIdentity,
+  reasoningSummarySeparator,
+  type ReasoningSummaryIdentity,
+} from "../reasoning-summary";
 import type { MessagesWireObject } from "./parse";
 import { GatewayError } from "../../gateway-error";
 
@@ -124,7 +130,8 @@ export function groupedBlocks(events: readonly CanonicalEvent[]): {
   droppedUnnamedToolCalls: number;
 } {
   const blocks: MessagesWireObject[] = [];
-  let previousReasoningSummaryIndex: number | undefined;
+  let previousReasoningIdentity: ReasoningSummaryIdentity | undefined;
+  let previousReasoningText: string | undefined;
   let droppedUnnamedToolCalls = 0;
   // Fragments per call; joined once at flush so N deltas cost O(N), not O(N²).
   const toolArguments = new Map<string, { name?: string; chunks: string[]; index?: number }>();
@@ -171,29 +178,35 @@ export function groupedBlocks(events: readonly CanonicalEvent[]): {
       const previous = blocks.at(-1);
       if (next.type === "text" && previous?.type === "text") {
         previous.text = `${String(previous.text ?? "")}${String(next.text ?? "")}`;
-        previousReasoningSummaryIndex = undefined;
+        previousReasoningIdentity = undefined;
+        previousReasoningText = undefined;
       } else if (next.type === "thinking" && previous?.type === "thinking") {
-        const summaryIndex =
-          event.content.kind === "reasoning" ? event.content.summary_index : undefined;
-        if (
-          summaryIndex === undefined ||
-          previousReasoningSummaryIndex === undefined ||
-          summaryIndex === previousReasoningSummaryIndex
-        ) {
-          previous.thinking = `${String(previous.thinking ?? "")}${String(next.thinking ?? "")}`;
-        } else {
+        const identity = reasoningSummaryIdentity(event);
+        const nextText = typeof next.thinking === "string" ? next.thinking : "";
+        const separator = reasoningSummarySeparator(
+          previousReasoningIdentity,
+          identity,
+          previousReasoningText,
+          nextText,
+        );
+        if (reasoningSummaryHasBoundary(previousReasoningIdentity, identity)) {
+          next.thinking = `${separator}${nextText}`;
           blocks.push(next);
+        } else {
+          previous.thinking = `${String(previous.thinking ?? "")}${nextText}`;
         }
-        previousReasoningSummaryIndex = summaryIndex;
+        previousReasoningIdentity = identity;
+        previousReasoningText = nextText;
       } else {
         blocks.push(next);
-        previousReasoningSummaryIndex =
-          next.type === "thinking" && event.content.kind === "reasoning"
-            ? event.content.summary_index
-            : undefined;
+        previousReasoningIdentity =
+          next.type === "thinking" ? reasoningSummaryIdentity(event) : undefined;
+        previousReasoningText =
+          next.type === "thinking" && typeof next.thinking === "string" ? next.thinking : undefined;
       }
     } else if (event.type === "tool_result") {
-      previousReasoningSummaryIndex = undefined;
+      previousReasoningIdentity = undefined;
+      previousReasoningText = undefined;
       const resultBlock = blockFromPart({
         kind: "toolResult",
         call_id: event.call_id,

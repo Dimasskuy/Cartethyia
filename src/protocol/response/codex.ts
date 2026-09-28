@@ -67,15 +67,21 @@ function reasoningSummary(item: Record<string, unknown>): string | undefined {
 export function reasoningEvent(
   item: Record<string, unknown>,
   sequence_number: number,
+  output_index?: number,
 ): CanonicalEvent {
   const summary = reasoningSummary(item);
   const encrypted = item["encrypted_content"];
   return {
     type: "content_delta",
     sequence_number,
+    ...(typeof item["id"] === "string" ? { item_id: item["id"] } : {}),
+    ...(output_index === undefined ? {} : { output_index }),
     content: {
       kind: "reasoning",
-      payload: summary ?? encrypted ?? "",
+      // A summary is not a reasoning_text payload. Putting it in both fields
+      // made the Responses encoder emit the same summary again as readable
+      // content, where adjacent parts lost their summary_index separators.
+      payload: null,
       ...(summary === undefined ? {} : { summary }),
       ...(typeof encrypted === "string"
         ? { encrypted_content: encrypted }
@@ -100,7 +106,7 @@ export function parseCodexResponsesJsonToEvents(
 
   const output =
     (json["output"] as Array<Record<string, unknown>> | undefined) ?? [];
-  for (const item of output) {
+  for (const [outputIndex, item] of output.entries()) {
     const type = item["type"] as string | undefined;
     if (type === "message") {
       const content = item["content"] as
@@ -128,7 +134,7 @@ export function parseCodexResponsesJsonToEvents(
         }
       }
     } else if (type === "reasoning") {
-      events.push(reasoningEvent(item, seq++));
+      events.push(reasoningEvent(item, seq++, outputIndex));
     } else if (type === "function_call") {
       const rawCallId =
         (item["call_id"] as string | undefined) ??
@@ -446,9 +452,13 @@ export class CodexStreamFrameProcessor {
         events.push({
           type: "content_delta",
           sequence_number: this.#seq++,
+          ...(typeof json["item_id"] === "string" ? { item_id: json["item_id"] } : {}),
+          ...(typeof json["output_index"] === "number"
+            ? { output_index: json["output_index"] }
+            : {}),
           content: {
             kind: "reasoning",
-            payload: summary,
+            payload: null,
             summary,
             summary_index: summaryIndex,
           },
@@ -465,11 +475,13 @@ export class CodexStreamFrameProcessor {
       events.push({
         type: "content_delta",
         sequence_number: this.#seq++,
+        ...(typeof json["item_id"] === "string" ? { item_id: json["item_id"] } : {}),
+        ...(typeof json["output_index"] === "number"
+          ? { output_index: json["output_index"] }
+          : {}),
         content: {
           kind: "reasoning",
           payload: json["delta"],
-          summary: json["delta"],
-          summary_index: 0,
         },
       });
     } else if (t === "response.function_call_arguments.done") {
@@ -518,10 +530,14 @@ export class CodexStreamFrameProcessor {
             outputItemId !== undefined && this.#reasoningDeltaIds.has(outputItemId);
           if (typeof encrypted === "string" && summaryAlreadyStreamed) {
             events.push(
-              reasoningEvent({ encrypted_content: encrypted }, this.#seq++),
+              reasoningEvent(
+                { id: outputItemId, encrypted_content: encrypted },
+                this.#seq++,
+                outputIndex,
+              ),
             );
           } else if (!summaryAlreadyStreamed) {
-            events.push(reasoningEvent(outputItem, this.#seq++));
+            events.push(reasoningEvent(outputItem, this.#seq++, outputIndex));
           }
         }
         if (outputItem["type"] === "function_call") {
