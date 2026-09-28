@@ -105,8 +105,17 @@ export function createBackupRoutes(config: BackupRoutesConfig): Elysia {
         if (access.tenantId === null) {
           throw new ConsoleDomainError("tenant_required", 403, "Tenant isolation required");
         }
+        // Enforce against actual received bytes, not just the declared header:
+        // a missing or spoofed content-length would otherwise bypass the 413
+        // and buffer an unbounded file into JSON.parse. Elysia has already
+        // parsed the body here, so measure the re-serialized form — an
+        // over-limit file still fails closed before restore touches the DB.
         const declared = Number(request.headers.get("content-length") ?? "0");
-        if (Number.isFinite(declared) && declared > MAX_BACKUP_BYTES) {
+        const actualBytes = JSON.stringify(body ?? null).length;
+        if (
+          (Number.isFinite(declared) && declared > MAX_BACKUP_BYTES) ||
+          actualBytes > MAX_BACKUP_BYTES
+        ) {
           set.status = 413;
           return {
             error: `backup exceeds the ${MAX_BACKUP_BYTES} byte limit`,

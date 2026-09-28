@@ -991,25 +991,56 @@ function RequestDetailDrawer({
   );
 }
 
-/** Live in-flight gauge for the Requests card header. Green pulse while the
- * SSE stream pushes, grey with the last value when the stream drops. */
-function InFlightPill({ count, live }: { count: number | null; live: boolean }): ReactNode {
+/**
+ * Live in-flight gauge for the Requests card header: `50 in flight · 40 IPs`.
+ * The two numbers answer different questions — the count is the load, the IP
+ * split is its shape — so one client hammering (`5 in flight · 1 IP`) reads
+ * differently from the whole fleet (`5 in flight · 5 IPs`). Green pulse while
+ * the SSE stream pushes, grey with the last value when the stream drops.
+ */
+function InFlightPill({
+  count,
+  uniqueIps,
+  live,
+}: {
+  count: number | null;
+  uniqueIps: number | null;
+  live: boolean;
+}): ReactNode {
+  const active = count ?? 0;
+  const ips = uniqueIps ?? 0;
+  const requestWord = active === 1 ? "request" : "requests";
+  const ipWord = ips === 1 ? "IP" : "IPs";
   return (
     <span
-      title={live ? "Live requests currently executing on the gateway" : "Live feed disconnected — last seen value"}
+      title={
+        live
+          ? `${active} ${requestWord} executing right now from ${ips} unique client ${ipWord} — all clients combined, not a summary of the table below`
+          : "Live feed disconnected — last seen value"
+      }
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: "4px",
+        gap: "6px",
         fontSize: "11px",
         color: "var(--text-secondary)",
         whiteSpace: "nowrap",
       }}
     >
+      <span
+        aria-hidden="true"
+        style={{
+          width: "7px",
+          height: "7px",
+          borderRadius: "50%",
+          background: live ? "var(--success)" : "var(--text-tertiary)",
+          boxShadow: live ? "0 0 6px var(--success)" : "none",
+          flexShrink: 0,
+        }}
+      />
       <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--text-primary)" }}>
-        {count ?? 0}
+        {active} in flight · {ips} {ipWord}
       </span>
-      <span>in flight request</span>
     </span>
   );
 }
@@ -1232,7 +1263,7 @@ export default function Usage(): ReactNode {
         <StatCard
           label="Requests"
           value={summaryQuery.isPending ? "…" : formatNumber(summary?.requests)}
-          detail={`${periodLabel(period)} · ${flight.count ?? 0} in flight`}
+          detail={`${periodLabel(period)} · ${flight.count ?? 0} in flight from ${flight.uniqueIps ?? 0} IPs`}
           icon={<Activity size={13} />}
         />
         <StatCard
@@ -1349,7 +1380,7 @@ export default function Usage(): ReactNode {
       <Card>
         <CardHeader
           title="Requests"
-          subtitle={`Most recent first · ${requestItems.length} entries · updates live · open a row to inspect`}
+          subtitle={`Most recent first · ${requestItems.length} entries · open a row to inspect`}
           subtitleAddon={
             <div className="usage-status-filters" role="group" aria-label="Filter requests by HTTP status">
               {(summary?.statusCounts ?? [])
@@ -1389,7 +1420,7 @@ export default function Usage(): ReactNode {
               >
                 {hideProviderName ? "Masked" : "Mask"}
               </Button>
-              <InFlightPill count={flight.count} live={flight.live} />
+              <InFlightPill count={flight.count} uniqueIps={flight.uniqueIps} live={flight.live} />
             </Inline>
           }
         />

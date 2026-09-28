@@ -110,6 +110,16 @@ export function OAuthBrowserDialog({
     onClose(false);
   };
 
+  // Fast path for "I already approved in the popup": refresh the account
+  // list now instead of waiting for the next 1.5 s tick. The completion
+  // effect above closes the dialog itself when the new account arrives.
+  const [checking, setChecking] = useState(false);
+  const handleComplete = () => {
+    setChecking(true);
+    void queryClient
+      .invalidateQueries({ queryKey: queryKeys.providers.accounts(providerId) })
+      .finally(() => setChecking(false));
+  };
   const handlePasteCallback = async () => {
     try {
       const text = await navigator.clipboard.readText();
@@ -157,6 +167,15 @@ export function OAuthBrowserDialog({
         <>
           <Button variant="secondary" size="sm" onClick={cancel} disabled={complete.isPending}>
             Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleComplete}
+            disabled={complete.isPending || checking}
+            title="You already approved in the popup — check now instead of waiting"
+          >
+            {checking ? "Checking…" : "Complete"}
           </Button>
           <Button
             variant="primary"
@@ -287,6 +306,52 @@ export function DeviceCodeDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Opens the verification page in a popup when the session arrives (popup
+  // blockers allow it here because this effect still runs in the click
+  // chain's task — the session resolves from the start-device POST the click
+  // fired). Falls back to a manual Open/Copy when the popup is blocked.
+  const verificationPopupRef = useRef<Window | null>(null);
+  const [verificationPopupBlocked, setVerificationPopupBlocked] = useState(false);
+  useEffect(() => {
+    if (!session) return;
+    const popup = window.open(session.verificationUri, "cartethyia-device", "popup,width=720,height=820");
+    if (popup) {
+      verificationPopupRef.current = popup;
+    } else {
+      setVerificationPopupBlocked(true);
+    }
+    return () => {
+      const open = verificationPopupRef.current;
+      verificationPopupRef.current = null;
+      if (open && !open.closed) open.close();
+    };
+  }, [session]);
+
+  const checkNow = () => {
+    if (!session || pollDevice.isPending) return;
+    pollDevice.mutate(
+      { providerId, deviceAuthId: session.deviceAuthId },
+      {
+        onSuccess: (result) => {
+          if (result.status === "complete") {
+            const open = verificationPopupRef.current;
+            if (open && !open.closed) open.close();
+            toast.success("OAuth account connected", "Device authorization complete");
+            onClose();
+          } else if (result.status === "failed") {
+            toast.error("Device login failed", result.reason);
+            onClose();
+          } else {
+            toast.success("Still waiting", "The provider has not approved this device yet — approve it in the verification tab, then check again.");
+          }
+        },
+        onError: (err) => {
+          toast.error("Check failed", (err as { message?: string }).message ?? "Unable to poll device authorization");
+        },
+      },
+    );
+  };
+
   useEffect(() => {
     if (!session) return;
     const startedAt = Date.now();
@@ -310,12 +375,20 @@ export function DeviceCodeDialog({
             pollInFlight = false;
             if (result.status === "complete") {
               window.clearInterval(timer);
+              const open = verificationPopupRef.current;
+              if (open && !open.closed) open.close();
               toast.success("OAuth account connected", "Device authorization complete");
               onClose();
             } else if (result.status === "failed") {
               window.clearInterval(timer);
               toast.error("Device login failed", result.reason);
               onClose();
+            } else if (result.status === "pending" && result.retryAfterSeconds !== undefined) {
+              // The server echoed the provider's requested cadence: adopt it
+              // so the next poll does not fire early and draw a rate limit.
+              intervalMs = Math.max(1, result.retryAfterSeconds) * 1000;
+              window.clearInterval(timer);
+              timer = window.setInterval(poll, intervalMs);
             } else if (result.status === "slow_down") {
               // The provider (GitHub especially) enforces its own minimum
               // cadence: ignoring it makes every later poll answer slow_down
@@ -349,9 +422,22 @@ export function DeviceCodeDialog({
       title="Login with OAuth (device code)"
       width={420}
       footer={
-        <Button variant="secondary" size="sm" onClick={onClose}>
-          Cancel
-        </Button>
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          {session ? (
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={pollDevice.isPending}
+              onClick={checkNow}
+              title="You already approved on the verification page — poll the provider now instead of waiting for the next interval"
+            >
+              {pollDevice.isPending ? "Checking…" : "Complete"}
+            </Button>
+          ) : null}
+        </>
       }
     >
       <Stack gap="14px">
@@ -437,8 +523,9 @@ export function DeviceCodeDialog({
                 </Button>
               </Inline>
               <p className="oauth-hint">
-                The page opened in a new tab. Finish signing in there — this dialog closes
-                automatically once the account connects.
+                {verificationPopupBlocked
+                  ? "The popup was blocked — open the page with Open above, finish signing in there, then press Check now."
+                  : "The page opened in a popup. Finish signing in there — this dialog closes automatically once the account connects, or press Check now."}
               </p>
             </div>
           </>

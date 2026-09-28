@@ -72,6 +72,7 @@ export class OpenrouterOAuthClient extends OAuthClient {
         code_verifier: codeVerifier,
         code_challenge_method: "S256",
       }),
+      signal: AbortSignal.timeout(30_000),
     });
     const payload = await readJsonResponse(response, "OpenRouter key exchange");
     const key = nonEmptyTrimmedString(record(payload)?.key);

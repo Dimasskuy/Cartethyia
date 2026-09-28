@@ -455,10 +455,18 @@ export class DrizzleShareLinkStore implements ShareLinkStore {
   }
 
   async touchView(tokenHash: string): Promise<void> {
+    // Expired-but-active links must not bump lastViewedAt: the bump makes
+    // expiry auditing lie about a link that no longer serves.
     await this.db
       .update(shareLinks)
       .set({ lastViewedAt: new Date() })
-      .where(and(eq(shareLinks.tokenHash, tokenHash), eq(shareLinks.active, true)));
+      .where(
+        and(
+          eq(shareLinks.tokenHash, tokenHash),
+          eq(shareLinks.active, true),
+          sql`${shareLinks.expiresAt} IS NULL OR ${shareLinks.expiresAt} > NOW()`,
+        ),
+      );
   }
 
   async listForApiKey(apiKeyId: string): Promise<readonly ShareLinkSummary[]> {

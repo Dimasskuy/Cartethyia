@@ -59,7 +59,7 @@ export function createLogRoutes(config: LogsConfig): Elysia {
     })
     .delete("/logs", async ({ request, set }) => {
       try {
-        const access = requireScope(config.accessResolver(request), "dashboard:read");
+        const access = requireScope(config.accessResolver(request), "dashboard:write");
         clearConsoleLogs();
         await config.auditSink?.record({ access, action: "console_logs.cleared", target: "console-logs" });
         return { success: true };

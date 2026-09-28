@@ -143,7 +143,11 @@ export class ClaudeOAuthClient extends OAuthClient {
     const label = labelFromToken(data);
     if (label) return tokenResult(data, label);
     const access = nonEmpty(data.access_token);
-    const fallback = access ? await bootstrapLabel(access, this.fetchFn).catch(() => undefined) : undefined;
+    if (!access) return tokenResult(data, undefined);
+    // Best-effort label: the exchange tokens are already valid, so a label
+    // lookup failure must not fail the login — it only leaves the account
+    // unlabeled.
+    const fallback = await bootstrapLabel(access, this.fetchFn).catch(() => undefined);
     return tokenResult(data, fallback);
   }
 
@@ -161,6 +165,7 @@ export class ClaudeOAuthClient extends OAuthClient {
         "anthropic-beta": "oauth-2025-04-20",
       },
       signal,
+      timeoutMs: 30_000,
       label: "Claude OAuth",
     });
     return refreshResult(payload as TokenResponse);

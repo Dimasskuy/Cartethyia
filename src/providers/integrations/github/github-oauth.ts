@@ -316,7 +316,14 @@ export class GithubOAuthClient extends OAuthDeviceFlow {
           : `GitHub device polling failed (${response.status})`;
       return { status: "failed", reason };
     }
-    const minted = await mintGithubToken(githubToken, domain, this.fetchFn);
+    let minted;
+    try {
+      minted = await mintGithubToken(githubToken, domain, this.fetchFn);
+    } catch (error) {
+      // The mint runs after approval: surface its reason as a failed verdict,
+      // not an exception that escapes the dashboard's poll request.
+      return { status: "failed", reason: error instanceof Error ? error.message : "GitHub Copilot token mint failed" };
+    }
     const label = await fetchGitHubLogin(githubToken, domain, this.fetchFn, AbortSignal.timeout(10_000));
     const result: OAuthExchangeResult = {
       access: encodeGithubCredential(minted.access, minted.apiHost, githubToken),

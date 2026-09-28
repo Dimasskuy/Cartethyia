@@ -389,6 +389,12 @@ describe("device-flow helpers", () => {
 
   test("devicePollBackoff classifies pending, slow_down, and unknown errors", () => {
     expect(devicePollBackoff("authorization_pending", undefined)).toEqual({ status: "pending" });
+    // A pending answer may carry the server cadence: adopt it so the next
+    // poll does not fire early and draw a rate limit (RFC 8628 §3.5).
+    expect(devicePollBackoff("authorization_pending", 10)).toEqual({
+      status: "pending",
+      retryAfterSeconds: 10,
+    });
     expect(devicePollBackoff("slow_down", 145)).toEqual({
       status: "slow_down",
       retryAfterSeconds: 145,

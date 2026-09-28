@@ -3,7 +3,7 @@ import type { CanonicalRequest, UsageRecord } from "../canonical-model";
 import type { ClientIdentity } from "../../security/abuse";
 import type { ResolvedApiKey } from "../../security/api-key-auth";
 import type { PreparedProxyRequest } from "./preparer";
-import { decrementInFlight, incrementInFlight } from "./inflight";
+import { trackInFlight, untrackInFlight } from "./inflight";
 import { fastPathname } from "./pathname";
 
 export interface ProxyRequestOutcome {
@@ -42,7 +42,7 @@ export interface ProxyRequestState {
   upstreamDispatchStartedAtMs?: number;
   /** Start one logical provider flight after dispatch leases are acquired. */
   startProviderFlight(): void;
-  readonly deadlineMs: number;
+  deadlineMs: number;
   readonly abortController: AbortController;
   /** Body decoded by the single ingress reader, when this is a proxy request. */
   ingressBody?: unknown;
@@ -161,33 +161,57 @@ export class ProxyRequestStateStore {
       (timer as unknown as { unref?: () => void })?.unref?.();
     };
     armDeadline(Math.max(0, deadlineMs - Date.now()));
+    const requestId = crypto.randomUUID();
     const state: ProxyRequestState = {
-      requestId: crypto.randomUUID(),
+      requestId,
       startedAtMs: now,
       deadlineMs,
       abortController,
       startProviderFlight: () => {
         if (cleaned || providerFlightStarted) return;
         providerFlightStarted = true;
-        incrementInFlight();
+        trackInFlight(requestId, state.clientIdentity?.address ?? "unknown");
       },
       ingressMethod: request.method,
       ingressPath: fastPathname(request.url),
       extendDeadline: (ms: number) => {
         if (cleaned) return;
+        // Keep the field in sync with the timer: dispatch contexts are built
+        // from `state.deadlineMs`, so a re-armed timer with a stale field let
+        // the upstream fetch time out earlier than the stall budget.
+        state.deadlineMs = Date.now() + Math.max(0, ms);
         armDeadline(ms);
       },
       cleanup: () => {
         if (cleaned) return;
         cleaned = true;
-        if (providerFlightStarted) decrementInFlight();
-        this.tracker?.untrack(state.requestId);
+        // Every step is guarded: one throwing cleanup must not skip the
+        // remaining cleanups, the abort, or the map eviction (leak).
+        try {
+          if (providerFlightStarted) untrackInFlight(state.requestId);
+        } catch {
+        }
+        try {
+          this.tracker?.untrack(state.requestId);
+        } catch {
+        }
         this.liveControllers.delete(state.requestId);
         clearTimeout(timer);
         timer = undefined;
-        request.signal.removeEventListener("abort", onAbort);
-        for (const cleanup of cleanups.splice(0)) cleanup();
-        abortController.abort(new DOMException("request complete", "AbortError"));
+        try {
+          request.signal.removeEventListener("abort", onAbort);
+        } catch {
+        }
+        for (const cleanup of cleanups.splice(0)) {
+          try {
+            cleanup();
+          } catch {
+          }
+        }
+        try {
+          abortController.abort(new DOMException("request complete", "AbortError"));
+        } catch {
+        }
         this.states.delete(request);
       },
       addCleanup: (cleanup) => {

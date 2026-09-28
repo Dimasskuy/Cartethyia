@@ -221,7 +221,10 @@ export async function completeLogin(
   }
   // The flow is spent, so its listener registration has nothing left to wait
   // for; releasing it here keeps a manual paste from leaving the port bound.
-  config.callbackListener.release(flow.redirectUri, state);
+  // Stateless callbacks arrive with `""`, which matches no filed state —
+  // release by provider so the OpenRouter port does not linger until TTL.
+  if (state.length > 0) config.callbackListener.release(flow.redirectUri, state);
+  else config.callbackListener.releaseProvider(flow.redirectUri, providerId);
   const client = await requireClient(config.providerRegistry, providerId);
   if (!client.exchangeCode) {
     return { ok: false, message: "provider does not support browser authorization" };
@@ -398,6 +401,9 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
         const flow = await config.oauthFlowStore.consumePending(state);
         if (!flow || flow.providerId !== providerId)
           return failurePage("unknown or expired state", wantsJson);
+        // A denial settles the flow too: free its port instead of holding it
+        // until TTL.
+        config.callbackListener.release(flow.redirectUri, state);
         return failurePage("authorization was denied by the provider", wantsJson);
       },
     async startDevice(
@@ -464,7 +470,13 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
             ? {}
             : { providerState: correlation.providerState }),
         });
-        if (polled.status === "pending") return { status: "pending" };
+        if (polled.status === "pending")
+          return {
+            status: "pending",
+            ...(polled.retryAfterSeconds === undefined
+              ? {}
+              : { retryAfterSeconds: polled.retryAfterSeconds }),
+          };
         if (polled.status === "slow_down") {
           return {
             status: "slow_down",

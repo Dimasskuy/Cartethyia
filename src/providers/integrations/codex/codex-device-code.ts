@@ -79,11 +79,18 @@ export async function pollCodexDeviceAuth(
   device: CodexDeviceStart,
   fetchFn: FetchLike = globalThis.fetch,
 ): Promise<CodexDeviceAuthorization | undefined> {
-  const response = await fetchFn(CODEX_DEVICE_TOKEN_URL, {
-    method: "POST",
-    headers: jsonHeaders(),
-    body: JSON.stringify({ device_auth_id: device.deviceAuthId, user_code: device.userCode }),
-  });
+  let response: Response;
+  try {
+    response = await fetchFn(CODEX_DEVICE_TOKEN_URL, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ device_auth_id: device.deviceAuthId, user_code: device.userCode }),
+    });
+  } catch (error) {
+    // A network failure is not "not approved yet": surface it so the caller
+    // can return a failed verdict instead of polling to expiry.
+    throw new Error(`Codex device polling failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   // 403/404 are the endpoint's "not approved yet" answers, not failures.
   if (response.status === 403 || response.status === 404) return undefined;
   if (!response.ok) throw new Error(`Codex device polling failed (${response.status})`);

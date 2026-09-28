@@ -123,20 +123,11 @@ export const PROVIDER_CAPABILITIES = {
     loadModels: async () => (await import("./integrations/grok/grok")).GROK_MODELS,
     loadAuthentication: oauthCapability(() => import("./integrations/grok/grok-oauth"), "grokOAuthClient", { withRefresher: true }),
     loadQuotaCollector: quotaCapability(() => import("./integrations/grok/grok-quota"), "fetchGrokQuota"),
-    loadModelDiscovery: async () => async ({ baseUrl, credential, fetcher }) => {
-      const discovery = await openAIModelDiscovery("grok", { headers: (token) => ({ authorization: `Bearer ${token}` }) })();
-      const models = await discovery({ baseUrl, credential, ...(fetcher ? { fetcher } : {}) });
-      if (!models) return null;
-      // The advertised allowlist is derived from `GROK_MODELS` rather than
-      // restated as a regex here. A second hand-maintained list previously
-      // omitted `grok-4.7` while the catalog and the request builder both
-      // accepted it, so live discovery silently dropped a model the gateway
-      // was willing to serve. Deriving from the catalog keeps one source of
-      // truth: a model the adapter serves is a model discovery may advertise.
-      const { GROK_MODELS } = await import("./integrations/grok/grok");
-      const advertised = new Set(GROK_MODELS.map((model) => model.modelId.toLowerCase()));
-      return models.filter((model) => advertised.has(model.modelId.toLowerCase()));
-    },
+    loadModelDiscovery: async () => async ({ credential, fetcher }) =>
+      (await import("./integrations/grok/grok")).fetchGrokModels({
+        credential,
+        ...(fetcher === undefined ? {} : { fetcher }),
+      }),
   },
   xai: {
     endpointPathsByWireFamily: { responses: "/responses" },
@@ -149,17 +140,20 @@ export const PROVIDER_CAPABILITIES = {
         ...(fetcher === undefined ? {} : { fetcher }),
       }),
   },
-  cursor: {
-    loadAdapter: async () => (await import("./integrations/cursor/cursor")).cursorAdapter,
-    loadModels: async () => (await import("./integrations/cursor/catalog")).CURSOR_MODELS,
-    loadAuthentication: oauthCapability(() => import("./integrations/cursor/cursor-oauth"), "cursorOAuthClient", { withRefresher: true }),
-    loadQuotaCollector: quotaCapability(() => import("./integrations/cursor/cursor-quota"), "fetchCursorQuota"),
-  },
   devin: {
     loadAdapter: async () => (await import("./integrations/devin/devin")).devinAdapter,
     loadModels: async () => (await import("./integrations/devin/catalog")).DEVIN_MODELS,
     loadAuthentication: oauthCapability(() => import("./integrations/devin/devin-oauth"), "devinOAuthClient"),
     loadQuotaCollector: quotaCapability(() => import("./integrations/devin/devin-quota"), "fetchDevinQuota"),
+    // Devin's catalog is per-account: `GetCliModelConfigs` answers with the
+    // models the credential's plan reaches, so the static row is only the
+    // offline seed and discovery needs the credential.
+    loadModelDiscovery: async () => async ({ credential, fetcher }) =>
+      (await import("./integrations/devin/devin")).fetchDevinModels(
+        credential,
+        ...(fetcher === undefined ? [] : [fetcher as typeof fetch]),
+      ),
+    modelDiscoveryRequiresCredential: true,
   },
   antigravity: {
     loadAdapter: async () => (await import("./integrations/antigravity/antigravity")).antigravityAdapter,

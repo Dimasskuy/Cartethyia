@@ -130,7 +130,8 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
     };
   }
   async list(tenantId: string): Promise<readonly ApiKeyRecord[]> {
-    const rows = await this.db.select().from(apiKeys).where(eq(apiKeys.tenantId, tenantId));
+    // Bounded: a large tenant key list must not load fully into memory.
+    const rows = await this.db.select().from(apiKeys).where(eq(apiKeys.tenantId, tenantId)).limit(1000);
     return rows.map((row) => this.map(row));
   }
   async get(tenantId: string, keyId: string): Promise<ApiKeyRecord | undefined> {
@@ -280,9 +281,13 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
     });
   }
   async findActiveByHash(hash: string): Promise<typeof apiKeys.$inferSelect | undefined> {
-    const rows = await this.db.select().from(apiKeys).where(eq(apiKeys.keyHash, hash)).limit(1);
-    const row = rows[0];
-    if (!row || row.revokedAt) return undefined;
-    return row;
+    // Filter revoked in the DB, not in JS: the hot auth path must not fetch
+    // revoked rows it immediately discards.
+    const rows = await this.db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.keyHash, hash), isNull(apiKeys.revokedAt)))
+      .limit(1);
+    return rows[0];
   }
 }

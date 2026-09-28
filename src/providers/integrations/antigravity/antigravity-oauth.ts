@@ -10,6 +10,7 @@ import type { OAuthTokenRefreshResult } from "../../authentication/oauth-refresh
 import { OAuthClient, type FetchLike } from "../../authentication/oauth-client";
 import { discoverAntigravityProject } from "./antigravity-protocol";
 import { isRecord } from "../../../protocol/primitives";
+import { log } from "../../../observability/logger";
 
 // The Google OAuth client identity is public provider configuration. These
 // values match the reference Antigravity client used by Cartethyia-21.beta.
@@ -75,6 +76,7 @@ async function fetchUserinfoEmail(
   try {
     const response = await fetchFn(ANTIGRAVITY_USERINFO_URL, {
       headers: { authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) return undefined;
     const body = (await response.json()) as UserInfoResponse;
@@ -106,6 +108,7 @@ async function exchangeCodeForToken(
       redirect_uri: redirectUri,
       code_verifier: verifier,
     }),
+    signal: AbortSignal.timeout(30_000),
   });
   const body = (await readJsonResponse(
     response,
@@ -119,14 +122,17 @@ async function exchangeCodeForToken(
   ) {
     throw new Error("Antigravity token response omitted access or refresh token");
   }
-  const [email] = await Promise.all([
-    fetchUserinfoEmail(body.access_token, fetchFn),
-    // Enroll the account and resolve its Cloud Code project now: without it
-    // every later dispatch/quota call is rejected as "You do not have a valid
-    // license of this product". A failure here must fail the login so the
-    // operator sees the real reason instead of a stored-but-unusable account.
-    discoverAntigravityProject(body.access_token, { fetcher: fetchFn }),
-  ]);
+  const email = await fetchUserinfoEmail(body.access_token, fetchFn);
+  // Best-effort warm of the Cloud Code project cache: a failure here must not
+  // fail the login (the same lookup retries at dispatch, where it is also
+  // best-effort). Failing the login on project provisioning is what stranded
+  // accounts as "stored-but-unusable" — the token is valid, only the warmup
+  // call hiccuped.
+  try {
+    await discoverAntigravityProject(body.access_token, { fetcher: fetchFn });
+  } catch (error) {
+    log.warn(`[oauth] antigravity project warmup skipped: ${error instanceof Error ? error.message : String(error)}`);
+  }
   if (
     typeof body.expires_in !== "number" ||
     !Number.isFinite(body.expires_in) ||

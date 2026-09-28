@@ -140,10 +140,24 @@ function requiredPoolNumber(value: unknown, field: string, fallback: number): nu
  */
 const REDACTED_POOL_CONFIG_KEYS = new Set(["privateKey", "uuid"]);
 
+/** Case-insensitive substring match for secret-bearing key shapes. */
+function isSecretPoolKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return (
+    lower.includes("secret") ||
+    lower.includes("token") ||
+    lower.includes("password") ||
+    lower.includes("credential") ||
+    lower.includes("apikey") ||
+    lower.includes("api_key") ||
+    lower.includes("auth")
+  );
+}
+
 function sanitizePoolConfig(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") return undefined;
   const entries = Object.entries(value as Record<string, unknown>).filter(
-    ([key]) => !REDACTED_POOL_CONFIG_KEYS.has(key),
+    ([key]) => !REDACTED_POOL_CONFIG_KEYS.has(key) && !isSecretPoolKey(key),
   );
   return Object.fromEntries(entries);
 }

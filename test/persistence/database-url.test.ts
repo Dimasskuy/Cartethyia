@@ -124,15 +124,15 @@ describe("requireDatabaseUrl source resolution", () => {
     process.env.DATABASE_URL = "not-a-url";
     expect(() => requireDatabaseUrl()).toThrow(/DATABASE_URL is not a valid URL/);
 
+    // Default ports are valid: only a missing host is rejected.
     process.env.DATABASE_URL = "postgres://user:pass@host-without-port/db";
-    expect(() => requireDatabaseUrl()).toThrow(/DATABASE_URL must include explicit host and port/);
+    expect(() => requireDatabaseUrl()).not.toThrow();
 
     delete process.env.DATABASE_URL;
+    // PG discrete parts still assemble a valid URL.
     process.env.PGHOST = "db.internal";
     process.env.PGPORT = "5432";
     process.env.PGDATABASE = "app";
-    // The assembled source is reported, not always "DATABASE_URL".
-    process.env.DATABASE_PUBLIC_URL = "postgres://user:pass@no-port/db";
-    expect(() => requireDatabaseUrl()).toThrow(/DATABASE_PUBLIC_URL must include explicit host and port/);
+    expect(() => requireDatabaseUrl()).not.toThrow();
   });
 });

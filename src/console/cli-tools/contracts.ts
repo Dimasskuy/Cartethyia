@@ -550,45 +550,7 @@ export const TOOL_REGISTRY = {
     settingsFile: "Claude/configLibrary/_meta.json",
     defaultModels: [{ id: "claude/claude-sonnet-5", name: "Claude Sonnet 5", alias: "sonnet" }],
   },
-
   // ── Guide-only tools (no fs injection — show steps + downloadable config) ──
-  cursor: {
-    id: "cursor",
-    name: "Cursor",
-    color: "#000000",
-    description: "Cursor Editor BYOK through OpenAI Chat Completions",
-    docsUrl: "https://cursor.com/help/models-and-usage/api-keys",
-    configType: "guide" as const,
-    surface: "chat" as const,
-    defaultModels: [
-      { id: "claude/claude-sonnet-5", name: "Claude Sonnet 5", alias: "sonnet" },
-      { id: "gpt-4.1", name: "GPT-4.1", alias: "gpt-4.1" },
-    ],
-    notes: [
-      {
-        type: "warning",
-        text: "Cursor BYOK is documented for standard, non-reasoning chat models only. Its OpenAI Base URL override is global, may route Cursor-managed GPT models through Cartethyia, and does not change Tab Completion. Verify the installed Cursor build and endpoint reachability.",
-      },
-    ],
-    guideSteps: [
-      { step: 1, title: "Open Settings", desc: "Go to Settings → Models" },
-      {
-        step: 2,
-        title: "Enable OpenAI API key",
-        desc: 'Enable "OpenAI API Key" and, if available in this Cursor build, "Override OpenAI Base URL". The override is global.',
-      },
-      { step: 3, title: "Base URL", value: "{{baseUrl}}" },
-      { step: 4, title: "API Key", type: "apiKeySelector" },
-      { step: 5, title: "Add Custom Model", desc: 'Click "View All Model" → "Add Custom Model"' },
-      {
-        step: 6,
-        title: "Select Model",
-        type: "modelSelector",
-        desc: "Use a model ID exposed by Cartethyia; Cursor BYOK sends Chat Completions requests.",
-      },
-    ],
-  },
-
   roo: {
     id: "roo",
     name: "Roo",

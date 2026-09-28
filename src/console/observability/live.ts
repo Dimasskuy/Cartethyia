@@ -10,7 +10,7 @@
 import { Elysia } from "elysia";
 import { errorResponse, requireScope } from "../shared/errors";
 import type { ConsoleAccessResolver } from "../auth/access";
-import { getInFlightCount, subscribeInFlight } from "../../transport/request/inflight";
+import { getInFlightSnapshot, subscribeInFlight } from "../../transport/request/inflight";
 import type { NetworkPoolSelector } from "../../network/pool/selector";
 import { eq } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
@@ -38,7 +38,7 @@ export function createLiveRoutes(config: LiveConfig): Elysia {
     .get("/live/in-flight", ({ request, set }) => {
       try {
         requireScope(config.accessResolver(request), "dashboard:read");
-        return { inFlight: getInFlightCount() };
+        return getInFlightSnapshot();
       } catch (e) {
         return errorResponse(e, set, "Live operation failed");
       }
@@ -51,8 +51,8 @@ export function createLiveRoutes(config: LiveConfig): Elysia {
       }
       return consoleSseResponse(
         createConsoleSseStream(request.signal, ({ send }) => {
-          const unsubscribe = subscribeInFlight((inFlight) => send("count", { inFlight }));
-          send("count", { inFlight: getInFlightCount() });
+          const unsubscribe = subscribeInFlight((snapshot) => send("count", snapshot));
+          send("count", getInFlightSnapshot());
           return unsubscribe;
         }),
       );

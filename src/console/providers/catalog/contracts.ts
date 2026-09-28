@@ -545,7 +545,8 @@ export interface ProviderCatalogStore {
  * the persisted account id. Dashboard imports this type; do not mirror it.
  */
 export type OAuthDevicePollResponse =
-  | { status: "pending" }
+  /** Still waiting; `retryAfterSeconds` adopts the server cadence when sent. */
+  | { status: "pending"; retryAfterSeconds?: number }
   /** The provider asked us to poll more slowly; the dashboard reschedules. */
   | { status: "slow_down"; retryAfterSeconds?: number }
   | { status: "complete"; accountId: string }

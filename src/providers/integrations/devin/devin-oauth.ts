@@ -99,6 +99,7 @@ export class DevinOAuthClient extends OAuthClient {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({ code, code_verifier: codeVerifier }),
+      signal: AbortSignal.timeout(30_000),
     });
     const payload = await readJsonResponse(response, "Devin token exchange");
     const token = extractToken(payload);

@@ -76,19 +76,7 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     },
   },
   {
-    // Cursor speaks the AgentService Connect+protobuf protocol over HTTP/2.
-    // No canonical wire codec serves it, so the router must not assume the
-    // codec's rich-content coverage or filter its generation controls through
-    // a wire matrix the adapter never reads.
-    id: "cursor",
-    displayName: "Cursor",
-    baseUrl: "https://api2.cursor.sh",
-    bespokeWire: true,
-    credentialUrl: "https://cursor.com",
-    credentialHint: "Signed in with a Cursor account; there is no key to paste.",
-  },
-  {
-    // Devin frames its own gRPC chat protocol; same reasoning as Cursor.
+    // Devin frames its own gRPC chat protocol over a bespoke wire.
     id: "devin",
     displayName: "Devin",
     baseUrl: "https://server.codeium.com",

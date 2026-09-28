@@ -37,15 +37,13 @@ describe("buildCapabilityProfile", () => {
   });
 
   test("gates rich content on a bespoke adapter", () => {
-    // Cursor/Devin frame their own protocol, so they have no generic
-    // rich-content path: only an explicit modality grants the capability.
-    const bespoke = profile("cursor");
+    // Devin frames its own protocol, so it has no generic rich-content path:
+    // only an explicit modality grants the capability.
+    const bespoke = profile("devin");
     expect(bespoke.image).toBe(false);
     expect(bespoke.document).toBe(false);
     expect(bespoke.audio).toBe(false);
-    expect(profile("cursor", { input: ["text", "image"] }).image).toBe(true);
-    // Devin is the other bundled bespoke adapter.
-    expect(profile("devin").image).toBe(false);
+    expect(profile("devin", { input: ["text", "image"] }).image).toBe(true);
   });
 
   test("denies audio on the messages wire, whatever the catalog declares", () => {
@@ -84,12 +82,12 @@ describe("buildCapabilityProfile", () => {
     ).toBe(true);
     // A bespoke adapter is decided by its own declaration, since no wire codec
     // re-encodes it.
-    expect(routeCapabilitiesFor({ capability_profile: profile("cursor"), wire_family: "chat" }).audio).toBe(
+    expect(routeCapabilitiesFor({ capability_profile: profile("devin"), wire_family: "chat" }).audio).toBe(
       false,
     );
     expect(
       routeCapabilitiesFor({
-        capability_profile: profile("cursor", { input: ["text", "audio"] }),
+        capability_profile: profile("devin", { input: ["text", "audio"] }),
         wire_family: "chat",
       }).audio,
     ).toBe(true);

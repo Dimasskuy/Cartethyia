@@ -152,8 +152,22 @@ export class MuseCodeOAuthClient extends OAuthDeviceFlow {
     });
     if (result.status !== "complete") return result;
     const accessToken = result.result.access;
-    const keyPayload = await requestMuseCodeKey(accessToken, this.fetchFn);
-    const { apiKey, accountId } = extractApiKey(keyPayload);
+    // The key mint runs after approval: a 429, a payment gate, or a transient
+    // outage must surface as a failed verdict with its reason — not an
+    // exception that escapes the dashboard's poll request.
+    let keyPayload;
+    try {
+      keyPayload = await requestMuseCodeKey(accessToken, this.fetchFn);
+    } catch (error) {
+      return { status: "failed", reason: error instanceof Error ? error.message : "Muse Code key exchange failed" };
+    }
+    let apiKey: string;
+    let accountId: string | undefined;
+    try {
+      ({ apiKey, accountId } = extractApiKey(keyPayload));
+    } catch (error) {
+      return { status: "failed", reason: error instanceof Error ? error.message : "Muse Code key response is missing api_key" };
+    }
     return {
       status: "complete",
       result: {

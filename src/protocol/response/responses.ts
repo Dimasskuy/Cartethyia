@@ -124,7 +124,7 @@ export function parseResponsesResponseToEvents(
   const output = (json["output"] as Array<Record<string, unknown>>) ?? [];
   let hasToolCall = false;
   const ledger = createToolEmitLedger();
-  for (const item of output) {
+  for (const [outputIndex, item] of output.entries()) {
     if (item["type"] === "message") {
       const content = (item["content"] as Array<Record<string, unknown>>) ?? [];
       for (const part of content) {
@@ -135,7 +135,7 @@ export function parseResponsesResponseToEvents(
             sequence_number: events.length + 1,
             response_id: id,
             ...(itemId === undefined ? {} : { item_id: itemId }),
-            output_index: output.indexOf(item),
+            output_index: outputIndex,
             content: { kind: "text", text: part["text"] },
           });
         }
@@ -161,7 +161,6 @@ export function parseResponsesResponseToEvents(
       const encryptedContent =
         typeof item["encrypted_content"] === "string" ? item["encrypted_content"] : undefined;
       const itemId = typeof item["id"] === "string" ? item["id"] : undefined;
-      const outputIndex = output.indexOf(item);
       const emittedSummaries = summaries.length > 0 ? summaries : [{ index: 0, text: "" }];
       for (const [position, summary] of emittedSummaries.entries()) {
         events.push({
@@ -204,7 +203,7 @@ export function parseResponsesResponseToEvents(
         sequence_number: events.length + 1,
         response_id: id,
         ...(itemId === undefined ? {} : { item_id: itemId }),
-        output_index: output.indexOf(item),
+        output_index: outputIndex,
         call_id: rawCallId,
         name,
         arguments_delta: args,
@@ -231,7 +230,7 @@ export function parseResponsesResponseToEvents(
         sequence_number: events.length + 1,
         response_id: id,
         ...(typeof item["id"] === "string" ? { item_id: item["id"] } : {}),
-        output_index: output.indexOf(item),
+        output_index: outputIndex,
         call_id: callId,
         name: COMPUTER_TOOL_NAME,
         arguments_delta: args,
@@ -252,7 +251,7 @@ export function parseResponsesResponseToEvents(
         type: "content_delta",
         sequence_number: events.length + 1,
         response_id: id,
-        output_index: output.indexOf(item),
+        output_index: outputIndex,
         content: { kind: "extension", name: `responses:${item["type"]}`, payload: item },
       });
     }

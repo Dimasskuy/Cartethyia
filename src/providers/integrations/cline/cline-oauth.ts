@@ -153,7 +153,14 @@ export class ClineOAuthClient extends OAuthDeviceFlow {
         client_id: CLINE_WORKOS_CLIENT_ID,
       }),
     });
-    const payload = await parseJsonAllowingError(response, "Cline WorkOS device polling");
+    // An unparseable poll body is a failed verdict, not an exception: throwing
+    // here kills the dashboard's poll request instead of returning a reason.
+    let payload: Record<string, unknown>;
+    try {
+      payload = await parseJsonAllowingError(response, "Cline WorkOS device polling");
+    } catch (error) {
+      return { status: "failed", reason: error instanceof Error ? error.message : "Cline WorkOS device polling returned invalid JSON" };
+    }
     const error = nonEmptyTrimmedString(payload.error);
     if (!response.ok) {
       const verdict = devicePollBackoff(error, payload.interval);
@@ -172,14 +179,27 @@ export class ClineOAuthClient extends OAuthDeviceFlow {
       this.#sessions.delete(deviceAuthId);
       return { status: "failed", reason: "Cline WorkOS token response omitted access or refresh token" };
     }
-    const registerResponse = await this.fetchFn(CLINE_REGISTER_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ accessToken, refreshToken }),
-    });
-    const registered = await parseJson(registerResponse, "Cline token registration");
+    // Registration runs after the user approved: a transient outage here must
+    // surface as a failed verdict (retryable by restarting) rather than an
+    // exception that escapes the poll.
+    let registered: Record<string, unknown>;
+    try {
+      const registerResponse = await this.fetchFn(CLINE_REGISTER_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ accessToken, refreshToken }),
+      });
+      registered = await parseJson(registerResponse, "Cline token registration");
+    } catch (error) {
+      this.#sessions.delete(deviceAuthId);
+      return { status: "failed", reason: error instanceof Error ? error.message : "Cline token registration failed" };
+    }
     this.#sessions.delete(deviceAuthId);
-    return { status: "complete", result: tokenResult(registered, refreshToken) };
+    try {
+      return { status: "complete", result: tokenResult(registered, refreshToken) };
+    } catch (error) {
+      return { status: "failed", reason: error instanceof Error ? error.message : "Cline OAuth response omitted access or refresh token" };
+    }
   }
 
   override async refresh(refreshToken: string, signal?: AbortSignal): Promise<OAuthTokenRefreshResult> {

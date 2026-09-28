@@ -43,8 +43,20 @@ export function decodeCursor<T>(cursor: string | undefined): T | undefined {
   return copyDecoded<T>(parsed);
 }
 
+function deepFreeze(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  if (Object.isFrozen(value)) return;
+  Object.freeze(value);
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+}
+
 function copyDecoded<T>(value: unknown): T {
-  if (value !== null && typeof value === "object") return { ...(value as object) } as T;
+  // Deep-frozen at rest: a caller mutating a nested field must not poison
+  // the cached entry for later users of the same cursor string.
+  if (value !== null && typeof value === "object") {
+    deepFreeze(value);
+    return structuredClone(value) as T;
+  }
   return value as T;
 }
 

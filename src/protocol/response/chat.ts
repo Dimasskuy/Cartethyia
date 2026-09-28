@@ -70,19 +70,30 @@ export function parseChatResponseToEvents(
         content: { kind: "refusal", text: refusal },
       });
     }
-    const toolCalls = message["tool_calls"] as Array<Record<string, unknown>> | undefined;
-    if (toolCalls) {
+    const toolCalls = message["tool_calls"];
+    if (Array.isArray(toolCalls)) {
       for (const tc of toolCalls) {
-        const fn = tc["function"] as Record<string, unknown> | undefined;
-        const itemId = typeof tc["id"] === "string" ? tc["id"] : undefined;
+        if (typeof tc !== "object" || tc === null) continue;
+        const record = tc as Record<string, unknown>;
+        const fn = typeof record["function"] === "object" && record["function"] !== null
+          ? (record["function"] as Record<string, unknown>)
+          : undefined;
+        // Malformed tool calls (missing id/name) are dropped, not poisoned
+        // into the ledger: an undefined id/name downstream breaks pairing and
+        // surfaces as a confusing unknown-tool error instead of a clean skip.
+        const callId = typeof record["id"] === "string" && record["id"].length > 0 ? record["id"] : undefined;
+        const name = typeof fn?.["name"] === "string" && fn["name"].length > 0 ? fn["name"] : undefined;
+        const args = typeof fn?.["arguments"] === "string" ? fn["arguments"] : "{}";
+        if (callId === undefined || name === undefined) continue;
+        const itemId = callId;
         events.push({
           type: "tool_call_delta",
           sequence_number: events.length + 1,
           response_id: id,
-          ...(itemId === undefined ? {} : { item_id: itemId }),
-          call_id: tc["id"] as string,
-          name: fn?.["name"] as string,
-          arguments_delta: fn?.["arguments"] as string,
+          item_id: itemId,
+          call_id: callId,
+          name,
+          arguments_delta: args,
         });
       }
     }

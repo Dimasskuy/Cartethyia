@@ -33,6 +33,7 @@ import type {
 } from "../authentication/oauth-flow-store";
 import { OAuthClient } from "../authentication/oauth-client";
 import type { FetchLike } from "../authentication/oauth-client";
+import { GatewayError } from "../../transport/gateway-error";
 
 export const ZCODE_AUTHORIZE_URL = "https://chat.z.ai/api/oauth/authorize" as const;
 export const ZCODE_TOKEN_URL = "https://zcode.z.ai/api/v1/oauth/token" as const;
@@ -70,7 +71,9 @@ function unwrapEnvelope(body: unknown, operation: string): unknown {
       code === "200";
     if (root.success === false || !ok) {
       const message = nonEmptyTrimmedString(root.msg) ?? `${operation} failed`;
-      throw new Error(`Z.AI ${message}`);
+      // `cartethyia` origin so the dialog shows the provider's own reason
+      // instead of the generic "check the console log" fallback.
+      throw new GatewayError("authentication_failed", 400, `Z.AI ${message}`, { providerId: "zcode" });
     }
   }
   return root.data ?? body;
@@ -87,6 +90,7 @@ async function postJson(
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json", ...headers },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   return readJsonResponse(response, label);
 }
@@ -99,6 +103,7 @@ async function getJson(
 ): Promise<unknown> {
   const response = await fetchFn(url, {
     headers: { accept: "application/json", ...headers },
+    signal: AbortSignal.timeout(30_000),
   });
   return readJsonResponse(response, label);
 }

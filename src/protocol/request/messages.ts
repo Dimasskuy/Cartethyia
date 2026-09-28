@@ -8,7 +8,9 @@ import {
   THINKING_STRIPPED_SAMPLING_CONTROLS,
   ensureMaxTokensForThinking,
   isThinkingEnabled,
+  normalizeWireMaxTokens,
 } from "../../transport/translation/capabilities";
+import { resolveWireMaxTokens, WIRE_TOKEN_BOUNDS } from "../../transport/translation/quirks";
 import {
   isClaudeBillingHeaderText,
   normalizeAnthropicToolCallId,
@@ -26,13 +28,13 @@ import {
 import { log } from "../../observability/logger";
 import { clampReasoningEffort, resolveSupportedReasoningEfforts } from "../../transport/translation/thinking";
 
-export const OAUTH_MESSAGES_MAX_OUTPUT_TOKENS = 64_000;
+export const OAUTH_MESSAGES_MAX_OUTPUT_TOKENS = WIRE_TOKEN_BOUNDS["messages"]?.oauthCeiling ?? 64_000;
 
 /**
  * Gateway default when the caller sent no max_tokens (Anthropic requires
  * the field). Explicit and warned at the call site — never silent.
  */
-export const ANTHROPIC_DEFAULT_MAX_TOKENS = 4_096;
+export const ANTHROPIC_DEFAULT_MAX_TOKENS = WIRE_TOKEN_BOUNDS["messages"]?.defaultMaxTokens ?? 4_096;
 
 /** Anthropic Messages' documented base64-image media-type allowlist. */
 const ANTHROPIC_IMAGE_MEDIA_TYPES = new Set([
@@ -411,28 +413,24 @@ export function canonicalToClaudeMessagesPayload(
     }
   }
   const isOAuth = options.isOAuth ?? false;
-  // Anthropic requires max_tokens: the caller's value wins, widened to the
-  // tool-call floor when tools are present (narrow defaults truncate real
-  // tool arguments), absent values fall back to the documented default.
-  // OAuth is clamped to the known CLI ceiling; API-key stays verbatim so an
-  // over-limit value surfaces as an honest upstream error.
-  const TOOL_CALL_MAX_TOKENS_FLOOR = 32_000;
-  const requestedMax = request.generation_controls.max_tokens;
+  // Anthropic requires max_tokens: resolved from WIRE_TOKEN_BOUNDS (default,
+  // tool-call floor, OAuth ceiling). API-key stays verbatim above the table
+  // so an over-limit value surfaces as an honest upstream error.
+  const TOOL_CALL_MAX_TOKENS_FLOOR = WIRE_TOKEN_BOUNDS["messages"]?.toolCallFloor ?? 32_000;
+  const normalizedControls = normalizeWireMaxTokens(request.generation_controls);
+  const requestedMax = normalizedControls.max_tokens;
   const hasTools = (request.tools?.length ?? 0) > 0;
-  let maxTokens = requestedMax ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
+  let maxTokens = resolveWireMaxTokens("messages", { max_tokens: requestedMax }, { hasTools, isOAuth }) ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
   if (requestedMax === undefined) {
     log.warn("claude: max_tokens absent, defaulting", {
       max_tokens: maxTokens,
     });
-  }
-  if (hasTools && maxTokens < TOOL_CALL_MAX_TOKENS_FLOOR) {
+  } else if (hasTools && requestedMax < TOOL_CALL_MAX_TOKENS_FLOOR) {
     log.warn("claude: max_tokens floored for tool calls", {
       requested: maxTokens,
       floor: TOOL_CALL_MAX_TOKENS_FLOOR,
     });
-    maxTokens = TOOL_CALL_MAX_TOKENS_FLOOR;
   }
-  if (isOAuth) maxTokens = Math.min(maxTokens, OAUTH_MESSAGES_MAX_OUTPUT_TOKENS);
   const thinkingEnabled = isThinkingEnabled(request);
   if (thinkingEnabled && request.reasoning?.budget_tokens !== undefined) {
     maxTokens = ensureMaxTokensForThinking(
@@ -573,12 +571,23 @@ export function canonicalToClaudeMessagesPayload(
   const inferenceGeo = controls["extension:inference_geo"];
   if (stringValue(inferenceGeo)) payload.inference_geo = inferenceGeo;
   const serviceTier = controls["extension:service_tier"];
-  if (serviceTier === "auto" || serviceTier === "standard_only")
+  if (serviceTier === "auto" || serviceTier === "standard_only") {
     payload.service_tier = serviceTier;
+  } else if (serviceTier !== undefined) {
+    log.warn("claude: unsupported service_tier dropped on Messages wire", {
+      service_tier: serviceTier,
+    });
+  }
   const userProfileId = controls["extension:user_profile_id"];
   if (stringValue(userProfileId)) payload.user_profile_id = userProfileId;
   const workspaceId = controls["extension:workspace_id"];
   if (stringValue(workspaceId)) payload.workspace_id = workspaceId;
+  const metadataUserId = controls["extension:metadata_user_id"];
+  if (stringValue(metadataUserId)) {
+    const existingMetadata = isRecord(payload.metadata) ? { ...payload.metadata } : {};
+    existingMetadata.user_id = metadataUserId;
+    payload.metadata = existingMetadata;
+  }
   // Messages reports token counts only when asked. A streaming custom
   // Anthropic-compatible provider otherwise ends with no usage frame, so the
   // request records input 0 / output 0 even though the model ran.

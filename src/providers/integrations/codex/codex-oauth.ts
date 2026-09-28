@@ -118,7 +118,12 @@ async function exchangeCodeForToken(
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
     body,
+    signal: AbortSignal.timeout(30_000),
   });
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => "")).trim().slice(0, 200);
+    throw new Error(`Codex token exchange failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
   const data = (await response.json()) as TokenResponse;
   return asExchangeTokenResponse(data);
 }
@@ -196,14 +201,26 @@ export class CodexOAuthClient extends OAuthDeviceFlow {
     if (device === undefined) return { status: "failed", reason: "unknown device authorization" };
     // One attempt per call: the dashboard polls on its own interval, so this
     // returns `pending` between attempts rather than blocking the request.
-    const authorization = await pollCodexDeviceAuth(device, this.fetchFn);
+    // A transient poll failure surfaces as a failed verdict with a reason —
+    // never an exception that escapes the dashboard's poll request.
+    let authorization;
+    try {
+      authorization = await pollCodexDeviceAuth(device, this.fetchFn);
+    } catch (error) {
+      return { status: "failed", reason: error instanceof Error ? error.message : "Codex device polling failed" };
+    }
     if (authorization === undefined) return { status: "pending" };
-    const result = await exchangeCodeForToken(
-      authorization.authorizationCode,
-      authorization.codeVerifier,
-      CODEX_DEVICE_REDIRECT_URI,
-      this.fetchFn,
-    );
+    let result;
+    try {
+      result = await exchangeCodeForToken(
+        authorization.authorizationCode,
+        authorization.codeVerifier,
+        CODEX_DEVICE_REDIRECT_URI,
+        this.fetchFn,
+      );
+    } catch (error) {
+      return { status: "failed", reason: error instanceof Error ? error.message : "Codex token exchange failed" };
+    }
     // Only after the exchange has succeeded: the authorization code is
     // single-use, so dropping the state first would strand a failed exchange
     // with no way to retry, forcing the operator through device authorization
@@ -221,7 +238,7 @@ export class CodexOAuthClient extends OAuthDeviceFlow {
         grant_type: "refresh_token",
         refresh_token: refreshToken,
       }),
-      ...(signal === undefined ? {} : { signal }),
+      signal: signal ?? AbortSignal.timeout(30_000),
     });
     const text = await response.text();
     if (!response.ok) {

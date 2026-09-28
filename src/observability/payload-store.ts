@@ -130,7 +130,11 @@ export function writePayloadFrame(payload: unknown, expiresAt: Date): Promise<Pa
 }
 
 export async function readPayloadFrame(reference: PayloadFileReference): Promise<unknown | undefined> {
-  const path = join(payloadDirectory(), reference.file);
+  // Basename-constrain the reference: a hostile/restored row carrying
+  // `../../x` must not escape the payload directory (path traversal).
+  const safeFile = basename(reference.file);
+  if (safeFile !== reference.file || safeFile.length === 0) return undefined;
+  const path = join(payloadDirectory(), safeFile);
   const data = await readFile(path);
   if (reference.offset < 0 || reference.offset + reference.length > data.byteLength) return undefined;
   const frame = data.subarray(reference.offset, reference.offset + reference.length);

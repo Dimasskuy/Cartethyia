@@ -149,7 +149,10 @@ describe("Codex OAuth and Identity Integration", () => {
           const store = new OAuthFlowStore(fakeRedis());
           const client = new CodexOAuthClient(fetchFn, store);
           const started = await client.startDeviceAuth();
-          await expect(client.pollDeviceAuth(started.deviceAuthId)).rejects.toThrow();
+          // A failed exchange surfaces as a failed verdict (not a throw) so
+          // the dashboard shows its reason — while the state survives for retry.
+          const polled = await client.pollDeviceAuth(started.deviceAuthId);
+          expect(polled.status).toBe("failed");
           expect(await store.getDeviceState(started.deviceAuthId)).toBeDefined();
         });
 

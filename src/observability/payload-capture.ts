@@ -69,13 +69,11 @@ export function buildPayloadRecord(
     input.providerRequestBody === undefined ? undefined : redactTelemetryValue(input.providerRequestBody);
   const providerResponseBody =
     input.providerResponseBody === undefined ? undefined : redactTelemetryValue(input.providerResponseBody);
-  const jsonSize = (value: unknown): number => JSON.stringify(value ?? null).length;
-  const approxSize =
-    jsonSize(requestBody) +
-    jsonSize(responseBody) +
-    jsonSize(clientResponseBody) +
-    jsonSize(providerRequestBody) +
-    jsonSize(providerResponseBody);
+  // Serialize each body exactly once: the text is both measured and stored,
+  // so the hot path pays one JSON.stringify per body instead of five.
+  const bodies = [requestBody, responseBody, clientResponseBody, providerRequestBody, providerResponseBody];
+  const serialized = bodies.map((body) => JSON.stringify(body ?? null));
+  const approxSize = serialized.reduce((total, text) => total + text.length, 0);
   let storedRequestBody: unknown = requestBody;
   let storedResponseBody: unknown = responseBody;
   let storedClientResponseBody: unknown = clientResponseBody;

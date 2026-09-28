@@ -61,9 +61,7 @@ const PROVIDER_MAP: Readonly<Record<string, string>> = {
   codex: "codex",
   anthropic: "anthropic",
   openai: "openai",
-  cursor: "cursor",
   antigravity: "antigravity",
-  qoder: "qoder",
   kimi: "kimi",
   cline: "cline",
   clinepass: "cline",
@@ -119,7 +117,7 @@ function credentialOf(entry: Row): string | null {
 }
 
 /** OAuth-backed providers store a refresh token rather than a static key. */
-const OAUTH_PROVIDERS = new Set(["claude", "codex", "cursor", "antigravity", "qoder", "kimi", "cline", "clinepass"]);
+const OAUTH_PROVIDERS = new Set(["claude", "codex", "antigravity", "qoder", "kimi", "cline", "clinepass"]);
 
 /** Converts one model reference, honouring the provider map. `null` = unsupported. */
 function modelReference(value: unknown, remapped: Set<string>): string | null {

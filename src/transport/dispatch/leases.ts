@@ -205,8 +205,11 @@ export async function releaseAttemptLeases(
   },
   routingEngine: Pick<RoutingEngine, "release">,
 ): Promise<void> {
-  leases.proxySlot?.release();
+  // Every release runs inside the settled set: a throwing pool-slot release
+  // must not skip the admission lease or routing reservation (slot + inflight
+  // leak). Sync release is wrapped so it participates in the same guarantee.
   await Promise.allSettled([
+    ...(leases.proxySlot ? [Promise.resolve().then(() => leases.proxySlot?.release())] : []),
     ...(leases.lease ? [leases.lease.release()] : []),
     ...(leases.reservation ? [routingEngine.release(leases.reservation)] : []),
   ]);

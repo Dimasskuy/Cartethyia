@@ -256,8 +256,8 @@ export class CodexStreamFrameProcessor {
   // output_index routing + `output_item.added` registration.
   readonly #openItems = new Map<string, OpenItemEntry>();
   readonly #openItemsByOutputIndex = new Map<number, OpenItemEntry>();
-  // Track tool call argument accumulation, read when the terminal event
-  // reconciles the streamed arguments against the authoritative ones.
+  // Track tool call argument accumulation, retained for diagnostics and
+  // future reconciliation of streamed arguments against authoritative ones.
   readonly #toolCallArgs = new Map<string, string[]>();
   // Whitespace-loop guard: a model stuck emitting only whitespace tool-call
   // argument deltas would otherwise hang the dispatch loop forever.
@@ -439,7 +439,20 @@ export class CodexStreamFrameProcessor {
     ) {
       const summary = readResponsesReasoningDelta(json);
       if (summary !== undefined) {
-        events.push(reasoningEvent({ summary }, this.#seq++));
+        const summaryIndex =
+          typeof json["summary_index"] === "number" && Number.isInteger(json["summary_index"])
+            ? json["summary_index"]
+            : 0;
+        events.push({
+          type: "content_delta",
+          sequence_number: this.#seq++,
+          content: {
+            kind: "reasoning",
+            payload: summary,
+            summary,
+            summary_index: summaryIndex,
+          },
+        });
         const reasoningItemId =
           typeof json["item_id"] === "string" ? json["item_id"] : undefined;
         if (reasoningItemId !== undefined)
@@ -449,7 +462,16 @@ export class CodexStreamFrameProcessor {
       t === "response.reasoning_text.delta" &&
       typeof json["delta"] === "string"
     ) {
-      events.push(reasoningEvent({ summary: json["delta"] }, this.#seq++));
+      events.push({
+        type: "content_delta",
+        sequence_number: this.#seq++,
+        content: {
+          kind: "reasoning",
+          payload: json["delta"],
+          summary: json["delta"],
+          summary_index: 0,
+        },
+      });
     } else if (t === "response.function_call_arguments.done") {
       const rawCallId =
         (json["call_id"] as string | undefined) ??

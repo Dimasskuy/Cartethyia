@@ -10,6 +10,13 @@ const readerAccess: AccessDecision = {
   admissionIdentity: "test-session",
 };
 
+const writerAccess: AccessDecision = {
+  id: "test-session",
+  tenantId: "tenant-1",
+  scopes: ["dashboard:write"],
+  admissionIdentity: "test-session",
+};
+
 function appWith(access: AccessDecision | undefined) {
   return createLogRoutes({ accessResolver: () => access });
 }
@@ -51,7 +58,7 @@ describe("console logs routes", () => {
     pushConsoleLog("info", "before clear");
     const recorded: Array<{ action: string; target: string }> = [];
     const app = createLogRoutes({
-      accessResolver: () => readerAccess,
+      accessResolver: () => writerAccess,
       auditSink: {
         record: async (entry) => void recorded.push({ action: entry.action, target: entry.target }),
       },
@@ -61,8 +68,15 @@ describe("console logs routes", () => {
     );
     expect(response.status).toBe(200);
     expect(recorded).toEqual([{ action: "console_logs.cleared", target: "console-logs" }]);
-    const after = await app.handle(new Request("http://localhost/logs"));
+    const reread = createLogRoutes({ accessResolver: () => readerAccess });
+    const after = await reread.handle(new Request("http://localhost/logs"));
     expect(((await after.json()) as { lines: unknown[] }).lines).toEqual([]);
+  });
+
+  test("clear rejects read-only callers", async () => {
+    const app = createLogRoutes({ accessResolver: () => readerAccess });
+    const response = await app.handle(new Request("http://localhost/logs", { method: "DELETE" }));
+    expect(response.status).toBe(403);
   });
 
   test("stream emits an init snapshot frame first", async () => {

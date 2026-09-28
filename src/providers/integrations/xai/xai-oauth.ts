@@ -114,7 +114,9 @@ export class XaiOAuthClient extends OAuthDeviceFlow {
       body: new URLSearchParams({ client_id: XAI_CLIENT_ID, scope: XAI_SCOPE }),
     });
     const payload = await readJsonResponse(response, "xAI device authorization");
-    const start = parseDeviceAuthStart(payload, { intervalSeconds: 5, expiresInSeconds: 1_800 });
+    // Same 900 s bound as the Redis device correlation: never advertise a
+    // lifetime the store cannot honor.
+    const start = parseDeviceAuthStart(payload, { intervalSeconds: 5, expiresInSeconds: 900 });
     if (!start) throw new Error("xAI device response omitted required fields");
     return {
       verificationUri: start.verificationUriComplete ?? start.verificationUri,

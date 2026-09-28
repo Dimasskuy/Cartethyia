@@ -4,7 +4,7 @@ const failedIcons = new Set<string>();
 
 const iconAssets: Record<string, { file: string; ext: "svg" | "webp" }> = {
   claude: { file: "claude-code", ext: "svg" },
-  anthropic: { file: "anthropic-light", ext: "svg" },
+  anthropic: { file: "anthropics", ext: "webp" },
   openai: { file: "openai-light", ext: "svg" },
   codex: { file: "codex", ext: "webp" },
   opencode: { file: "opencode", ext: "webp" },
@@ -17,7 +17,7 @@ const iconAssets: Record<string, { file: string; ext: "svg" | "webp" }> = {
   blackboxai: { file: "blackbox", ext: "svg" },
   grok: { file: "grok-build", ext: "webp" },
   "grok-build": { file: "grok-build", ext: "webp" },
-  xai: { file: "grok-light", ext: "svg" },
+  xai: { file: "grok-build", ext: "webp" },
   inferhub: { file: "inferhub", ext: "svg" },
   gemini: { file: "gemini", ext: "webp" },
   groq: { file: "groq", ext: "webp" },
@@ -75,7 +75,6 @@ const iconAssets: Record<string, { file: string; ext: "svg" | "webp" }> = {
   "kilo-gateway": { file: "kilocode-gateway", ext: "webp" },
   openclaw: { file: "openclaw", ext: "webp" },
   cowork: { file: "claude", ext: "webp" },
-  cursor: { file: "cursor", ext: "webp" },
   roo: { file: "roo", ext: "webp" },
   continue: { file: "continue", ext: "webp" },
   amp: { file: "amp", ext: "webp" },

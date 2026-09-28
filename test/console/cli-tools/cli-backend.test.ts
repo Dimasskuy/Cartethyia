@@ -21,10 +21,10 @@ describe("CliToolService", () => {
   } as unknown as CliToolMappingStore;
   const service = new CliToolService(stubStore);
 
-  test("registry returns 18 tools partitioned between file and guide entries", () => {
+  test("registry returns 17 tools partitioned between file and guide entries", () => {
     const registry = service.getRegistry();
-    expect(registry).toHaveLength(18);
-    expect(registry.filter((tool) => tool.configType === "guide")).toHaveLength(5);
+    expect(registry).toHaveLength(17);
+    expect(registry.filter((tool) => tool.configType === "guide")).toHaveLength(4);
     expect(registry.filter((tool) => tool.configType !== "guide")).toHaveLength(13);
   });
 
@@ -52,7 +52,7 @@ describe("CliToolService", () => {
       const statuses = await service.getAllStatuses();
       expect(statuses.claude?.configured).toBe(false);
       expect(statuses.claude?.message).toBe("Failed to read status");
-      expect(Object.keys(statuses)).toHaveLength(18);
+      expect(Object.keys(statuses)).toHaveLength(17);
     } finally {
       INJECTORS.claude = original;
     }

@@ -58,11 +58,12 @@ function validateConnectionUrl(url: string, source: string, schemes: readonly st
       `${source} must use the ${schemes.join(" or ")} scheme (got "${parsed.protocol}")`,
     );
   }
-  if (!parsed.hostname || !parsed.port) {
-    throw new Error(
-      `${source} must include explicit host and port (got hostname="${parsed.hostname}" port="${parsed.port}")`,
-    );
+  if (!parsed.hostname) {
+    throw new Error(`${source} must include an explicit host (got hostname="${parsed.hostname}")`);
   }
+  // Default ports are valid: postgres://host/db and redis://host rely on
+  // 5432/6379 and must not force operators to append them by hand.
+  if (!parsed.port) return url;
   return url;
 }
 

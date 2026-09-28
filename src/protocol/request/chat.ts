@@ -4,7 +4,8 @@
 import type { CanonicalRequest, ResponseFormat } from "../../transport/canonical-model";
 import { isRecord } from "../primitives";
 import { markLatestBreakpoint } from "../../transport/translation/cache-controls";
-import { pickWireSupportedControls } from "../../transport/translation/capabilities";
+import { normalizeWireMaxTokens, pickWireSupportedControls } from "../../transport/translation/capabilities";
+import { resolveWireMaxTokens } from "../../transport/translation/quirks";
 import {
   clampReasoningEffort,
   resolveSupportedReasoningEfforts,
@@ -448,9 +449,9 @@ export function canonicalToChatPayload(
   if (Array.isArray(modalities)) payload["modalities"] = modalities;
   const audio = request.generation_controls["extension:audio"];
   if (isRecord(audio)) payload["audio"] = audio;
-  const metadata = request.generation_controls["extension:metadata"];
+  const metadata = request.generation_controls["extension:metadata"] ?? request.generation_controls["extension:responses.item_metadata"];
   if (isRecord(metadata)) payload["metadata"] = metadata;
-  const user = request.generation_controls["extension:user"];
+  const user = request.generation_controls["extension:user"] ?? request.generation_controls["extension:responses.user"];
   if (typeof user === "string") payload["user"] = user;
   // Remaining documented top-level Chat parameters, forwarded verbatim when
   // the caller supplied them (they have no canonical generation-control slot).
@@ -466,25 +467,23 @@ export function canonicalToChatPayload(
     ["extension:logit_bias", "logit_bias"],
     ["extension:prompt_cache_options", "prompt_cache_options"],
     ["extension:prompt_cache_retention", "prompt_cache_retention"],
+    ["extension:prompt_cache_key", "prompt_cache_key"],
   ];
   for (const [extension, field] of passthrough) {
-    const value = request.generation_controls[extension as `extension:${string}`];
+    const value =
+      request.generation_controls[extension as `extension:${string}`] ??
+      request.generation_controls[`extension:responses.${field}` as `extension:${string}`];
     if (value !== undefined) payload[field] = value;
   }
-  Object.assign(payload, pickWireSupportedControls(request.generation_controls, "chat"));
-  // Bound the Chat-wire ceiling after the pick: the pick forwards the caller's
-  // max_tokens verbatim, so clamping before it would be overwritten. 32_000
-  // intentionally equals TOOL_CALL_MAX_TOKENS_FLOOR in
-  // src/protocol/request/messages.ts — the same safe magnitude, not a copy to
-  // refactor. Free-tier Chat backends reject unbounded values (e.g. 128000)
-  // with a generic invalid-argument 400.
+  Object.assign(payload, pickWireSupportedControls(normalizeWireMaxTokens(request.generation_controls), "chat"));
+  // Bound the Chat-wire ceiling after the pick (see WIRE_TOKEN_BOUNDS): the
+  // pick forwards the caller's max_tokens verbatim, so clamping before it
+  // would be overwritten. Free-tier Chat backends reject unbounded values
+  // (e.g. 128000) with a generic invalid-argument 400.
   const requestedMaxTokens = payload["max_tokens"];
-  if (
-    typeof requestedMaxTokens === "number" &&
-    Number.isFinite(requestedMaxTokens) &&
-    requestedMaxTokens > 32_000
-  ) {
-    payload["max_tokens"] = 32_000;
+  if (typeof requestedMaxTokens === "number" && Number.isFinite(requestedMaxTokens)) {
+    const bounded = resolveWireMaxTokens("chat", { max_tokens: requestedMaxTokens });
+    if (bounded !== undefined) payload["max_tokens"] = bounded;
   }
   return payload;
 }

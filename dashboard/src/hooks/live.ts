@@ -6,15 +6,23 @@ import { queryKeys } from "../data/query-keys";
 export interface InFlightState {
   /** Latest live count, or null before the first snapshot arrives. */
   readonly count: number | null;
+  /** Unique client IPs behind the live count, or null before arrival. */
+  readonly uniqueIps: number | null;
   /** True while the SSE stream is open and pushing. */
   readonly live: boolean;
 }
 
-function readCount(payload: unknown): number | null {
-  if (isRecord(payload) && typeof payload.inFlight === "number" && Number.isFinite(payload.inFlight)) {
-    return Math.max(0, Math.floor(payload.inFlight));
-  }
-  return null;
+function readSnapshot(payload: unknown): { count: number; uniqueIps: number } | null {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.inFlight !== "number" || !Number.isFinite(payload.inFlight)) return null;
+  const count = Math.max(0, Math.floor(payload.inFlight));
+  // Older gateways send no `uniqueIps`: fall back to the count so the pill
+  // still renders instead of sticking at its loading state.
+  const uniqueIps =
+    typeof payload.uniqueIps === "number" && Number.isFinite(payload.uniqueIps)
+      ? Math.max(0, Math.min(count, Math.floor(payload.uniqueIps)))
+      : count;
+  return { count, uniqueIps };
 }
 
 const STREAM_RETRY_MS = 5_000;
@@ -29,6 +37,7 @@ const STREAM_RETRY_MS = 5_000;
  */
 export function useInFlight(): InFlightState {
   const [count, setCount] = useState<number | null>(null);
+  const [uniqueIps, setUniqueIps] = useState<number | null>(null);
   const [live, setLive] = useState(false);
 
   useEffect(() => {
@@ -42,17 +51,21 @@ export function useInFlight(): InFlightState {
       try {
         const snapshot = await consoleRequest<unknown>("/live/in-flight");
         if (stopped || currentGeneration !== generation) return;
-        const next = readCount(snapshot);
-        if (next !== null) setCount(next);
+        const next = readSnapshot(snapshot);
+        if (next !== null) {
+          setCount(next.count);
+          setUniqueIps(next.uniqueIps);
+        }
 
         const nextSource = new EventSource("/console/api/live/in-flight/stream");
         source = nextSource;
         nextSource.addEventListener("count", (event) => {
           if (stopped || currentGeneration !== generation) return;
           try {
-            const count = readCount(JSON.parse((event as MessageEvent).data as string));
-            if (count !== null) {
-              setCount(count);
+            const seen = readSnapshot(JSON.parse((event as MessageEvent).data as string));
+            if (seen !== null) {
+              setCount(seen.count);
+              setUniqueIps(seen.uniqueIps);
               setLive(true);
             }
           } catch {
@@ -88,7 +101,7 @@ export function useInFlight(): InFlightState {
     };
   }, []);
 
-  return { count, live };
+  return { count, uniqueIps, live };
 }
 
 export interface PoolUsageRow {

@@ -113,6 +113,10 @@ export async function* decodeSseEvents(
       yield* dispatchEvent();
       return;
     }
+    // Benign vendor extensions (e.g. `x-foo:`, `:comment` handled above) must
+    // not 502 the request: only `event:`/`data:` carry payload, the rest is
+    // heartbeat/metadata. Unknown colon-prefixed fields are ignored.
+    if (/^[a-zA-Z0-9_-]+:/.test(line)) return;
     throw new GatewayError("platform_unavailable", 502, "Malformed SSE line", {}, "upstream");
   }
 

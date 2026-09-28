@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createLiveRoutes } from "../../../src/console/observability/live";
-import { resetInFlightForTests, incrementInFlight } from "../../../src/transport/request/inflight";
+import { resetInFlightForTests, trackInFlight } from "../../../src/transport/request/inflight";
 import { NetworkPoolSelector } from "../../../src/network/pool/selector";
 import type { AccessDecision } from "../../../src/security/access-control";
 
@@ -18,14 +18,14 @@ function appWith(access: AccessDecision | undefined, selector?: NetworkPoolSelec
 describe("live in-flight routes", () => {
   beforeEach(() => resetInFlightForTests());
 
-  test("snapshot returns the current count", async () => {
-    incrementInFlight();
-    incrementInFlight();
+  test("snapshot returns the current count and unique IPs", async () => {
+    trackInFlight("r1", "1.1.1.1");
+    trackInFlight("r2", "1.1.1.1");
     const response = await appWith(readerAccess).handle(
       new Request("http://localhost/live/in-flight"),
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ inFlight: 2 });
+    expect(await response.json()).toEqual({ inFlight: 2, uniqueIps: 1 });
   });
 
   test("snapshot rejects unauthenticated callers", async () => {
@@ -36,7 +36,7 @@ describe("live in-flight routes", () => {
   });
 
   test("stream emits a count snapshot frame first", async () => {
-    incrementInFlight();
+    trackInFlight("r1", "9.9.9.9");
     const response = await appWith(readerAccess).handle(
       new Request("http://localhost/live/in-flight/stream"),
     );
@@ -45,7 +45,7 @@ describe("live in-flight routes", () => {
     const reader = response.body!.getReader();
     const first = await reader.read();
     await reader.cancel();
-    expect(new TextDecoder().decode(first.value)).toContain(`event: count\ndata: {"inFlight":1}`);
+    expect(new TextDecoder().decode(first.value)).toContain(`event: count\ndata: {"inFlight":1,"uniqueIps":1}`);
   });
 
   test("stream subscribes before its snapshot so count changes are not lost", async () => {
@@ -56,11 +56,11 @@ describe("live in-flight routes", () => {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     const snapshot = await reader.read();
-    incrementInFlight();
+    trackInFlight("r1", "7.7.7.7");
     const update = await reader.read();
     await reader.cancel();
-    expect(decoder.decode(snapshot.value)).toContain(`event: count\ndata: {"inFlight":0}`);
-    expect(decoder.decode(update.value)).toContain(`event: count\ndata: {"inFlight":1}`);
+    expect(decoder.decode(snapshot.value)).toContain(`event: count\ndata: {"inFlight":0,"uniqueIps":0}`);
+    expect(decoder.decode(update.value)).toContain(`event: count\ndata: {"inFlight":1,"uniqueIps":1}`);
   });
 
   test("stream rejects unauthenticated callers without opening a stream", async () => {

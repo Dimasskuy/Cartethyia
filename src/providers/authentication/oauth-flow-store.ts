@@ -43,7 +43,13 @@ export interface OAuthDeviceFlowContext {
 }
 
 export type OAuthDevicePollResult =
-  | { readonly status: "pending" }
+  /**
+   * Still waiting on the user. `retryAfterSeconds` carries the server's
+   * requested cadence when it sends one (`interval` on a pending answer) —
+   * the dashboard adopts it so the next poll does not fire early and draw a
+   * rate limit (RFC 8628 §3.5).
+   */
+  | { readonly status: "pending"; readonly retryAfterSeconds?: number }
   /**
    * The authorization server asked us to back off (`slow_down`, RFC 8628
    * §3.5). GitHub enforces it hard: continuing at the original cadence makes
@@ -163,11 +169,16 @@ export function isDevicePollSlowDown(error: string | undefined): boolean {
 export function devicePollBackoff(
   error: string | undefined,
   interval: unknown,
-): { status: "pending" } | { status: "slow_down"; retryAfterSeconds?: number } | undefined {
-  if (isDevicePollPending(error)) return { status: "pending" };
+): { status: "pending"; retryAfterSeconds?: number } | { status: "slow_down"; retryAfterSeconds?: number } | undefined {
+  // A pending answer may carry the server's requested cadence (`interval`):
+  // honor it the same way as slow_down so the next poll does not fire
+  // earlier than the server allows — polling faster than the interval is
+  // what gets the client rate-limited (RFC 8628 §3.5).
+  const seconds =
+    typeof interval === "number" && Number.isFinite(interval) && interval > 0 ? interval : undefined;
+  if (isDevicePollPending(error))
+    return { status: "pending", ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }) };
   if (isDevicePollSlowDown(error)) {
-    const seconds =
-      typeof interval === "number" && Number.isFinite(interval) && interval > 0 ? interval : undefined;
     return { status: "slow_down", ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }) };
   }
   return undefined;

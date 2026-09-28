@@ -48,9 +48,13 @@ describe("requireRedisUrl (via getRedis)", () => {
     expect(() => getRedis()).toThrow("REDIS_URL must use the redis: or rediss: scheme");
   });
 
-  test("throws without explicit host and port", () => {
+  test("accepts a default-port REDIS_URL and still rejects a missing host", () => {
     process.env.REDIS_URL = "redis://localhost";
-    expect(() => getRedis()).toThrow("must include explicit host and port");
+    expect(() => getRedis()).not.toThrow();
+    closeRedis();
+    process.env.REDIS_URL = "redis:///0";
+    expect(() => getRedis()).toThrow("must include an explicit host");
+    delete process.env.REDIS_URL;
   });
 
   test("falls through to the discrete variables when REDIS_URL is empty", async () => {

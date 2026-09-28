@@ -42,16 +42,16 @@ describe("registry.test.ts", () => {
         },
       });
       registry.register({
-        provider_id: "cursor",
+        provider_id: "devin",
         load: async () => {
-          loads.push("cursor");
-          return fakeAdapter("cursor");
+          loads.push("devin");
+          return fakeAdapter("devin");
         },
       });
 
       const snapshot = await registry.load();
-      expect([...snapshot.adapters.keys()].sort()).toEqual(["cursor", "openai"]);
-      expect(loads.sort()).toEqual(["cursor", "openai"]);
+      expect([...snapshot.adapters.keys()].sort()).toEqual(["devin", "openai"]);
+      expect(loads.sort()).toEqual(["devin", "openai"]);
     });
 
     test("rejects duplicate registrations and adapter identity drift", async () => {
@@ -114,24 +114,24 @@ describe("registry.test.ts", () => {
         },
       });
       registry.register({
-        provider_id: "cursor",
+        provider_id: "devin",
         load: async () => {
-          loads.push("cursor");
-          return fakeAdapter("cursor");
+          loads.push("devin");
+          return fakeAdapter("devin");
         },
       });
 
       expect(loads).toEqual([]);
-      const cursor = await registry.resolve("cursor");
-      expect(cursor?.provider_id).toBe("cursor");
-      expect(loads).toEqual(["cursor"]);
+      const devin = await registry.resolve("devin");
+      expect(devin?.provider_id).toBe("devin");
+      expect(loads).toEqual(["devin"]);
 
-      const again = await registry.resolve("cursor");
-      expect(again).toBe(cursor);
-      expect(loads).toEqual(["cursor"]);
+      const again = await registry.resolve("devin");
+      expect(again).toBe(devin);
+      expect(loads).toEqual(["devin"]);
 
       expect(await registry.resolve("not-registered")).toBeUndefined();
-      expect(loads).toEqual(["cursor"]);
+      expect(loads).toEqual(["devin"]);
     });
 
     test("evicts a failed adapter load so the next resolve retries", async () => {

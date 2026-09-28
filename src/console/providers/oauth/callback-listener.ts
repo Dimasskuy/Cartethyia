@@ -153,6 +153,24 @@ export class OAuthCallbackListener {
     this.#forget(endpoint.port, listener, state);
   }
 
+  /**
+   * Drops every flow for `providerId` on `redirectUri`'s port.
+   *
+   * The state-keyed `release` cannot serve a stateless callback: the flow is
+   * filed under the generated state, but the callback arrives with `""`, so
+   * the lookup deletes nothing and the port stays bound until TTL. Releasing
+   * by provider covers that path without guessing across providers.
+   */
+  releaseProvider(redirectUri: string, providerId: string): void {
+    const endpoint = loopbackCallbackEndpoint(redirectUri);
+    if (endpoint === undefined) return;
+    const listener = this.#ports.get(endpoint.port);
+    if (listener === undefined) return;
+    for (const [state, flow] of [...listener.flows]) {
+      if (flow.providerId === providerId) this.#forget(endpoint.port, listener, state);
+    }
+  }
+
   /** Stops every listener; used on shutdown and between tests. */
   stop(): void {
     for (const [port, listener] of this.#ports) {
@@ -250,13 +268,17 @@ export class OAuthCallbackListener {
     }
     // `state` is the correlation key and the replay guard. An authorization
     // server that does not echo one (OpenRouter omits it entirely) leaves the
-    // callback with no key, and since only this listener's port received it,
-    // the flow waiting on that port is the one it belongs to. One browser login
-    // per port is in flight at a time, so the match is unambiguous.
-    const matched =
-      state.length > 0
-        ? listener.flows.get(state)
-        : listener.flows.values().next().value;
+    // callback with no key. A stateless fallback is only safe with exactly
+    // one flow waiting: two concurrent logins on one port would deliver the
+    // code to the wrong flow, so ambiguity fails closed instead of guessing.
+    let matched;
+    if (state.length > 0) {
+      matched = listener.flows.get(state);
+    } else if (listener.flows.size === 1) {
+      matched = listener.flows.values().next().value;
+    } else {
+      return new Response("OAuth session ambiguous without state; retry the login.", { status: 400 });
+    }
     if (matched === undefined) {
       return new Response("OAuth session not found or expired.", { status: 400 });
     }

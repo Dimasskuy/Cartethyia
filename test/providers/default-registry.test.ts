@@ -56,7 +56,7 @@ describe("default provider composition", () => {
   test("every OAuth provider registers a refresher exactly when it has a refresh grant", async () => {
     const registry = createDefaultProviderRegistry();
     // Short-lived access tokens re-minted from a durable grant.
-    for (const id of ["claude", "codex", "grok", "cursor", "antigravity", "muse", "kimi", "cline", "cb", "cbcn", "workbuddy", "github"]) {
+    for (const id of ["claude", "codex", "grok", "antigravity", "muse", "kimi", "cline", "cb", "cbcn", "workbuddy", "github"]) {
       expect(await registry.resolveRefresher(id)).toBeDefined();
     }
     // The sign-in ends in a durable credential with no refresh grant: Kilo Code

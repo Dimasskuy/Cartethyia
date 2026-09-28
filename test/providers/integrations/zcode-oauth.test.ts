@@ -6,6 +6,7 @@ import {
   ZCODE_REDIRECT_URI,
   ZCODE_TOKEN_URL,
 } from "../../../src/providers/integrations/zcode-oauth";
+import { GatewayError } from "../../../src/transport/gateway-error";
 
 /**
  * The Coding Plan sign-in is two-stage: an OAuth code exchange mints a
@@ -195,6 +196,15 @@ describe("Z.AI Coding Plan — two-stage exchange", () => {
       new ZcodeOAuthClient(fetcher).exchangeCode("c", "", ZCODE_REDIRECT_URI),
     ).rejects.toThrow();
     expect(calls).toHaveLength(1);
+  });
+
+  test("a provider refusal surfaces its own message for the dialog", async () => {
+    const { fetcher } = zaiServer({ token: { code: 400, success: false, msg: "invalid code" } });
+    const failure = await new ZcodeOAuthClient(fetcher)
+      .exchangeCode("c", "", ZCODE_REDIRECT_URI)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(GatewayError);
+    expect((failure as GatewayError).message).toContain("invalid code");
   });
 
   test("registers no refresher, because the minted key does not expire", () => {

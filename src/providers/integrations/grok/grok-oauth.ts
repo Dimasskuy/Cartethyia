@@ -101,9 +101,12 @@ export class GrokOAuthClient extends OAuthDeviceFlow {
       body,
     });
     const payload = await readJsonResponse(response, "grok device authorization");
+    // The device correlation lives in Redis with the store's 900 s TTL: a
+    // longer advertised lifetime would outlive the correlation and force a
+    // restart at 900 s even when the provider code is still valid.
     const start = parseDeviceAuthStart(payload, {
       intervalSeconds: 5,
-      expiresInSeconds: 1_800,
+      expiresInSeconds: 900,
     });
     if (!start) throw new Error("grok device response omitted required fields");
     return {

@@ -328,11 +328,16 @@ export function canonicalToResponsesPayload(
     "user",
   ];
   for (const field of responsesPassthrough) {
-    const value = request.generation_controls[`extension:responses.${field}`];
+    const value =
+      request.generation_controls[`extension:responses.${field}`] ??
+      request.generation_controls[`extension:${field}` as `extension:${string}`];
     if (value !== undefined) payload[field] = value;
   }
   // Responses nests output verbosity and structured-output format under `text`.
-  const verbosity = request.generation_controls["extension:responses.verbosity"];
+  const verbosity =
+    request.generation_controls["extension:responses.verbosity"] ??
+    request.generation_controls["extension:verbosity"] ??
+    request.generation_controls.verbosity;
   if (request.response_format !== undefined || verbosity !== undefined) {
     const text = (payload["text"] as Record<string, unknown> | undefined) ?? {};
     if (verbosity !== undefined) text["verbosity"] = verbosity;
