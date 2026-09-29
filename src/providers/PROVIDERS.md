@@ -24,7 +24,7 @@ src/providers/
   operations/             runtime glue: seeding, caches, version resolution, health, credentials, deadlines
   quota/                  quota kit: one result shape, dispatch, connectivity probe, declarative window engine
   integrations/           one module (or directory) per provider: adapters, OAuth, quota, CLI-version quirks
-```
+
 
 ## Registration: metadata × capabilities × lazy import
 
@@ -160,6 +160,22 @@ stay in `integrations/<name>/*-oauth.ts`.
   `verification_uri_complete` (WorkOS, Cline) or `verification_uri`. Preferring the complete form is what
   makes the flow one click: it carries the user code in its query string, so opening the page enters the
   code automatically instead of asking the operator to read it from the dialog and type it into the form.
+- **Auth configuration that is not a secret travels beside the tokens.** A credential string alone cannot
+  express an account whose requests depend on where it was minted and which upstream profile it is bound to,
+  so `OAuthExchangeResult.auth_state` carries that configuration (auth method, region, profile ARN, OAuth
+  client id, token endpoint) and it persists on the account as `provider_accounts.auth_state`. Three
+  consumers read it: the adapter builds its request from it, `OAuthTokenRefresher.refresh` receives it as
+  `OAuthRefreshContext` (with the decrypted companion secret) so a refresh reaches the right endpoint with
+  the right client, and the quota and discovery surfaces take it as their collection context. The companion
+  secret a login mints — an OIDC client secret — is encrypted separately
+  (`provider_oauth_states.client_secret_ciphertext`), never in `auth_state`. Both fields are optional and
+  additive: a provider that needs neither is unaffected, and a refresh that reports no state leaves the
+  stored one alone rather than blanking it.
+- **Provider-specific start inputs ride the flow, not the route.** Some logins need a choice made before
+  they begin (which identity provider, which organization URL, which region). `OAuthDeviceFlowContext.parameters`
+  and `OAuthAuthorizeRequest.parameters` carry them from the console's start request through to the client,
+  and the console persists them with the pending/device correlation so a later poll can rebuild the same
+  context. A provider that needs none ignores the field, which keeps one start route serving every provider.
 - **A redirect URI is per-client, not per-gateway.** Authorization servers allowlist redirect URIs exactly,
   so `browserRedirectUri` on the login client overrides the gateway default. OpenAI registers only
   `http://localhost:1455/auth/callback` for the Codex client and answers any other value with
@@ -715,6 +731,7 @@ failure from being misreported as a network-pool fault.
 | `buddy/` | `codebuddy.ts` + `codebuddy-{cn,oauth,quota,shared}.ts`, `workbuddy.ts` + `workbuddy-{oauth,quota,shared}.ts`, `buddy-{catalog,chat,oauth,quota}-shared.ts` | Tencent buddy family (provider IDs `cb`, `cbcn`, `workbuddy`): cn variant split, per-brand headers, shared Tencent payload/quota/oauth/catalog kernels, plus `buddy-checkin.ts` (daily check-in + growth activity report) for the `daily-checkin` worker |
 | `zai/` | `spec.ts` + `zai-quota.ts` | Minimal pair: declarative spec plus one quota parser |
 | `xiaomi-mimo/` | `xiaomi.ts`, `mimodesktop-{oauth,quota,sso}.ts` + `mimodesktop.ts`, `mimostudio-{auth,oauth,quota}.ts` + `mimostudio.ts`, `think-stream.ts` | Four provider IDs with independent credentials and wire contracts: `xiaomipg`/`xiaomitp` use API-key OpenAI chat, Desktop exchanges a local passToken for an SSO cookie and uses native `reasoning_content`, and Studio uses browser cookies and its own SSE parser with the think-tag splitter. Desktop and Studio retain separate models and quota collectors. |
+| `autoclaw/` | `autoclaw.ts`, `autoclaw-discovery.ts`, and `autoclaw-{oauth,quota,shared}.ts` | CN-only access/refresh import with device ID; account-scoped remote model catalog and wallet balance; direct Chat Completions with text-only sandbox WebSocket/SSE fallback only when direct route lookup fails |
 
 MiMo Desktop acquires its inference cookie from a stored passToken at dispatch time, reuses
 the SSO session while cached, and renews it when the cache expires or a credential-evidenced

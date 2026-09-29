@@ -653,6 +653,24 @@ describe("OAuth account identity", () => {
       expect(state[0]?.expiresAt.getTime()).toBeGreaterThan(Date.now() + 3_600_000);
     });
 
+    test("persists AutoClaw refresh config and device identity beside imported tokens", async () => {
+      const store = new DrizzleOAuthAccountStore(db);
+      const account = await store.persistAccount(tenantId, "autoclaw", {
+        label: "autoclaw-user",
+        access: "autoclaw-access",
+        refresh: "autoclaw-refresh",
+        expiresAt: new Date(Date.now() + 3_600_000),
+        auth_state: { region: "cn", deviceId: "autoclaw-device" },
+      });
+      const [providerRow] = await db.select().from(providerAccounts).where(eq(providerAccounts.id, account.accountId));
+      const [oauthRow] = await db.select().from(providerOauthStates).where(eq(providerOauthStates.providerAccountId, account.accountId));
+
+      expect(providerRow?.authState).toEqual({ region: "cn", deviceId: "autoclaw-device" });
+      expect(providerRow?.credentialKind).toBe("oauth");
+      expect(oauthRow?.expiresAt.getTime()).toBeGreaterThan(Date.now());
+      expect(oauthRow?.refreshCiphertext).toBeDefined();
+    });
+
     test("a different email is a different account", async () => {
       const store = new DrizzleOAuthAccountStore(db);
       const other = await store.persistAccount(tenantId, providerId, {

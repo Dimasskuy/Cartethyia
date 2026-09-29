@@ -172,6 +172,14 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     credentialUrl: "https://github.com/settings/copilot",
   },
   { id: "perplexity", displayName: "Perplexity", baseUrl: "https://api.perplexity.ai", credentialUrl: "https://www.perplexity.ai/settings/api" },
+  {
+    id: "autoclaw",
+    displayName: "AutoClaw",
+    baseUrl: "https://autoglm-acceleration-api.zhipuai.cn",
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://autoclaw.z.ai/download",
+    credentialHint: "Import your AutoClaw access token and refresh token from an account in the CN region.",
+  },
 ] as const;
 
 export type BundledProviderId = (typeof RAW_BUNDLED_PROVIDER_METADATA)[number]["id"];

@@ -184,6 +184,31 @@ dbDescribe("OAuthRefreshService", () => {
     });
   });
 
+  test("provides the decrypted current access token only to opted-in refreshers", async () => {
+    const accountId = await insertAccount({
+      providerId: "autoclaw",
+      refreshToken: "refresh-autoclaw",
+      expiresAt: new Date(Date.now() + 60 * 1000),
+    });
+    const service = new OAuthRefreshService(requireDb());
+    let seenContext: unknown;
+    const refresher: OAuthTokenRefresher = {
+      requiresAccessToken: true,
+      refresh: async (_refreshToken, _signal, context) => {
+        seenContext = context;
+        return { access: "autoclaw-access", expiresAt: new Date(Date.now() + 3600_000) };
+      },
+    };
+
+    const token = await service.ensureFreshAccessToken(accountId, refresher);
+
+    expect(token).toBe("autoclaw-access");
+    expect(seenContext).toEqual({
+      account_id: accountId,
+      access_token: "initial-access-token",
+    });
+  });
+
   test("persists an auth state a refresh reports and leaves the stored one alone otherwise", async () => {
     const accountId = await insertAccount({
       providerId: "kiro",

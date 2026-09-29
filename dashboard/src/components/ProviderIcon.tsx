@@ -82,6 +82,7 @@ const iconAssets: Record<string, { file: string; ext: "svg" | "webp" }> = {
   kiro: { file: "kiro", ext: "webp" },
   kimchi: { file: "kimchi", ext: "webp" },
   commandcode: { file: "commandcode", ext: "webp" },
+  autoclaw: { file: "openclaw", ext: "webp" },
 };
 
 function assetFor(icon: string): { file: string; ext: "svg" | "webp" } {
