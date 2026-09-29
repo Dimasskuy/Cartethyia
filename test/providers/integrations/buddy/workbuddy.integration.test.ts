@@ -409,6 +409,7 @@ describe("WorkBuddy integration", () => {
       "claude-sonnet-4.6",
       "deepseek-v4.1-flash",
       "gpt-6-astra",
+      "gpt-6.1-sol",
     ]) {
       expect(WORKBUDDY_MODELS.some((model) => model.modelId === id)).toBe(true);
     }

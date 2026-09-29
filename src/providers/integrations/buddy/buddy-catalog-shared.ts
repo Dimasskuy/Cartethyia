@@ -96,6 +96,7 @@ export const BUDDY_SHARED_RAW: readonly BuddyRawEntry[] = [
   ["gpt-5.6-sol", "GPT-5.6 Sol", true, true, 1_050_000, 128_000],
   ["gpt-5.6-terra", "GPT-5.6 Terra", true, true, 1_050_000, 128_000],
   ["gpt-6-astra", "GPT-6 Astra", true, true, 1_050_000, 128_000],
+  ["gpt-6.1-sol", "GPT-6.1 Sol", true, true, 1_050_000, 128_000],
   ["gpt-image-2", "GPT-Image-2", true, true, 400_000, 128_000],
   ["grok-4.6", "Grok 4.6", true, true, 500_000, 500_000],
   ["grok-4.7", "Grok 4.7", true, true, 500_000, 500_000],

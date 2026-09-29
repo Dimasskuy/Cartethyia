@@ -239,8 +239,8 @@ describe("CodeBuddy adapter contracts", () => {
   test("catalogs match the current CodeBuddy provider split", () => {
     // The two international sites share one roster (`BUDDY_SHARED_RAW`); only
     // the endpoint differs. CN keeps its own table.
-    expect(CODEBUDDY_MODELS).toHaveLength(36);
-    expect(CODEBUDDY_MODELS).toHaveLength(36);
+    expect(CODEBUDDY_MODELS).toHaveLength(37);
+    expect(CODEBUDDY_MODELS).toHaveLength(37);
     expect(CODEBUDDY_CN_MODELS).toHaveLength(12);
     expect(CODEBUDDY_MODELS.some((model) => model.modelId === "deepseek-v4.1-flash")).toBe(true);
     expect(CODEBUDDY_MODELS.some((model) => model.modelId === "glm-5.3")).toBe(true);

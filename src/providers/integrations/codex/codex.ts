@@ -100,7 +100,9 @@ export const CODEX_MODELS: readonly ModelDefinition[] = [
   codexResponsesModel("gpt-6-astra", 922_000, 128_000),
   codexResponsesModel("gpt-6-luna", 922_000, 128_000),
   codexResponsesModel("gpt-6-sol", 922_000, 128_000),
-  codexResponsesModel("gpt-daybreak-blue-latest", 272_000, 128_000),
+  // 6.1-sol rides the same 6-generation 922k input / 128k output window as
+  // gpt-6-sol (1.05M total). Daybreak was retired from the live registry.
+  codexResponsesModel("gpt-6.1-sol", 922_000, 128_000),
   codexResponsesModel("gpt-5.6-sol", 1_000_000, 128_000),
   codexResponsesModel("gpt-5.6-terra", 1_000_000, 128_000),
   codexResponsesModel("gpt-5.6-luna", 1_000_000, 128_000),

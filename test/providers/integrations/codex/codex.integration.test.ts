@@ -840,7 +840,7 @@ describe("codex header parity P0/P1", () => {
       "gpt-6-astra",
       "gpt-6-luna",
       "gpt-6-sol",
-      "gpt-daybreak-blue-latest",
+      "gpt-6.1-sol",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -848,6 +848,7 @@ describe("codex header parity P0/P1", () => {
     ]) {
       expect(CODEX_MODELS.some((model) => model.modelId === id)).toBe(true);
     }
+    expect(CODEX_MODELS.some((model) => model.modelId === "gpt-daybreak-blue-latest")).toBe(false);
     const byId = new Map(CODEX_MODELS.map((model) => [model.modelId, model] as const));
     // The 6-generation is served in a 272k default window that extends to 922k:
     // the live registry reports `context_window` 272000 with
@@ -857,11 +858,7 @@ describe("codex header parity P0/P1", () => {
     expect(byId.get("gpt-6-astra")).toMatchObject({ contextLimit: 922_000, outputLimit: 128_000 });
     expect(byId.get("gpt-6-luna")).toMatchObject({ contextLimit: 922_000, outputLimit: 128_000 });
     expect(byId.get("gpt-6-sol")).toMatchObject({ contextLimit: 922_000, outputLimit: 128_000 });
-    // Daybreak rides the 5.6 generation but reports the standard window.
-    expect(byId.get("gpt-daybreak-blue-latest")).toMatchObject({
-      contextLimit: 272_000,
-      outputLimit: 128_000,
-    });
+    expect(byId.get("gpt-6.1-sol")).toMatchObject({ contextLimit: 922_000, outputLimit: 128_000 });
     // gpt-5.5 reports max_context_window 272000 — its window is genuinely capped.
     expect(byId.get("gpt-5.5")).toMatchObject({ contextLimit: 272_000, outputLimit: 128_000 });
     // The 5.6 generation keeps the full 1M window.

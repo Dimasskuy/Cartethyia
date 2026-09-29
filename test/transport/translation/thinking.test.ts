@@ -210,13 +210,13 @@ describe("resolveSupportedReasoningEfforts", () => {
     ]);
   });
 
-  test("OpenAI 5.6/6/daybreak rows take max without minimal (OMP catalog)", () => {
+  test("OpenAI 5.6/6/6.1 rows take max without minimal (OMP catalog)", () => {
     for (const id of [
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-6-sol",
       "gpt-6-luna",
-      "gpt-daybreak-blue-latest",
+      "gpt-6.1-sol",
     ]) {
       expect(resolveSupportedReasoningEfforts(id, "responses")).toEqual([
         "low",
