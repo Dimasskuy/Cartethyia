@@ -28,7 +28,7 @@ import type { FetchLike } from "../../authentication/oauth-client";
 // User-Agent + version discovery
 
 /** Pinned Antigravity client version used when live discovery has not run yet. */
-const DEFAULT_ANTIGRAVITY_VERSION = "2.15.1";
+const DEFAULT_ANTIGRAVITY_VERSION = "2.17.0";
 
 /** Desktop-client fingerprint fields stamped into the Antigravity User-Agent. */
 const ANTIGRAVITY_OS_TYPE = "darwin";

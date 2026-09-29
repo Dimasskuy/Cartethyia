@@ -76,7 +76,7 @@ import {
 const DEVIN_AUTH_PATH = "/exa.auth_pb.AuthService/GetUserJwt" as const;
 const DEVIN_CONFIGS_PATH =
   "/exa.api_server_pb.ApiServerService/GetCliModelConfigs" as const;
-const DEVIN_IDE_VERSION = "3.10.31" as const;
+const DEVIN_IDE_VERSION = "3.10.35" as const;
 const DEVIN_EXTENSION_VERSION = "1.49.2" as const;
 const DEVIN_SESSION_TOKEN_PREFIX = "devin-session-token$" as const;
 const DEVIN_DEFAULT_STOP_PATTERNS = [

@@ -205,6 +205,41 @@ describe("codex adapter headers and body", () => {
     expect(capturedHeaders["accept"]).toBe("application/json");
     expect(await response.json()).toEqual({ id: "cmp_1", compacted: true });
   });
+  test("refreshes the client version on later compact requests after cache reset", async () => {
+    _resetCodexVersion();
+    let registryFetches = 0;
+    const sentVersions: string[] = [];
+    const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("registry.npmjs.org")) {
+        registryFetches += 1;
+        return Response.json({ version: `0.158.${registryFetches}` });
+      }
+      sentVersions.push(new Headers(init?.headers).get("version") ?? "");
+      return Response.json({ id: "cmp_1", compacted: true });
+    }) as unknown as typeof fetch;
+    const adapter = createCodexAdapter({
+      provider_id: "codex",
+      fetch: fakeFetch,
+      installation_id_override: "install-compact-refresh",
+    });
+    const context = {
+      credential: credential("oauth", "token", "account-1"),
+      deadline: Date.now() + 5_000,
+      abort_signal: new AbortController().signal,
+    };
+    const body = { model: "gpt-5-codex", input: "summarize" };
+
+    try {
+      await adapter.compact(body, context);
+      _resetCodexVersion();
+      await adapter.compact(body, context);
+      expect(registryFetches).toBe(2);
+      expect(sentVersions).toEqual(["0.158.1", "0.158.2"]);
+    } finally {
+      _resetCodexVersion();
+    }
+  });
+
 
   test("rejects API-key accounts from native compact", async () => {
     const adapter = createCodexAdapter({ provider_id: "codex", installation_id_override: "install-compact" });

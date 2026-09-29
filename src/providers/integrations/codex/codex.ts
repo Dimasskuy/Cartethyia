@@ -245,15 +245,12 @@ export function createCodexAdapter(
   // would race an injected test transport against a real npm probe and pin
   // the live registry's version into the shared cache.
   refreshCodexVersion(fetchFn);
-  // Resolve the true latest CLI version, awaited at dispatch so the first
-  // request carries the current version (deduped, TTL-cached) instead of the
-  // stale pinned fallback — fallback applies only on a network failure.
-  let versionReady: Promise<void> | undefined;
-  const ensureVersion = (): Promise<void> => {
-    if (config.codex_cli_version !== undefined) return Promise.resolve();
-    if (versionReady === undefined) versionReady = resolveCodexVersion(fetchFn).then(() => undefined);
-    return versionReady;
-  };
+  // Resolve at each dispatch. The shared resolver deduplicates and caches
+  // successful probes, while still refreshing after its TTL.
+  const ensureVersion = (): Promise<void> =>
+    config.codex_cli_version === undefined
+      ? resolveCodexVersion(fetchFn).then(() => undefined)
+      : Promise.resolve();
   const version = (): string => config.codex_cli_version ?? getCodexVersion();
   const attestation = config.attestation;
   const responsesLite = config.responses_lite ?? false;

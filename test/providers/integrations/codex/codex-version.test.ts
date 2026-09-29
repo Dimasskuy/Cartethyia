@@ -18,7 +18,7 @@ describe("Codex CLI client version", () => {
   });
 
   test("pinned fallback is used before discovery", () => {
-    expect(VERSION_SOURCES.codex.fallback).toBe("0.156.1");
+    expect(VERSION_SOURCES.codex.fallback).toBe("0.158.0");
     expect(getCodexVersion()).toBe(VERSION_SOURCES.codex.fallback);
   });
 
