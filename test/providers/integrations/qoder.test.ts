@@ -52,8 +52,14 @@ describe("Qoder dynamic version resolver", () => {
 });
 
 describe("Qoder Modern Profile contracts", () => {
-  beforeEach(_resetQoderVersion);
-  afterEach(_resetQoderVersion);
+  // Wrap reset: a bare function reference with an optional arg is treated as a
+  // `done` hook by Bun and never completes.
+  beforeEach(() => {
+    _resetQoderVersion();
+  });
+  afterEach(() => {
+    _resetQoderVersion();
+  });
   test("declares modern endpoint and business parameters", () => {
     expect(MODERN_PROFILE.chatUrl).toContain("https://api2.qoder.sh");
     expect(MODERN_PROFILE.businessProduct).toBe("cli");
