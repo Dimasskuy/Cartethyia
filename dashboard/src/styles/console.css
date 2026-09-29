@@ -2419,6 +2419,67 @@
   max-height: 46vh;
 }
 
+/* Lifetime-budget bar. Sits inside `.share-stats`, a wrapping flex row, so it
+   takes the full width and pushes the remaining figures onto the next line. */
+.share-budget {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 5px;
+  padding: 7px 10px;
+  border: 1px solid var(--inner-border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.share-budget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.share-budget-figures {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.share-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--inner-border);
+  overflow: hidden;
+}
+
+.share-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--green);
+  transition: width var(--dur-micro) var(--ease-spring);
+}
+
+/* At or past the budget the fill turns red: the percentage caps at 100, so the
+   colour is the only thing distinguishing "full" from "over". */
+.share-bar-fill--exhausted {
+  background: var(--red);
+}
+
+/* Active-recipient count. Pushed away from the heading by the auto margin so it
+   reads as a figure about the list, not part of the section title. */
+.share-active-count {
+  margin-left: auto;
+  margin-right: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .share-table {
   font-size: 12px;
 }

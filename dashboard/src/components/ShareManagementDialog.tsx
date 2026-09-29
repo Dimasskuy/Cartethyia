@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, Link2, RefreshCw, RotateCw } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Button } from "./ui/button";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Dialog } from "./ui/dialog";
 import { EmptyState, ErrorState, LoadingState } from "./ui/state";
 import { ClipboardButton } from "./patterns/clipboard-button";
@@ -37,6 +38,88 @@ function Limit({ label, value }: { label: string; value: number | null | undefin
       <dd>{value == null ? "Unlimited" : count(value)}</dd>
     </div>
   );
+}
+
+/**
+ * What regenerating costs, per key mode.
+ *
+ * Exported so the confirmation copy is testable without a DOM: `Dialog` renders
+ * through `createPortal` behind a `mounted` effect, which never runs under
+ * `renderToStaticMarkup`, so the dialog's body cannot be asserted through a
+ * render. The two modes destroy different things and the copy must not be
+ * swapped between them, which is exactly what needs a test.
+ */
+export function regenerateWarning(isPersonal: boolean): {
+  readonly title: string;
+  readonly message: string;
+  readonly confirmLabel: string;
+} {
+  if (isPersonal)
+    return {
+      title: "Regenerate this key?",
+      message:
+        "This rotates the key credential. Any client still using the current secret starts getting 401s immediately, and the old secret cannot be recovered. The handoff link is re-pointed to reveal the new key.",
+      confirmLabel: "Regenerate key",
+    };
+  return {
+    title: "Regenerate this link?",
+    message:
+      "This replaces the link URL; the current URL stops resolving immediately. Recipients keep the keys they already generated and keep working — but no one can enroll through the old link again.",
+    confirmLabel: "Regenerate link",
+  };
+}
+
+/**
+ * Lifetime-budget consumption as a bar.
+ *
+ * Only the lifetime budget can be drawn honestly. The gateway enforces daily and
+ * monthly token limits from in-memory windows in the admission service, which are
+ * never persisted and never sent to the console, so the only counter the response
+ * carries is `tokensConsumed` (lifetime). Drawing a daily or monthly bar would
+ * mean rendering a zero the operator had no way to distinguish from a real zero.
+ * The bar is therefore absent when no lifetime budget is set, rather than shown
+ * empty.
+ */
+function BudgetBar({
+  consumed,
+  budget,
+}: {
+  readonly consumed: number;
+  readonly budget: number;
+}): ReactNode {
+  const pct = budget > 0 ? Math.min(100, (consumed / budget) * 100) : 0;
+  // Over-budget reads as full rather than clipping: the number is what tells the
+  // operator they are past it, and a bar that shrinks back would imply headroom.
+  const exhausted = consumed >= budget;
+  return (
+    <div className="share-budget">
+      <div className="share-budget-head">
+        <span>Lifetime budget</span>
+        <span className="share-budget-figures">
+          {compactTokens(consumed)} / {compactTokens(budget)}
+        </span>
+      </div>
+      <div
+        className="share-bar-track"
+        role="progressbar"
+        aria-label="Lifetime token budget consumed"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pct)}
+        aria-valuetext={`${compactTokens(consumed)} of ${compactTokens(budget)} tokens consumed`}
+      >
+        <div
+          className={`share-bar-fill${exhausted ? " share-bar-fill--exhausted" : ""}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Active recipient count: child keys that have not been revoked. */
+function activeChildCount(children: readonly SharedKeySummary[]): number {
+  return children.filter((child) => child.revokedAt === null).length;
 }
 
 /** Expanded recipient body: model totals and recent requests, loaded on demand. */
@@ -142,25 +225,28 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
   }, [parent.id]);
 
   const busy = share.isPending || regenerate.isPending;
+  const [confirmingRegenerate, setConfirmingRegenerate] = useState(false);
 
-  const onRegenerate = () => {
+  /**
+   * Regenerating is irreversible, so it confirms first.
+   *
+   * The two modes destroy different things, which is why the copy is not shared.
+   * A personal key's regenerate rotates the credential itself, so every client
+   * still holding the old secret starts getting 401s. A share template's
+   * regenerate rotates only the link token in place (`share_links` is updated,
+   * not re-created), so the old URL stops resolving while recipients keep the
+   * keys they already generated — nothing they hold is deleted. Saying "all old
+   * keys are deleted" would be false for share mode, and saying "recipients keep
+   * their keys" would be dangerous for personal mode.
+   */
+  const onRegenerate = async (): Promise<void> => {
     if (isPersonal) {
-      regenerate.mutate(
-        { keyId: parent.id },
-        {
-          onSuccess: () => toast.success("Key regenerated; the link now reveals the new key."),
-          onError: (error) => toast.error(getErrorMessage(error, "Could not regenerate key.")),
-        },
-      );
+      await regenerate.mutateAsync({ keyId: parent.id });
+      toast.success("Key regenerated; the link now reveals the new key.");
       return;
     }
-    share.mutate(
-      { keyId: parent.id, regenerate: true },
-      {
-        onSuccess: () => toast.success("Link regenerated; the previous URL no longer works."),
-        onError: (error) => toast.error(getErrorMessage(error, "Could not regenerate link.")),
-      },
-    );
+    await share.mutateAsync({ keyId: parent.id, regenerate: true });
+    toast.success("Link regenerated; the previous URL no longer works.");
   };
 
   const onEnsureLink = () => {
@@ -171,6 +257,7 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
   };
 
   const url = link.data?.url ?? null;
+  const warning = regenerateWarning(isPersonal);
 
   return (
     <div className="share-modal">
@@ -196,7 +283,7 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
               icon={<RotateCw size={13} />}
               loading={busy}
               disabled={busy}
-              onClick={onRegenerate}
+              onClick={() => setConfirmingRegenerate(true)}
             >
               Regenerate
             </Button>
@@ -225,18 +312,34 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
             <Limit label="Requests / min" value={parent.requestsPerMinute} />
             <Limit label="Daily tokens" value={parent.dailyTokenLimit} />
             <Limit label="Monthly tokens" value={parent.monthlyTokenLimit} />
-            <Limit label="Lifetime budget" value={parent.lifetimeTokenBudget} />
+            {parent.lifetimeTokenBudget != null ? (
+              <BudgetBar consumed={parent.tokensConsumed} budget={parent.lifetimeTokenBudget} />
+            ) : (
+              <Limit label="Lifetime budget" value={null} />
+            )}
           </dl>
         </section>
       ) : (
         <section aria-label="Recipients" className="share-section">
           <div className="share-section-head">
             <strong>Recipients</strong>
+            {/* Counting only unrevoked children: a revoked key is still listed
+                for its usage history, but it can no longer be used, so folding
+                it into "active" would overstate who can still call the gateway. */}
+            <span className="share-active-count">
+              Active users: {activeChildCount(children)}
+            </span>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => void summary.refetch()}
-              icon={<RefreshCw size={13} />}
+              icon={
+                /* A refresh with no visible motion reads as a dead button: the
+                   list already polls every 5s, so a manual refresh that looks
+                   identical to an idle one gives the operator no evidence their
+                   click did anything. Spin only while the refetch is in flight. */
+                <RefreshCw size={13} className={summary.isFetching ? "animate-spin" : undefined} />
+              }
             >
               Refresh
             </Button>
@@ -275,8 +378,8 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
                   {children.map((child: SharedKeySummary) => {
                     const open = expanded === child.id;
                     return (
-                      <>
-                        <tr key={child.id}>
+                      <Fragment key={child.id}>
+                        <tr>
                           <td>
                             <button
                               type="button"
@@ -318,13 +421,13 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
                           </td>
                         </tr>
                         {open ? (
-                          <tr key={`${child.id}-detail`}>
+                          <tr>
                             <td colSpan={7} style={{ padding: 0 }}>
                               <ChildDetail parentId={parent.id} childId={child.id} />
                             </td>
                           </tr>
                         ) : null}
-                      </>
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -333,7 +436,19 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
           )}
         </section>
       )}
-    </div>
+        {/* Nested rather than a sibling: `Dialog` renders through
+            `createPortal`, so this adds no DOM child and cannot become a stray
+            row in the `.share-modal` grid. */}
+        <ConfirmDialog
+          open={confirmingRegenerate}
+          onClose={() => setConfirmingRegenerate(false)}
+          onConfirm={onRegenerate}
+          title={warning.title}
+          message={warning.message}
+          confirmLabel={warning.confirmLabel}
+          danger
+        />
+      </div>
   );
 }
 

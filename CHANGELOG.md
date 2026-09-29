@@ -21,6 +21,36 @@ provider that served the request, and no provider did — but the caller's quali
 `provider/model` ref still names one, so the column resolves from that instead of
 rendering a bare dash.
 
+### The sharing modal confirms before regenerating, spins on refresh, and graphs the budget
+
+Three gaps in one dialog. Regenerating ran immediately on click with no
+confirmation, so an irreversible rotation could be triggered by a misclick. The
+confirmation copy is per-mode because the two paths destroy different things:
+regenerating a personal key rotates the credential, so every client holding the
+old secret starts getting 401s; regenerating a share template rotates only the
+link token in place (`share_links` is updated, not re-created), so the URL stops
+resolving while recipients keep the keys they already generated. Telling a share
+operator their old keys are deleted would be false, and telling a personal-key
+operator their recipients are unaffected would be dangerous.
+
+The Refresh button's icon never moved. `animate-spin` is a Tailwind utility, and
+the icon carried no conditional class, so a manual refresh looked identical to an
+idle one even though the list also polls on a timer. It now spins only while the
+refetch is in flight.
+
+The personal key's Usage section gained a lifetime-budget bar and the recipients
+section an active-user count. Only the lifetime budget can be graphed honestly:
+the gateway enforces daily and monthly token limits from in-memory admission
+windows that are never persisted and never sent to the console, so the sole
+counter the response carries is `tokensConsumed`. A daily or monthly bar would
+render a zero the operator could not distinguish from a real one. The bar is
+omitted when no lifetime budget is set. Active users counts child keys whose
+`revokedAt` is null — a revoked key still appears for its usage history but can no
+longer be used, so counting it would overstate who can call the gateway.
+
+Recipients rows also gained the React key the list was missing, which surfaced as
+a duplicate-key warning once more than one recipient existed.
+
 ### The Usage table labels a request that resolved no effort as `default`
 
 The effort suffix was omitted whenever `requested_effort` was NULL, so the Model
