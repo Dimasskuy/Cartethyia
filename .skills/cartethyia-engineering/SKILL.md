@@ -16,6 +16,12 @@ creating competing skills.
 |---|---|
 | Repository orientation, provider, version, schema, console-log, gates, removal, clean cutover, or consolidating duplicated logic | `references/development.md` |
 | Dispatch failure, routing, proxy proof, tool calling, duplicates, live request, or local DB reset | `references/debugging.md` |
+| Verifying a change, reproducing a wire bug, bug-fix loop, failing-test triage, or mutation-testing a regression | `references/verification.md` |
+| Account / pool health classification, cooldown policy, model cooldown display, or tool-history repair ordering | `references/health-and-pool.md` |
+| Telemetry payload decode, request failure trace, or abort-source elimination | `references/payload-and-tracing.md` |
+| Dashboard chrome, social meta, share page, SSR or browser verification | `references/dashboard.md` |
+| Adding / removing / BYOK / OAuth / handshake / live-verify a provider, account action, model catalog gap | `references/provider-lifecycle.md` |
+| Schema migration, telemetry column, full-stack rename, model metadata, availability, in-flight leak, or reasoning replay | `references/schema-telemetry-catalog.md` |
 | Repeated cleanup mistake, new drift class, or improving this skill | `references/self-improvement.md` |
 | Any K1–K11 contract, architecture, provider, wire, schema, naming, dead-key, docs, deadness, suppression (K7b), test-loop (K7c), or skill guard | `references/guards.md` |
 
