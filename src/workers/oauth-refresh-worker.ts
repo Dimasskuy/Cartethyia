@@ -2,8 +2,7 @@
 // OAuth accounts. Registered as a ScheduledTaskRegistry task so the registry
 // owns interval + re-entrancy; this function owns only the domain work.
 import type { OAuthRefreshService, OAuthTokenRefresher } from "../providers/authentication/oauth-refresh-service";
-import { log } from "../observability/logger";
-import { runGrowingWaves } from "./tasks";
+import { runSweep } from "./sweep";
 
 export interface DueOAuthAccount {
   readonly id: string;
@@ -22,40 +21,50 @@ export interface OAuthRefreshSweepDeps {
   readonly onTick?: (result: { readonly due: number; readonly attempted: number }) => void;
 }
 
-const DEFAULT_MAX_CONCURRENCY = 5;
 /**
- * One non-overlapping OAuth refresh sweep. The timer path intentionally never
- * rejects: an unhandled rejection would be observed by the task registry and
- * logged there, while this function isolates per-account errors.
+ * One non-overlapping OAuth refresh sweep. Never rejects: the timer path has
+ * no rejection channel, so every per-account failure is isolated here.
  *
  * Accounts with no provider refresher are skipped. Eligible accounts run in
  * completed waves of 2, then 3, then 4, then 5 (or the configured maximum).
  */
 export async function oauthRefreshSweep(deps: OAuthRefreshSweepDeps): Promise<void> {
-  let due: readonly DueOAuthAccount[];
-  try {
-    due = await deps.loadDueAccounts();
-  } catch (error) {
-    log.error("[oauth-refresh] sweep failed to load due accounts", error as Error);
-    return;
-  }
-  let attempted = 0;
-  await runGrowingWaves(due, {
-    maxConcurrency: deps.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY,
-    onItem: async (account) => {
-      const refresher = await deps.resolveRefresher(account.providerId);
-      if (!refresher) return;
-      attempted += 1;
+  const refreshers = new Map<string, OAuthTokenRefresher>();
+
+  const result = await runSweep<DueOAuthAccount>({
+    name: "oauth-refresh",
+    list: deps.loadDueAccounts,
+    // A provider with no registered refresher cannot be refreshed at all; it
+    // is dropped before the waves rather than failing inside one.
+    eligible: async (account) => {
+      const cached = refreshers.get(account.providerId);
+      if (cached !== undefined) return true;
       try {
-        await deps.refreshService.ensureFreshAccessToken(
-          account.id,
-          refresher,
-          deps.skewMs === undefined ? {} : { skewMs: deps.skewMs },
-        );
-      } catch (error) {
-        deps.onAccountError?.(account.id, account.providerId, error);
+        const refresher = await deps.resolveRefresher(account.providerId);
+        if (refresher === undefined) return false;
+        refreshers.set(account.providerId, refresher);
+        return true;
+      } catch {
+        return false;
       }
     },
+    run: async (account) => {
+      const refresher = refreshers.get(account.providerId);
+      if (refresher === undefined) return;
+      await deps.refreshService.ensureFreshAccessToken(
+        account.id,
+        refresher,
+        deps.skewMs === undefined ? {} : { skewMs: deps.skewMs },
+      );
+    },
+    onItemError: (account, error) => {
+      deps.onAccountError?.(account.id, account.providerId, error);
+    },
+    maxConcurrency: deps.maxConcurrency,
   });
-  deps.onTick?.({ due: due.length, attempted });
+
+  // A pass that could not even list its accounts reports no tick: an all-zero
+  // tick would read as "nothing due" rather than "nothing reachable".
+  if (result.aborted) return;
+  deps.onTick?.({ due: result.listed, attempted: result.attempted });
 }

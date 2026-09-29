@@ -21,7 +21,7 @@ import {
   type QuotaRefreshTarget,
 } from "../console/quota/refresh";
 import { getCachedQuotaEntries, type CachedQuotaEntry } from "../console/quota/cache";
-import { runGrowingWaves } from "./tasks";
+import { runSweep } from "./sweep";
 import type { ProviderId } from "../providers/provider-registry";
 import {
   attemptDailyGrowthPass,
@@ -55,7 +55,6 @@ export interface QuotaRefreshSweepDeps extends QuotaRefreshDeps {
     readonly checkins: number;
   }) => void;
 }
-const DEFAULT_MAX_CONCURRENCY = 5;
 const DEFAULT_MAX_CHECKINS_PER_PASS = 10;
 
 /**
@@ -201,87 +200,12 @@ export async function quotaRefreshSweep(deps: QuotaRefreshSweepDeps): Promise<vo
   const now = deps.now ?? Date.now;
   const minAgeMs = deps.minAgeMs ?? DEFAULT_MIN_AGE_MS;
   const maxPerPass = Math.max(1, deps.maxPerPass ?? DEFAULT_MAX_PER_PASS);
-  const budgetMs = deps.passBudgetMs ?? DEFAULT_PASS_BUDGET_MS;
-  const maxConcurrency = Math.max(1, deps.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY);
 
-  let targets: readonly QuotaRefreshTarget[];
-  try {
-    targets = deps.listTargets
-      ? await deps.listTargets()
-      : await listOAuthQuotaRefreshTargets(deps.db);
-  } catch (error) {
-    log.error("[quota-refresh] sweep failed to list accounts", error as Error);
-    return;
-  }
-
-  // Resolve every target's refresher first, then read cache ages in one
-  // batched pass per lens: the sweep runs over dozens of accounts each minute,
-  // so a `get` per account made the age scan's latency scale with the account
-  // count. `getCachedQuotaEntries` is the cache's own batched reader, so the
-  // key format stays owned by the cache module.
-  const eligible: QuotaRefreshTarget[] = [];
-  let skipped = 0;
-  for (const target of targets) {
-    try {
-      const refresher = await deps.providerRegistry.resolveRefresher(target.providerId);
-      if (!refresher) {
-        skipped += 1;
-        continue;
-      }
-    } catch {
-      skipped += 1;
-      continue;
-    }
-    eligible.push(target);
-  }
-
-  const byLens = new Map<string, QuotaRefreshTarget[]>();
-  for (const target of eligible) {
-    const lens = targetLens(target);
-    const group = byLens.get(lens);
-    if (group) group.push(target);
-    else byLens.set(lens, [target]);
-  }
-
-  const cachedByAccount = new Map<string, CachedQuotaEntry | null>();
-  for (const [lens, group] of byLens) {
-    try {
-      const entries = await getCachedQuotaEntries(
-        lens,
-        group.map((target) => target.accountId),
-        deps.redis,
-      );
-      for (const target of group) {
-        cachedByAccount.set(target.accountId, entries.get(target.accountId) ?? null);
-      }
-    } catch {
-      // An unreadable cache reads as "due" for every account in the lens, which
-      // is the safe direction.
-      for (const target of group) cachedByAccount.set(target.accountId, null);
-    }
-  }
-
-  const due: Array<{ target: QuotaRefreshTarget; ageMs: number }> = [];
-  for (const target of eligible) {
-    const cached = cachedByAccount.get(target.accountId) ?? null;
-    let ageMs = Number.POSITIVE_INFINITY;
-    if (cached?.fetchedAt) ageMs = now() - new Date(cached.fetchedAt).getTime();
-    else if (cached) ageMs = Number.POSITIVE_INFINITY;
-    if (ageMs < minAgeMs) {
-      skipped += 1;
-      continue;
-    }
-    due.push({ target, ageMs });
-  }
-
-  due.sort((left, right) => right.ageMs - left.ageMs);
-  const batch = due.slice(0, maxPerPass);
-  const deadline = now() + budgetMs;
-  let attempted = 0;
   let failed = 0;
   let claimed = 0;
   let checkins = 0;
   const maxCheckins = deps.maxCheckinsPerPass ?? DEFAULT_MAX_CHECKINS_PER_PASS;
+
   /**
    * One log line per account, emitted after the wave completes so the quota
    * result and the check-in ride-along land together instead of as two
@@ -289,27 +213,86 @@ export async function quotaRefreshSweep(deps: QuotaRefreshSweepDeps): Promise<vo
   const quotaOutcomes = new Map<string, QuotaRefreshOutcome>();
   const checkinOutcomes = new Map<string, DailyCheckinResult>();
   const reportOutcomes = new Map<string, BuddyActivityReportResult>();
+  const attemptedTargets: QuotaRefreshTarget[] = [];
 
-  await runGrowingWaves(batch, {
-    maxConcurrency,
-    shouldStop: () => now() >= deadline,
-    onItem: async (entry) => {
-      attempted += 1;
+  const result = await runSweep<{ target: QuotaRefreshTarget; ageMs: number }>({
+    name: "quota-refresh",
+    list: async () => {
+      const targets = deps.listTargets
+        ? await deps.listTargets()
+        : await listOAuthQuotaRefreshTargets(deps.db);
+      // Read cache ages in one batched pass per lens: the sweep runs over
+      // dozens of accounts each minute, so a `get` per account made the age
+      // scan's latency scale with the account count. `getCachedQuotaEntries`
+      // is the cache's own batched reader, so the key format stays owned by
+      // the cache module.
+      const byLens = new Map<string, QuotaRefreshTarget[]>();
+      for (const target of targets) {
+        const lens = targetLens(target);
+        const group = byLens.get(lens);
+        if (group) group.push(target);
+        else byLens.set(lens, [target]);
+      }
+      const cachedByAccount = new Map<string, CachedQuotaEntry | null>();
+      for (const [lens, group] of byLens) {
         try {
-          const outcome = await refreshAccountQuota(
-            deps,
-            entry.target,
-            signalFetch(AbortSignal.timeout(QUOTA_REFRESH_TIMEOUT_MS)),
+          const entries = await getCachedQuotaEntries(
+            lens,
+            group.map((target) => target.accountId),
+            deps.redis,
           );
-          if (outcome.failure !== null) failed += 1;
-          quotaOutcomes.set(entry.target.accountId, outcome);
-        } catch (error) {
-          failed += 1;
-          quotaOutcomes.set(entry.target.accountId, {
-            quota: { source: entry.target.providerId, plan: null, windows: [], error: getErrorMessage(error) },
-            failure: "quota_fetch_failed",
-          });
+          for (const target of group) {
+            cachedByAccount.set(target.accountId, entries.get(target.accountId) ?? null);
+          }
+        } catch {
+          // An unreadable cache reads as "due" for every account in the lens,
+          // which is the safe direction.
+          for (const target of group) cachedByAccount.set(target.accountId, null);
         }
+      }
+      const nowMs = now();
+      return targets.map((target) => {
+        const cached = cachedByAccount.get(target.accountId) ?? null;
+        const fetchedAt = cached?.fetchedAt;
+        return {
+          target,
+          ageMs:
+            typeof fetchedAt === "string"
+              ? nowMs - new Date(fetchedAt).getTime()
+              : Number.POSITIVE_INFINITY,
+        };
+      });
+    },
+    eligible: async (entry) => {
+      // A provider with no registered refresher cannot have its quota read.
+      try {
+        return (await deps.providerRegistry.resolveRefresher(entry.target.providerId)) !== undefined;
+      } catch {
+        return false;
+      }
+    },
+    // Oldest first, capped so one pass cannot run unbounded. Fresh accounts
+    // are dropped as skips rather than carried into the wave.
+    select: (entries) => {
+      const due = entries.filter((entry) => entry.ageMs >= minAgeMs);
+      due.sort((left, right) => right.ageMs - left.ageMs);
+      const batch = due.slice(0, maxPerPass);
+      return { batch, skipped: entries.length - due.length + (due.length - batch.length) };
+    },
+    run: async (entry) => {
+      attemptedTargets.push(entry.target);
+      const outcome = await refreshAccountQuota(
+        deps,
+        entry.target,
+        signalFetch(AbortSignal.timeout(QUOTA_REFRESH_TIMEOUT_MS)),
+      );
+      quotaOutcomes.set(entry.target.accountId, outcome);
+      // A fetch that threw is still a failure the operator must see, so it is
+      // recorded as one rather than silently counted.
+      if (outcome.failure !== null) {
+        failed += 1;
+        return;
+      }
       // Daily growth ride-along: the same item's freshly resolved credential,
       // check-in claim first and then the growth-activity report. Bounded per
       // pass, and skipped for providers without the billing route — a day
@@ -341,8 +324,32 @@ export async function quotaRefreshSweep(deps: QuotaRefreshSweepDeps): Promise<vo
         });
       }
     },
+    onItemError: (entry, error) => {
+      failed += 1;
+      quotaOutcomes.set(entry.target.accountId, {
+        quota: {
+          source: entry.target.providerId,
+          plan: null,
+          windows: [],
+          error: getErrorMessage(error),
+        },
+        failure: "quota_fetch_failed",
+      });
+    },
+    maxConcurrency: deps.maxConcurrency,
+    budgetMs: deps.passBudgetMs ?? DEFAULT_PASS_BUDGET_MS,
+    now,
   });
 
-  logSweepAccounts(batch.map((entry) => entry.target), quotaOutcomes, checkinOutcomes, reportOutcomes, failed, claimed);
-  deps.onTick?.({ targets: targets.length, attempted, skipped, failed, checkins });
+  logSweepAccounts(attemptedTargets, quotaOutcomes, checkinOutcomes, reportOutcomes, failed, claimed);
+  // A pass that could not even list its targets reports no tick: an all-zero
+  // tick would read as "nothing was due" rather than "nothing was reachable".
+  if (result.aborted) return;
+  deps.onTick?.({
+    targets: result.listed,
+    attempted: result.attempted,
+    skipped: result.skipped,
+    failed,
+    checkins,
+  });
 }

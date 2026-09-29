@@ -10,6 +10,7 @@ re-run.
 ```
 src/workers/
   tasks.ts                 # ScheduledTaskRegistry: register/start/stop/runNow
+  sweep.ts                 # runSweep: the shared pass skeleton both sweeps use
   oauth-refresh-worker.ts  # oauthRefreshSweep: proactive OAuth token refresh
   quota-refresh-worker.ts  # quotaRefreshSweep: keeps the quota cache warm
   daily-checkin.ts         # attemptDailyGrowthPass: once-per-day credit claim + growth report
@@ -19,6 +20,29 @@ Task wiring lives in `runtime/dependencies.ts` (`buildProductionDeps`), which
 registers every task. `scheduledTasks.start()` is called by `main.ts` once the
 listener is up, so the first tick of the lease and health sweeps cannot run
 before the process is serving traffic.
+
+## Shared sweep skeleton (`sweep.ts`)
+
+Both domain sweeps are the same four steps, so they share one skeleton rather
+than each owning a copy: **list → drop ineligible → run the due batch in
+growing waves → report counts**. `runSweep(plan)` owns three rules that must
+hold regardless of the domain:
+
+- **Listing never rejects.** A rejection from `list` is logged as
+  `[<name>] sweep failed to list targets` and ends the pass with
+  `aborted: true`. The caller reports no tick for an aborted pass — an
+  all-zero tick would read as "nothing was due" rather than "nothing was
+  reachable".
+- **One item's failure never cancels the wave.** Per-item throws are isolated
+  into `onItemError` and counted as `failed`, so one dead account cannot
+  strand the rest of the pass.
+- **The budget is consulted between waves, never mid-wave.** `budgetMs` stops
+  the next wave, so a pass never leaves half-finished work behind.
+
+`eligible` drops a target that cannot be worked at all (no registered
+refresher); `select` narrows to the batch (ordering, freshness, per-pass cap)
+and may report extra skips. A new sweep supplies those hooks — it does not
+write a second lifecycle.
 
 ## Scheduler semantics (`tasks.ts`)
 
@@ -119,8 +143,8 @@ becomes its own target list.
 ## OAuth refresh sweep (`oauth-refresh-worker.ts`)
 
 1. `loadDueAccounts` (`loadDueOAuthAccounts(db)`) lists accounts due for
-   refresh; a load failure logs `[oauth-refresh] sweep failed to load due
-   accounts` and ends the pass.
+   refresh; a load failure logs `[oauth-refresh] sweep failed to list targets`
+   and ends the pass with no tick.
 2. Eligible accounts run in completed waves of 2, then 3, then 4, then 5
    (or the configured maximum), so the next wave waits for the previous one
    to settle instead of continuously filling worker slots.
