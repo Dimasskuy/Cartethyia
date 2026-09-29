@@ -217,7 +217,7 @@ describe("OpenCode bundled catalog", () => {
       expect(mimo).toBeDefined();
       expect(mimo?.wireFamily).toBe("chat");
       expect(mimo?.endpointPath).toBe("/zen/v1/chat/completions");
-      expect(mimo?.contextLimit).toBe(200_000);
+      expect(mimo?.contextLimit).toBe(1_000_000);
       expect(mimo?.outputLimit).toBe(32_000);
       expect(mimo?.modalities.input).toEqual(["text", "image", "document", "audio"]);
       expect(mimo?.reasoning).toBe(true);
@@ -225,14 +225,11 @@ describe("OpenCode bundled catalog", () => {
   });
 
   /**
-   * A hardcoded `ctx`/`out` silently overrides the committed models.dev
-   * snapshot, and a wrong limit is not cosmetic: an overstated context lets
-   * through a request the upstream then rejects, while an understated one caps
-   * what the model can serve. Every row the snapshot covers must therefore
-   * agree with it; a row the snapshot predates must declare its own limits
-   * instead of inheriting the generic default.
+   * Snapshot-derived limits must match models.dev. The same `/zen/v1` model
+   * uses a tier-accurate 1M context limit in both Free and Zen catalogs, where
+   * the shared snapshot row is lower.
    */
-  test("limits agree with the models.dev snapshot on every tier", () => {
+  test("limits agree with the models.dev snapshot except the explicit MiMo override", () => {
     const tiers = [
       ["opencodeft", OPENCODE_FREE_MODELS, "opencode"],
       ["opencodezen", OPENCODE_ZEN_MODELS, "opencode"],
@@ -242,6 +239,11 @@ describe("OpenCode bundled catalog", () => {
     for (const [tier, models, providerId] of tiers) {
       for (const model of models) {
         const label = `${tier}/${model.modelId}`;
+        if (model.modelId === "mimo-v2.6-flash-free") {
+          expect(model.contextLimit).toBe(1_000_000);
+          expect(model.outputLimit).toBe(32_000);
+          continue;
+        }
         const entry = modelsDevCatalog.resolve(providerId, model.modelId);
         if (!entry || entry.contextLimit == null || entry.outputLimit == null) {
           expect({ model: label, ctx: model.contextLimit }).not.toEqual({ model: label, ctx: null });

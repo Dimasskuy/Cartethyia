@@ -1,5 +1,5 @@
 import { completeRequiredSchema } from "../../protocol/primitives";
-import type { ModelDefinition, ProviderDispatchContext } from "../provider-registry";
+import type { ModelDefinition } from "../provider-registry";
 import type { CanonicalRequest, ToolDefinition } from "../../transport/canonical-model";
 import { isRecord } from "../../protocol/primitives";
 import { PROVIDER_COMPATIBILITY_PROFILES } from "../provider-metadata";
@@ -60,11 +60,11 @@ export function isFreeTierZenModel(modelId: string): boolean {
   return modelId.endsWith("-free") || KNOWN_FREE_ZEN_IDS.includes(modelId);
 }
 
-async function opencodeDesktopHeaders(context?: ProviderDispatchContext): Promise<Record<string, string>> {
+async function opencodeDesktopHeaders(): Promise<Record<string, string>> {
   // Await discovery so the true latest client version is stamped on every
   // dispatch; the pinned fallback only applies on a real network failure.
   await resolveOpenCodeVersion();
-  return buildOpenCodeHeaders(undefined, context?.conversation_affinity);
+  return buildOpenCodeHeaders();
 }
 /** Canonical agent-tool fingerprint OpenCode Free requires on every dispatch.
  * Upstream rejects tool-less or non-agent requests with `FreeTierError`
@@ -172,18 +172,25 @@ export async function discoverOpenCodeFreeModels(options: {
 // Limits and pricing resolve from the committed models.dev snapshot
 // (`base-models.json`) via `providerId`; the snapshot is keyed per provider, so
 // passing it is what makes the lookup answer with OpenCode's own entry instead
-// of a same-named model from another reseller. Only rows the snapshot predates
-// (a model newer than the snapshot) keep explicit `ctx`/`out`.
+// of a same-named model from another reseller. The snapshot's shared OpenCode
+// row understates this model's 1M context limit, so keep the corrected limit
+// explicit for both tiers that serve it.
 const sharedZenChat: readonly ModelDefinition[] = [
   defineModel({ id: "big-pickle", providerId: "opencode", wireFamily: "chat", endpoint: `${ZEN_PATH_PREFIX}/chat/completions`, vision: true, reasoning: true }),
   defineModel({ id: "mimo-v2.5-free", providerId: "opencode", wireFamily: "chat", endpoint: `${ZEN_PATH_PREFIX}/chat/completions`, vision: true, reasoning: true }),
-  // Live on the shared `/zen/v1` base for both tiers. Not in the snapshot yet,
-  // so its limits stay explicit (authoritative models.dev row: 200k/32k, free)
-  // and `free` pins the cost rather than leaving it unresolved. Tenant aliases
-  // and fallback combos target this id by name, so dropping the row silently
-  // breaks them: `seedBundledModels` prunes any `builtin` row the catalog no
-  // longer declares, and routing then reports `model_not_found` for the alias.
-  defineModel({ id: "mimo-v2.6-flash-free", wireFamily: "chat", endpoint: `${ZEN_PATH_PREFIX}/chat/completions`, ctx: 200000, out: 32000, vision: true, document: true, audio: true, reasoning: true, free: true }),
+  defineModel({
+    id: "mimo-v2.6-flash-free",
+    providerId: "opencode",
+    wireFamily: "chat",
+    endpoint: `${ZEN_PATH_PREFIX}/chat/completions`,
+    ctx: 1_000_000,
+    out: 32_000,
+    vision: true,
+    document: true,
+    audio: true,
+    reasoning: true,
+    free: true,
+  }),
 ];
 
 const MUSE_SPARK_REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as const;
