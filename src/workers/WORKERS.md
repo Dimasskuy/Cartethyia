@@ -14,6 +14,7 @@ src/workers/
   oauth-refresh-worker.ts  # oauthRefreshSweep: proactive OAuth token refresh
   quota-refresh-worker.ts  # quotaRefreshSweep: keeps the quota cache warm
   daily-checkin.ts         # attemptDailyGrowthPass: once-per-day credit claim + growth report
+  checkin-egress.ts        # per-account proxy rotation for the check-in ride-along
 ```
 
 Task wiring lives in `runtime/dependencies.ts` (`buildProductionDeps`), which
@@ -131,6 +132,15 @@ A transient failure releases the account's day marker itself (see the two
 `redis.del(ledgerKey(...))` release points in `attemptDailyGrowthPass`), so the
 next sweep of the same day retries the account. There is no operator-facing
 reset entry point: re-running the pass is the retry.
+
+**Egress rotation (`checkin-egress.ts`).** The ride-along rotates one active
+pool per account (`checkinEgressForPass`, wired in `dependencies.ts`), so
+check-ins spread across IPs instead of sharing one direct egress. The pool
+list is read once per pass; each tenant walks its own cursor, so two tenants
+sharing the global pools still spread independently. A tenant only ever sees
+its own pools plus the global set — never another tenant's. No pool, an
+unreadable pool table, or a pool that fails to bind all degrade to direct
+egress: a repeated IP is accepted, an unattempted check-in is not.
 
 **Trade-off:** coverage follows the quota sweep, so an account is only checked
 in once the sweep considers it due (OAuth account with a registered refresher).

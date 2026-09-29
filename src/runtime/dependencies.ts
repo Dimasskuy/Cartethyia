@@ -26,6 +26,7 @@ import {
 import { NetworkPoolSelector } from "../network/pool/selector";
 import { ScheduledTaskRegistry } from "../workers/tasks";
 import { quotaRefreshSweep } from "../workers/quota-refresh-worker";
+import { checkinEgressForPass } from "../workers/checkin-egress";
 import { createAccountSecretResolver } from "../providers/operations/provider-credential-service";
 import { quotaCacheSize } from "../console/quota/cache";
 import { preferencesReaderFor } from "../transport/dispatch/attempt-finalize";
@@ -266,6 +267,12 @@ export async function buildProductionDeps(): Promise<ProductionDeps> {
           redis,
           providerRegistry: registry,
           resolveCredential: quotaResolveCredential,
+          // The check-in ride-along rotates egress per account: each account
+          // gets the next active pool in its tenant's rotation so check-ins
+          // spread across IPs instead of sharing one direct egress. No pool
+          // (or an unreadable pool table) falls back to direct egress, and a
+          // tenant never borrows another tenant's pool.
+          checkinFetcherFor: checkinEgressForPass({ db, networkBindingFactory }),
           // Per-account lines and the pass summary are emitted by the sweep
           // itself at `info` level, so they survive the production LOG_LEVEL.
           // `onTick` is left for tests.

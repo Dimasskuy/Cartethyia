@@ -22,6 +22,7 @@ import {
 } from "../console/quota/refresh";
 import { getCachedQuotaEntries, type CachedQuotaEntry } from "../console/quota/cache";
 import { runSweep } from "./sweep";
+import type { ValidatedFetch } from "../network/outbound-fetch";
 import type { ProviderId } from "../providers/provider-registry";
 import {
   attemptDailyGrowthPass,
@@ -47,6 +48,18 @@ export interface QuotaRefreshSweepDeps extends QuotaRefreshDeps {
   readonly maxCheckinsPerPass?: number;
   /** Injectable fetch for the check-in ride-along (tests). */
   readonly checkinFetcher?: typeof fetch;
+  /**
+   * Builds the fetch the check-in ride-along uses for one account.
+   *
+   * The sweep passes this down so the check-in can rotate egress per account
+   * (a different proxy per account when pools are available) instead of
+   * sharing one direct `globalThis.fetch` for every account. Absent means
+   * direct egress, which is what `attemptDailyGrowthPass` already does.
+   */
+  readonly checkinFetcherFor?: (
+    accountId: string,
+    tenantId?: string | null,
+  ) => ValidatedFetch | Promise<ValidatedFetch>;
   readonly now?: () => number;
   readonly onTick?: (result: {
     readonly targets: number;
@@ -337,12 +350,22 @@ export async function quotaRefreshSweep(deps: QuotaRefreshSweepDeps): Promise<vo
       if (maxCheckins <= 0 || checkins >= maxCheckins) return;
       if (!supportsDailyCheckin(entry.target.providerId)) return;
       try {
+        // `ValidatedFetch` is call-compatible with `typeof fetch`; the cast
+        // is only for the `preconnect` static Bun adds to its own fetch (the
+        // same cast the adapters use for `outbound_fetch`).
+        const pooled = deps.checkinFetcherFor
+          ? ((await deps.checkinFetcherFor(
+              entry.target.accountId,
+              entry.target.tenantId,
+            )) as unknown as typeof fetch)
+          : undefined;
+        const fetcher = pooled ?? deps.checkinFetcher;
         const pass = await attemptDailyGrowthPass({
           redis: deps.redis,
           providerId: entry.target.providerId as ProviderId,
           accountId: entry.target.accountId,
           resolveCredential: resolveCredentialCached,
-          ...(deps.checkinFetcher ? { fetcher: deps.checkinFetcher } : {}),
+          ...(fetcher ? { fetcher } : {}),
         });
         if (pass !== null) {
           checkins += 1;
