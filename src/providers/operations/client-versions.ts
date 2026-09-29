@@ -242,61 +242,57 @@ const resolvers = {
   kiro: createClientVersionResolver(VERSION_SOURCES.kiro),
 } satisfies Record<keyof typeof VERSION_SOURCES, ClientVersionResolver>;
 
-export function getQoderVersion(): string {
-  return resolvers.qoder.get();
+/**
+ * The accessors every table entry needs, generated from its resolver.
+ *
+ * Each entry used to ship a hand-written `getX` / `resolveX` / `refreshX` /
+ * `_resetX` quadruple that all did exactly this — four bodies per entry, which
+ * is how a new entry could forget one or drift on which resolver it reads.
+ * `accessor(name)` is the one place the shape is decided.
+ *
+ * A named export is still declared beside the table when callers read better
+ * with it (`getCodexVersion`), or when the accessor seeds more than one
+ * resolver (`_resetClaudeVersionCache`). Both are one line against a resolver,
+ * not a second implementation.
+ */
+function accessor<K extends keyof typeof resolvers>(name: K): {
+  readonly get: () => string;
+  readonly resolve: (fetcher?: typeof fetch, signal?: AbortSignal) => Promise<string>;
+  readonly refresh: (fetcher?: typeof fetch) => void;
+  readonly reset: (version?: string | null) => void;
+} {
+  const resolver = resolvers[name];
+  return {
+    get: () => resolver.get(),
+    resolve: async (fetcher?: typeof fetch, signal?: AbortSignal) => {
+      await resolver.ensure(fetcher, signal);
+      return resolver.get();
+    },
+    refresh: (fetcher?: typeof fetch) => {
+      resolver.refresh(fetcher);
+    },
+    reset: (version?: string | null) => {
+      resolver.reset(version);
+    },
+  };
 }
 
-export async function resolveQoderVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.qoder.ensure(fetcher, signal);
-  return getQoderVersion();
-}
+export const getQoderVersion = accessor("qoder").get;
+export const resolveQoderVersion = accessor("qoder").resolve;
+export const _resetQoderVersion = accessor("qoder").reset;
 
-export function _resetQoderVersion(version: string | null = null): void {
-  resolvers.qoder.reset(version);
-}
+export const getOpenCodeVersion = accessor("opencode").get;
+export const resolveOpenCodeVersion = accessor("opencode").resolve;
+export const refreshOpenCodeVersion = accessor("opencode").refresh;
+export const _resetOpenCodeVersion = accessor("opencode").reset;
 
-export function getOpenCodeVersion(): string {
-  return resolvers.opencode.get();
-}
+export const getCommandCodeVersion = accessor("commandcode").get;
+export const resolveCommandCodeVersion = accessor("commandcode").resolve;
+export const _resetCommandCodeVersion = accessor("commandcode").reset;
 
-export function refreshOpenCodeVersion(fetcher?: typeof fetch): void {
-  resolvers.opencode.refresh(fetcher);
-}
-
-export async function resolveOpenCodeVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.opencode.ensure(fetcher, signal);
-  return getOpenCodeVersion();
-}
-
-export function _resetOpenCodeVersion(version: string | null = null): void {
-  resolvers.opencode.reset(version);
-}
-
-export function getCommandCodeVersion(): string {
-  return resolvers.commandcode.get();
-}
-
-export async function resolveCommandCodeVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.commandcode.ensure(fetcher, signal);
-  return getCommandCodeVersion();
-}
-
-export function _resetCommandCodeVersion(version: string | null = null): void {
-  resolvers.commandcode.reset(version);
-}
-
-export function getGrokVersion(): string {
-  return resolvers.grok.get();
-}
-
-export async function resolveGrokVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.grok.ensure(fetcher, signal);
-  return getGrokVersion();
-}
-
-export function refreshGrokVersion(fetcher?: typeof fetch): void {
-  resolvers.grok.refresh(fetcher);
-}
+export const getGrokVersion = accessor("grok").get;
+export const resolveGrokVersion = accessor("grok").resolve;
+export const refreshGrokVersion = accessor("grok").refresh;
 
 export function buildGrokUserAgent(version = getGrokVersion()): string {
   return `grok-shell/${version} (linux; x86_64)`;
@@ -306,65 +302,24 @@ export function buildGrokAuthUserAgent(version = getGrokVersion()): string {
   return `grok-pager/${version} grok-shell/${version} (linux; x86_64)`;
 }
 
-export function _resetGrokVersionCache(version: string | null = null): void {
-  resolvers.grok.reset(version);
-}
+export const _resetGrokVersionCache = accessor("grok").reset;
 
-export function getClineClientVersion(): string {
-  return resolvers.clineClient.get();
-}
+export const getClineClientVersion = accessor("clineClient").get;
+export const getClineSdkVersion = accessor("clineSdk").get;
+export const resolveClineClientVersion = accessor("clineClient").resolve;
+export const resolveClineSdkVersion = accessor("clineSdk").resolve;
+export const refreshClineClientVersion = accessor("clineClient").refresh;
 
-export function getClineSdkVersion(): string {
-  return resolvers.clineSdk.get();
-}
+export const resolveWorkBuddyClientVersion = accessor("workbuddyClient").resolve;
+export const _resetWorkBuddyClientVersionCache = accessor("workbuddyClient").reset;
 
-export async function resolveClineClientVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.clineClient.ensure(fetcher, signal);
-  return getClineClientVersion();
-}
+export const getCodexVersion = accessor("codex").get;
+export const resolveCodexVersion = accessor("codex").resolve;
+export const refreshCodexVersion = accessor("codex").refresh;
+export const _resetCodexVersion = accessor("codex").reset;
 
-export async function resolveClineSdkVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.clineSdk.ensure(fetcher, signal);
-  return getClineSdkVersion();
-}
-
-export function refreshClineClientVersion(fetcher?: typeof fetch): void {
-  resolvers.clineClient.refresh(fetcher);
-}
-
-export async function resolveWorkBuddyClientVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.workbuddyClient.ensure(fetcher, signal);
-  return getWorkBuddyClientVersion();
-}
-
-export function _resetWorkBuddyClientVersionCache(version: string | null = null): void {
-  resolvers.workbuddyClient.reset(version);
-}
-
-export function getCodexVersion(): string {
-  return resolvers.codex.get();
-}
-
-export async function resolveCodexVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.codex.ensure(fetcher, signal);
-  return getCodexVersion();
-}
-
-export function refreshCodexVersion(fetcher?: typeof fetch): void {
-  resolvers.codex.refresh(fetcher);
-}
-
-export function _resetCodexVersion(version: string | null = null): void {
-  resolvers.codex.reset(version);
-}
-
-export function getWorkBuddyClientVersion(): string {
-  return resolvers.workbuddyClient.get();
-}
-
-export function getWorkBuddyCliVersion(): string {
-  return resolvers.workbuddyCli.get();
-}
+export const getWorkBuddyClientVersion = accessor("workbuddyClient").get;
+export const getWorkBuddyCliVersion = accessor("workbuddyCli").get;
 
 export async function resolveWorkBuddyVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
   await Promise.all([
@@ -381,35 +336,15 @@ export function buildWorkBuddyUserAgent(
   return `WorkBuddy/${clientVersion} WorkBuddy AI/${clientVersion} CLI/${cliVersion}`;
 }
 
-export function _resetWorkBuddyVersionCache(version: string | null = null): void {
-  resolvers.workbuddyCli.reset(version);
-}
+export const _resetWorkBuddyVersionCache = accessor("workbuddyCli").reset;
 
-export function getKimiCliVersion(): string {
-  return resolvers.kimiCli.get();
-}
+export const getKimiCliVersion = accessor("kimiCli").get;
+export const resolveKimiCliVersion = accessor("kimiCli").resolve;
+export const refreshKimiCliVersion = accessor("kimiCli").refresh;
+export const _resetKimiCliVersion = accessor("kimiCli").reset;
 
-export async function resolveKimiCliVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.kimiCli.ensure(fetcher, signal);
-  return getKimiCliVersion();
-}
-
-export function refreshKimiCliVersion(fetcher?: typeof fetch): void {
-  resolvers.kimiCli.refresh(fetcher);
-}
-
-export function _resetKimiCliVersion(version: string | null = null): void {
-  resolvers.kimiCli.reset(version);
-}
-
-export function getCodeBuddyVersion(): string {
-  return resolvers.codebuddy.get();
-}
-
-export async function resolveCodeBuddyVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.codebuddy.ensure(fetcher, signal);
-  return getCodeBuddyVersion();
-}
+export const getCodeBuddyVersion = accessor("codebuddy").get;
+export const resolveCodeBuddyVersion = accessor("codebuddy").resolve;
 
 export function buildCodeBuddyUserAgent(
   identity: "IDE" | "CLI",
@@ -418,45 +353,26 @@ export function buildCodeBuddyUserAgent(
   return `${identity}/${version} CodeBuddy/${version}`;
 }
 
-export function _resetCodeBuddyVersionCache(version: string | null = null): void {
-  resolvers.codebuddy.reset(version);
-}
+export const _resetCodeBuddyVersionCache = accessor("codebuddy").reset;
 
-export function getClaudeCliVersion(): string {
-  return resolvers.claudeCli.get();
-}
-
-export async function resolveClaudeCliVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.claudeCli.ensure(fetcher, signal);
-  return getClaudeCliVersion();
-}
-
-export function getClaudeSdkVersion(): string {
-  return resolvers.claudeSdk.get();
-}
-
-export async function resolveClaudeSdkVersion(fetcher?: typeof fetch, signal?: AbortSignal): Promise<string> {
-  await resolvers.claudeSdk.ensure(fetcher, signal);
-  return getClaudeSdkVersion();
-}
+export const getClaudeCliVersion = accessor("claudeCli").get;
+export const resolveClaudeCliVersion = accessor("claudeCli").resolve;
+export const getClaudeSdkVersion = accessor("claudeSdk").get;
+export const resolveClaudeSdkVersion = accessor("claudeSdk").resolve;
 
 export function _resetClaudeVersionCache(version: string | null = null): void {
   resolvers.claudeCli.reset(version);
   resolvers.claudeSdk.reset(version);
 }
 
-export function getKiroVersion(): string {
-  return resolvers.kiro.get();
-}
-
-export async function resolveKiroVersion(fetcher?: ClientVersionFetcher, signal?: AbortSignal): Promise<string> {
-  await resolvers.kiro.ensure(fetcher, signal);
-  return getKiroVersion();
-}
-
-export function _resetKiroVersion(version: string | null = null): void {
-  resolvers.kiro.reset(version);
-}
+export const getKiroVersion = accessor("kiro").get;
+// Kiro's callers pass its own `FetchLike` (a narrower fetch surface), so the
+// generated signature is widened here rather than at the factory.
+export const resolveKiroVersion = accessor("kiro").resolve as (
+  fetcher?: ClientVersionFetcher,
+  signal?: AbortSignal,
+) => Promise<string>;
+export const _resetKiroVersion = accessor("kiro").reset;
 
 /**
  * Builds the `x-amz-user-agent` companion header for the generation surface.

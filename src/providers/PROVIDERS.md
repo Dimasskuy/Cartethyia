@@ -824,6 +824,14 @@ modules are edited for those providers.
 blocks on the npm/vendor lookup. Keep provider-specific fingerprint parsing beside the table only when the
 upstream identifier is not a normal version source.
 
+**Adding an entry costs one row plus its accessors.** `accessor("<key>")` generates the four accessors
+(`get` / `resolve` / `refresh` / `reset`) from the entry's resolver, so a new row does not hand-write them —
+the quadruple used to be four bodies per entry, which is how an entry could ship without one or read the
+wrong resolver. Declare a named export against the generated accessor when callers read better with it, and
+write a body by hand only when it seeds more than one resolver (`_resetClaudeVersionCache`) or needs a
+different fetcher type (`resolveKiroVersion` takes the narrower `FetchLike`). Provider-specific header
+builders (`buildKiroUserAgent`, `buildGrokUserAgent`) stay hand-written: they encode wire bytes, not lookups.
+
 **Where each pinned fallback comes from.** The table below records the lookup for every entry, so refreshing a
 pin is a fetch rather than a hunt. `client-versions.ts` is the single source of truth for the *values*; this
 table records only *where they were read from*.
