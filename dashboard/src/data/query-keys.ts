@@ -64,7 +64,7 @@ export const queryKeys = {
   cliTools: {
     registry: ["console", "cli-tools", "registry"] as const,
     statuses: ["console", "cli-tools", "statuses"] as const,
-    mappings: (toolId: string) => ["console", "cli-tools", toolId, "mappings"] as const,
+    mappings: (toolId: string, keyId: string) => ["console", "cli-tools", toolId, keyId, "mappings"] as const,
   },
   audit: {
     list: (filters: { action?: string; actor?: string; cursor?: string; limit?: number }) =>

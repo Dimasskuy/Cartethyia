@@ -33,7 +33,13 @@ export class DrizzleCliToolSecretSource implements CliToolSecretSource {
         revokedAt: apiKeys.revokedAt,
       })
       .from(apiKeys)
-      .where(and(eq(apiKeys.tenantId, tenantId), eq(apiKeys.id, keyId)))
+      .where(
+        and(
+          eq(apiKeys.tenantId, tenantId),
+          eq(apiKeys.id, keyId),
+          eq(apiKeys.keyMode, "personal"),
+        ),
+      )
       .limit(1);
     return decryptRow(rows[0]);
   }
@@ -43,6 +49,10 @@ export class DrizzleCliToolSecretSource implements CliToolSecretSource {
    * way authentication does and match the stored hash, then read the
    * recoverable copy. Keys created before `key_encrypted` existed match no
    * recoverable copy and correctly resolve to `undefined`.
+   *
+   * Share templates are excluded: they carry no secret of their own and their
+   * `key_encrypted` is always null. The `keyMode = 'personal'` filter lets
+   * the DB reject them instead of relying on `decryptRow`'s null check.
    */
   async resolveSecretByValue(
     tenantId: string,
@@ -57,7 +67,13 @@ export class DrizzleCliToolSecretSource implements CliToolSecretSource {
         revokedAt: apiKeys.revokedAt,
       })
       .from(apiKeys)
-      .where(and(eq(apiKeys.tenantId, tenantId), eq(apiKeys.keyHash, hashSecret(secret))))
+      .where(
+        and(
+          eq(apiKeys.tenantId, tenantId),
+          eq(apiKeys.keyHash, hashSecret(secret)),
+          eq(apiKeys.keyMode, "personal"),
+        ),
+      )
       .limit(1);
     return decryptRow(rows[0]);
   }

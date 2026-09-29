@@ -50,13 +50,14 @@ export interface CliMappingInput {
   readonly mappings: readonly CliModelMapping[];
 }
 
-/** The user-facing routing mode supported by a CLI tool. */
-export type CliMappingMode = "remote" | "custom";
+/** The user-facing routing mode for a CLI tool: `remote` routes are resolved by the gateway, `local` routes are baked into the tool's own config file. */
+export type CliMappingMode = "remote" | "local";
 
-/** Persisted mapping settings for one CLI tool. */
+/** Persisted mapping settings for one CLI tool + API key pair. */
 export interface CliMappingSettings {
   readonly toolId: string;
   readonly tenantId: string;
+  readonly apiKeyId: string;
   readonly enabled: boolean;
   readonly mappings: readonly CliModelMapping[];
 }
@@ -104,9 +105,9 @@ export interface ToolDef {
    *   reroutes them, so a slot has an independent *target* route. Only this
    *   mode has a mapping table, and only keys carrying `routing:cli_mapping`
    *   may consume it.
-   * - `custom` — the tool's config file itself carries the routed model name,
+   * - `local` — the tool's config file itself carries the routed model name,
    *   so a slot has one value (written to the file) rather than a separate
-   *   target. There is nothing to persist.
+   *   target. There is nothing to persist; the model is baked into the file.
    *
    * Absent means the tool exposes no configurable model slots at all (a
    * guide-only tool). This replaces a separate `mappingSupported` flag that

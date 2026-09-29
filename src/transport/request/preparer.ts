@@ -341,6 +341,7 @@ export class ProxyRequestPreparer {
       authorization.tenantId,
       request.model,
       allowCliMappings,
+      authorization.id,
     );
     if (
       authorization.modelPrefix &&

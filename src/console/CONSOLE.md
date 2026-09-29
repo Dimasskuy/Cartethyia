@@ -317,11 +317,12 @@ slot, and the persisted target remains the routed model.
 
 A tool's mapping surface is derived from `ToolDef.mappingMode`, not from a separate flag: only a
 `remote` tool (the CLI sends native model names and the gateway reroutes them) has a persisted
-mapping table and a per-slot *target*; a `custom` tool writes the routed name into its own config
-and has one value per slot; an absent mode means no configurable slots at all. `saveMappings`
-rejects a non-`remote` tool rather than silently persisting rows nothing would consume. On the
-detail page the two columns read "CLI asks for → Cartethyia routes to", an empty target means "not
-routed" (only routed slots are persisted), and a target equal to its source is not written.
+mapping table and a per-slot *target*; a `local` tool writes the routed name into its own config
+file and has one value per slot; an absent mode means no configurable slots at all. Mappings are
+stored per (tenant, tool, API key) so each key can route the same CLI slot to a different target.
+`saveMappings` rejects a non-`remote` tool rather than silently persisting rows nothing would
+consume. On the detail page the two columns read "CLI asks for → Cartethyia routes to", an empty
+target means "not routed" (only routed slots are persisted), and a target equal to its source is not written.
 
 File-based tools declare an `InjectorSpec` built by `createFileInjector` into a `ToolInjector`
 (guide-only tools share `guideInjectorFor`); `INJECTORS` is built exhaustively from the registry,

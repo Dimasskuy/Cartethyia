@@ -172,15 +172,16 @@ export class CliToolService {
     return Object.fromEntries(entries);
   }
 
-  async getMappings(tenantId: string, toolId: string): Promise<CliMappingSettings> {
+  async getMappings(tenantId: string, toolId: string, apiKeyId: string): Promise<CliMappingSettings> {
     if (!this.isValidTool(toolId)) throw new Error(`Unknown tool: ${toolId}`);
     const [settings, rows] = await Promise.all([
-      this.mappings.getSettings(tenantId, toolId),
-      this.mappings.list(tenantId, toolId),
+      this.mappings.getSettings(tenantId, toolId, apiKeyId),
+      this.mappings.list(tenantId, toolId, apiKeyId),
     ]);
     return {
       toolId,
       tenantId,
+      apiKeyId,
       // Mapping is opt-out: an absent settings row means enabled.
       enabled: settings?.mappingsEnabled !== false,
       mappings: rows.map((row) => ({
@@ -195,6 +196,7 @@ export class CliToolService {
   async saveMappings(
     tenantId: string,
     toolId: string,
+    apiKeyId: string,
     input: CliMappingInput,
   ): Promise<CliMappingSettings> {
     if (!this.isValidTool(toolId)) throw new Error(`Unknown tool: ${toolId}`);
@@ -208,28 +210,26 @@ export class CliToolService {
         throw new Error(`Unknown mapping slot: ${mapping.slotKey}`);
       if (!mapping.sourceModel.trim() || !mapping.targetModel.trim())
         throw new Error("Mapping source and target are required");
-      // The `custom`-mode equality check that used to live here is unreachable:
-      // a non-`remote` tool is rejected above, so every mapping that reaches
-      // this point is a genuine source→target route.
       incomingSlots.add(mapping.slotKey);
     }
-    await this.mappings.setSettings(tenantId, toolId, input.enabled, def.mappingMode);
+    await this.mappings.setSettings(tenantId, toolId, apiKeyId, input.enabled, def.mappingMode);
     for (const mapping of input.mappings) {
       await this.mappings.upsert({
         tenantId,
         toolId,
+        apiKeyId,
         slotKey: mapping.slotKey,
         sourceModel: mapping.sourceModel.trim(),
         targetModel: mapping.targetModel.trim(),
         enabled: mapping.enabled,
       });
     }
-    const existing = await this.mappings.list(tenantId, toolId);
+    const existing = await this.mappings.list(tenantId, toolId, apiKeyId);
     for (const row of existing) {
       if (!incomingSlots.has(row.slotKey))
-        await this.mappings.remove(tenantId, toolId, row.slotKey);
+        await this.mappings.remove(tenantId, toolId, apiKeyId, row.slotKey);
     }
-    return this.getMappings(tenantId, toolId);
+    return this.getMappings(tenantId, toolId, apiKeyId);
   }
 
   async downloadConfig(toolId: string, input: ApplyInput): Promise<DownloadResult | null> {
@@ -262,6 +262,7 @@ export class CliToolService {
   async applyConfig(
     tenantId: string,
     toolId: string,
+    apiKeyId: string,
     input: ApplyInput & { mode?: "file" | "remote" | "both" },
   ): Promise<ApplyConfigResult | null> {
     const injector = injectorFor(toolId);
@@ -283,7 +284,7 @@ export class CliToolService {
 
     let savedRemoteRoute = false;
     if (wantsRemote && input.mapping !== undefined) {
-      await this.saveMappings(tenantId, toolId, input.mapping);
+      await this.saveMappings(tenantId, toolId, apiKeyId, input.mapping);
       savedRemoteRoute = true;
     }
 

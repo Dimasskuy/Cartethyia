@@ -701,6 +701,9 @@ export const cliToolMappings = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     tenantId: tenantRefRequired(),
+    apiKeyId: uuid("api_key_id")
+      .notNull()
+      .references((): AnyPgColumn => apiKeys.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
     slotKey: text("slot_key").notNull(),
     sourceModel: text("source_model").notNull(),
@@ -708,22 +711,32 @@ export const cliToolMappings = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     updatedAt: updatedAtColumn(),
   },
-  (table) => [uniqueIndex("cli_tool_mappings_key").on(table.tenantId, table.toolId, table.slotKey)],
+  (table) => [
+    uniqueIndex("cli_tool_mappings_key").on(
+      table.tenantId,
+      table.toolId,
+      table.apiKeyId,
+      table.slotKey,
+    ),
+  ],
 );
 
 
-// Per-(tenant, tool) settings: whether mappings are active and which mode
-// (remote gateway vs local passthrough) the tool is configured for.
+// Per-(tenant, tool, api_key) settings: whether mappings are active and which
+// mode the tool is configured for. Primary key is the composite of all three.
 export const cliToolSettings = pgTable(
   "cli_tool_settings",
   {
     tenantId: tenantRefRequired(),
+    apiKeyId: uuid("api_key_id")
+      .notNull()
+      .references((): AnyPgColumn => apiKeys.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
     mappingsEnabled: boolean("mappings_enabled").notNull().default(false),
     mode: text("mode").notNull().default("remote"),
     updatedAt: updatedAtColumn(),
   },
-  (table) => [primaryKey({ columns: [table.tenantId, table.toolId] })],
+  (table) => [primaryKey({ columns: [table.tenantId, table.toolId, table.apiKeyId] })],
 );
 
 

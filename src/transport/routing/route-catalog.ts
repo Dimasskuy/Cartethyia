@@ -257,6 +257,7 @@ const DISABLED_MODEL_COLUMNS = {
 
 const CLI_MAPPING_COLUMNS = {
   tenantId: cliToolMappings.tenantId,
+  apiKeyId: cliToolMappings.apiKeyId,
   toolId: cliToolMappings.toolId,
   sourceModel: cliToolMappings.sourceModel,
   targetModel: cliToolMappings.targetModel,
@@ -572,12 +573,15 @@ class RouteCatalogRepository {
         (aliases[row.tenantId] ??= {})[row.alias] = row.targetModel;
       }
     }
-    // CLI-tool mappings stay separate from tenant model aliases. The request
-    // preparer enables them only for API keys carrying routing:cli_mapping.
+    // CLI-tool mappings are per-(tenant, key): each API key can route the same
+    // CLI slot to a different target. The snapshot keys the alias bucket by
+    // `${tenantId}:${apiKeyId}` so the preparer can look up the exact key's
+    // routes without merging across keys.
     for (const row of cliMappingRows) {
       if (!row.enabled) continue;
       if (tenantId === undefined || row.tenantId === tenantId) {
-        const aliasBucket = (cliAliases[row.tenantId] ??= {});
+        const bucketKey = `${row.tenantId}:${row.apiKeyId}`;
+        const aliasBucket = (cliAliases[bucketKey] ??= {});
         for (const sourceKey of cliMappingSourceKeys(row.toolId, row.sourceModel)) {
           aliasBucket[sourceKey] = row.targetModel;
         }

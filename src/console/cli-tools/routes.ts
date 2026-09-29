@@ -12,15 +12,16 @@ import type { ApplyInput, CliMappingInput, CliModelMapping } from "./contracts";
  *   GET    /cli-tools/registry              — all tool metadata (auth only)
  *   GET    /cli-tools/all-statuses          — batch host FS probe (dashboard:read)
  *   GET    /cli-tools/:toolId               — single tool status (dashboard:read)
- *   GET    /cli-tools/:toolId/mappings      — persisted mappings (dashboard:read)
- *   POST   /cli-tools/:toolId/mappings      — save mappings (dashboard:write, audited)
+ *   GET    /cli-tools/:toolId/mappings      — persisted mappings for one key (dashboard:read)
+ *   POST   /cli-tools/:toolId/mappings      — save mappings for one key (dashboard:write, audited)
  *   POST   /cli-tools/:toolId/download      — download config text (dashboard:read)
  *   POST   /cli-tools/:toolId/apply         — write config and/or save remote route
  *                                             (dashboard:write, audited)
  *
- * Both `download` and `apply` accept either a pasted `apiKey` or a `keyId`
- * that the server resolves to the tenant's recoverable secret copy, so the
- * operator never has to paste a raw secret to get a config.
+ * Mapping endpoints require a `keyId` — mappings are now per-(tenant, tool, key)
+ * so each API key can route the same CLI slot to a different target.
+ * `download` and `apply` require `keyId`; the server resolves the recoverable
+ * AES-256-GCM copy so the operator never pastes a raw secret.
  */
 export interface CliToolsRoutesConfig {
   readonly service: CliToolService;
@@ -56,27 +57,21 @@ function parseMapping(value: unknown): CliMappingInput | undefined {
 }
 
 /**
- * Parses an apply/download body.
- *
- * `apiKey` is optional: the console resolves the secret server-side from
- * `keyId` (the selected key's recoverable copy), so the operator does not have
- * to paste a raw secret just to download a config. A pasted `apiKey` still
- * wins when present, which keeps working for keys whose recoverable copy
- * predates `key_encrypted`. At least one of the two must be supplied — that
- * check happens after resolution, in the service, so a missing secret fails
- * with a domain error instead of a bare 422.
+ * Parses an apply/download body. `keyId` is required: the server resolves
+ * the key's AES-256-GCM ciphertext so the operator never pastes a raw secret.
+ * Mappings are keyed to the same `keyId`, so apply and mapping saves are
+ * always consistent.
  */
 function parseApplyInput(
   body: unknown,
-): (ApplyInput & { keyId?: string; mapping?: CliMappingInput; mode?: "file" | "remote" | "both" }) | undefined {
+): (ApplyInput & { keyId: string; mapping?: CliMappingInput; mode?: "file" | "remote" | "both" }) | undefined {
   const value =
     typeof body === "object" && body !== null && !Array.isArray(body)
       ? (body as Record<string, unknown>)
       : {};
   if (typeof value.endpoint !== "string" || value.endpoint.length === 0) return undefined;
-  const apiKey = typeof value.apiKey === "string" ? value.apiKey : "";
   const keyId = typeof value.keyId === "string" && value.keyId.length > 0 ? value.keyId : undefined;
-  if (apiKey.length === 0 && keyId === undefined) return undefined;
+  if (!keyId) return undefined;
   const rawSlots =
     typeof value.modelSlots === "object" &&
     value.modelSlots !== null &&
@@ -92,8 +87,8 @@ function parseApplyInput(
   if (value.mapping !== undefined && mapping === undefined) return undefined;
   return {
     endpoint: value.endpoint,
-    apiKey,
-    ...(keyId === undefined ? {} : { keyId }),
+    apiKey: "",
+    keyId,
     modelIds: Array.isArray(value.models)
       ? value.models.filter((model): model is string => typeof model === "string")
       : [],
@@ -110,8 +105,7 @@ function parseApplyInput(
 
 const applyBody = t.Object({
   endpoint: t.String(),
-  apiKey: t.Optional(t.String()),
-  keyId: t.Optional(t.String()),
+  keyId: t.String(),
   mode: t.Optional(t.Union([t.Literal("file"), t.Literal("remote"), t.Literal("both")])),
   models: t.Array(t.String()),
   modelSlots: t.Optional(t.Record(t.String(), t.String())),
@@ -134,6 +128,7 @@ const applyBody = t.Object({
 });
 
 const mappingBody = t.Object({
+  keyId: t.String(),
   enabled: t.Boolean(),
   mappings: t.Array(
     t.Object({
@@ -165,14 +160,19 @@ export function createCliToolsRoutes(config: CliToolsRoutesConfig): Elysia {
         return errorResponse(e, set, "CLI tool operation failed");
       }
     })
-    .get("/:toolId/mappings", async ({ request, params, set }) => {
+    .get("/:toolId/mappings", async ({ request, params, query, set }) => {
       try {
         const a = requireTenantScope(accessResolver(request), "dashboard:read");
         if (!service.isValidTool(params.toolId)) {
           set.status = 404;
           return { error: "CLI tool not found", code: "tool_not_found" };
         }
-        return await service.getMappings(a.tenantId, params.toolId);
+        const keyId = typeof query.keyId === "string" && query.keyId.length > 0 ? query.keyId : undefined;
+        if (!keyId) {
+          set.status = 422;
+          return { error: "keyId query parameter is required", code: "invalid_request" };
+        }
+        return await service.getMappings(a.tenantId, params.toolId, keyId);
       } catch (e) {
         return errorResponse(e, set, "CLI tool operation failed");
       }
@@ -189,13 +189,18 @@ export function createCliToolsRoutes(config: CliToolsRoutesConfig): Elysia {
           set.status = 422;
           return { error: "Invalid mapping payload", code: "invalid_request" };
         }
+        const keyId = typeof body.keyId === "string" && body.keyId.length > 0 ? body.keyId : undefined;
+        if (!keyId) {
+          set.status = 422;
+          return { error: "keyId is required", code: "invalid_request" };
+        }
         try {
-          const result = await service.saveMappings(a.tenantId, params.toolId, input);
+          const result = await service.saveMappings(a.tenantId, params.toolId, keyId, input);
           await auditSink?.record({
             access: a,
             action: "cli_tool.mappings_saved",
             target: params.toolId,
-            detail: { count: input.mappings.length, enabled: input.enabled },
+            detail: { count: input.mappings.length, enabled: input.enabled, keyId },
           });
           // Mapping saves are routing changes: invalidate the snapshot so the
           // next `/v1/*` request routes through the newly saved source→target
@@ -237,7 +242,7 @@ export function createCliToolsRoutes(config: CliToolsRoutesConfig): Elysia {
         if (parsed === undefined) {
           set.status = 422;
           return {
-            error: "endpoint and either apiKey or keyId are required",
+            error: "endpoint and keyId are required",
             code: "invalid_request",
           };
         }
@@ -271,12 +276,15 @@ export function createCliToolsRoutes(config: CliToolsRoutesConfig): Elysia {
         if (parsed === undefined) {
           set.status = 422;
           return {
-            error: "endpoint and either apiKey or keyId are required",
+            error: "endpoint and keyId are required",
             code: "invalid_request",
           };
         }
         const input = await service.withResolvedSecret(access.tenantId, parsed);
-        const result = await service.applyConfig(access.tenantId, params.toolId, input);
+        const result = await service.applyConfig(access.tenantId, params.toolId, parsed.keyId, {
+          ...input,
+          ...(parsed.mode ? { mode: parsed.mode } : {}),
+        });
         if (result === null) {
           set.status = 404;
           return { error: "CLI tool not found", code: "tool_not_found" };
@@ -289,7 +297,7 @@ export function createCliToolsRoutes(config: CliToolsRoutesConfig): Elysia {
             outcome: result.outcome,
             wroteFile: result.wroteFile,
             savedRemoteRoute: result.savedRemoteRoute,
-            keyId: parsed.keyId ?? null,
+            keyId: parsed.keyId,
           },
         });
         // A remote route is a routing change: invalidate so the next `/v1/*`

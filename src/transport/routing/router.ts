@@ -228,16 +228,19 @@ function normalizeAliasKey(requested: string, aliasMap: Record<string, string> |
 /**
  * Resolves one requested name to its alias target for pre-routing policy
  * checks. CLI mappings are opt-in per API key; ordinary tenant aliases always
- * remain available.
+ * remain available. `keyId` is required to read the key's own CLI routes —
+ * without it CLI mappings are silently skipped even when `allowCliMappings`
+ * is true.
  */
 export function resolveAliasTarget(
   snapshot: RouteSnapshot,
   tenantId: string | null,
   requested: string,
   allowCliMappings = false,
+  keyId?: string,
 ): string {
   try {
-    return resolveAlias(requested, snapshot, tenantId, allowCliMappings).model;
+    return resolveAlias(requested, snapshot, tenantId, allowCliMappings, keyId).model;
   } catch {
     return requested;
   }
@@ -247,10 +250,15 @@ function aliasMapFor(
   snapshot: RouteSnapshot,
   tenantId: string | null,
   allowCliMappings: boolean,
+  keyId?: string,
 ): Record<string, string> | undefined {
   if (!tenantId) return undefined;
   const aliases = snapshot.aliases?.[tenantId];
-  const cliAliases = allowCliMappings ? snapshot.cli_aliases?.[tenantId] : undefined;
+  const cliAliases = allowCliMappings
+    ? keyId
+      ? snapshot.cli_aliases?.[`${tenantId}:${keyId}`] ?? snapshot.cli_aliases?.[tenantId]
+      : snapshot.cli_aliases?.[tenantId]
+    : undefined;
   if (!aliases && !cliAliases) return undefined;
   return { ...(aliases ?? {}), ...(cliAliases ?? {}) };
 }
@@ -260,8 +268,9 @@ function resolveAlias(
   snapshot: RouteSnapshot,
   tenantId: string | null,
   allowCliMappings = false,
+  keyId?: string,
 ): { model: string; chain: readonly string[] } {
-  const aliasMap = aliasMapFor(snapshot, tenantId, allowCliMappings);
+  const aliasMap = aliasMapFor(snapshot, tenantId, allowCliMappings, keyId);
   const chain: string[] = [];
   const seen = new Set<string>();
   let current = normalizeAliasKey(requested, aliasMap);

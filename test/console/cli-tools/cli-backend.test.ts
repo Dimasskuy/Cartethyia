@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { inArray } from "drizzle-orm";
 import { getDb } from "../../../src/persistence/postgres";
 import { dbDescribe } from "../../helpers/db-gate";
-import { tenants, cliToolMappings, cliToolSettings } from "../../../src/persistence/schema";
+import { tenants, apiKeys, cliToolMappings, cliToolSettings } from "../../../src/persistence/schema";
 import { INJECTORS } from "../../../src/console/cli-tools/injectors/driver";
 import type { ApplyInput, CliMappingInput, ToolInjector } from "../../../src/console/cli-tools/contracts";
 import { CliToolMappingStore } from "../../../src/console/cli-tools/store";
@@ -67,7 +67,7 @@ describe("CliToolService", () => {
     const guideId = service
       .getRegistry()
       .find((entry) => entry.configType === "guide")!.id;
-    const result = await service.applyConfig("tenant-1", guideId, {
+    const result = await service.applyConfig("tenant-1", guideId, "key-1", {
       endpoint: "http://localhost:12800",
       apiKey: "sk-test",
       modelIds: [],
@@ -87,11 +87,14 @@ describe("CliToolService", () => {
 dbDescribe("CliToolService — real DB", () => {
   const tenantA = randomUUID();
   const tenantB = randomUUID();
+  const keyA = randomUUID();
+  const keyB = randomUUID();
 
   afterAll(async () => {
     const db = getDb();
     await db.delete(cliToolMappings).where(inArray(cliToolMappings.tenantId, [tenantA, tenantB]));
     await db.delete(cliToolSettings).where(inArray(cliToolSettings.tenantId, [tenantA, tenantB]));
+    await db.delete(apiKeys).where(inArray(apiKeys.id, [keyA, keyB]));
     await db.delete(tenants).where(inArray(tenants.id, [tenantA, tenantB]));
   });
 
@@ -106,8 +109,15 @@ dbDescribe("CliToolService — real DB", () => {
         { id: tenantB, name: "cli-b", status: "active" },
       ])
       .onConflictDoNothing();
+    await db
+      .insert(apiKeys)
+      .values([
+        { id: keyA, tenantId: tenantA, keyHash: "hash-a", label: "key-a", scopes: ["routing:invoke"] },
+        { id: keyB, tenantId: tenantB, keyHash: "hash-b", label: "key-b", scopes: ["routing:invoke"] },
+      ])
+      .onConflictDoNothing();
 
-    await service.saveMappings(tenantA, "claude", {
+    await service.saveMappings(tenantA, "claude", keyA, {
       enabled: true,
       mappings: [
         {
@@ -119,11 +129,13 @@ dbDescribe("CliToolService — real DB", () => {
       ],
     });
 
-    const a = await service.getMappings(tenantA, "claude");
-    const b = await service.getMappings(tenantB, "claude");
+    const a = await service.getMappings(tenantA, "claude", keyA);
+    const b = await service.getMappings(tenantB, "claude", keyB);
     expect(a.tenantId).toBe(tenantA);
+    expect(a.apiKeyId).toBe(keyA);
     expect(a.mappings).toHaveLength(1);
     expect(b.tenantId).toBe(tenantB);
+    expect(b.apiKeyId).toBe(keyB);
     expect(b.mappings).toHaveLength(0);
   });
 });
@@ -179,15 +191,17 @@ function createService(): CliToolService {
           }
         : null,
     isValidTool: (toolId: string) => toolId === "claude",
-    getMappings: async (tenantId: string, toolId: string) => ({
+    getMappings: async (tenantId: string, toolId: string, apiKeyId: string) => ({
       tenantId,
       toolId,
+      apiKeyId,
       enabled: true,
       mappings: [],
     }),
-    saveMappings: async (tenantId: string, toolId: string, input: CliMappingInput) => ({
+    saveMappings: async (tenantId: string, toolId: string, apiKeyId: string, input: CliMappingInput) => ({
       tenantId,
       toolId,
+      apiKeyId,
       enabled: input.enabled,
       mappings: input.mappings,
     }),
@@ -207,7 +221,7 @@ function createService(): CliToolService {
       }
       return { ...input, apiKey: "resolved-secret" };
     },
-    applyConfig: async (_tenantId: string, toolId: string, input: ApplyInput & { mode?: string }) => {
+    applyConfig: async (_tenantId: string, toolId: string, _apiKeyId: string, input: ApplyInput & { mode?: string }) => {
       if (toolId !== "claude") return null;
       const mode = input.mode ?? "both";
       const wroteFile = mode !== "remote";
@@ -262,6 +276,7 @@ describe("createCliToolsRoutes", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          keyId: "11111111-1111-1111-1111-111111111111",
           enabled: true,
           mappings: [
             {

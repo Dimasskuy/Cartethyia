@@ -27,29 +27,32 @@ export function useToolStatuses() {
   });
 }
 
-export function useToolMappings(toolId: string) {
+/** Loads the mapping settings for one (tool, key) pair. */
+export function useToolMappings(toolId: string, keyId: string) {
   return useQuery({
-    queryKey: queryKeys.cliTools.mappings(toolId),
+    queryKey: queryKeys.cliTools.mappings(toolId, keyId),
     queryFn: (context) =>
-      consoleRequest<CliMappingSettings>(`/cli-tools/${encodeURIComponent(toolId)}/mappings`, {
-        signal: querySignal(context),
-      }),
-    enabled: toolId.length > 0,
+      consoleRequest<CliMappingSettings>(
+        `/cli-tools/${encodeURIComponent(toolId)}/mappings?keyId=${encodeURIComponent(keyId)}`,
+        { signal: querySignal(context) },
+      ),
+    enabled: toolId.length > 0 && keyId.length > 0,
     ...DASHBOARD_QUERY_OPTIONS,
   });
 }
 
+/** Persists mapping settings for one (tool, key) pair. */
 export function useSaveToolMappings() {
   const qc = useQueryClient();
-  return useMutation<CliMappingSettings, ApiErrorShape, { toolId: string; input: CliMappingInput }>(
+  return useMutation<CliMappingSettings, ApiErrorShape, { toolId: string; keyId: string; input: CliMappingInput }>(
     {
-      mutationFn: ({ toolId, input }) =>
+      mutationFn: ({ toolId, keyId, input }) =>
         consoleRequest<CliMappingSettings>(`/cli-tools/${encodeURIComponent(toolId)}/mappings`, {
           method: "POST",
-          body: JSON.stringify(input),
+          body: JSON.stringify({ ...input, keyId }),
         }),
       onSuccess: async (_r, vars) => {
-        await qc.invalidateQueries({ queryKey: queryKeys.cliTools.mappings(vars.toolId) });
+        await qc.invalidateQueries({ queryKey: queryKeys.cliTools.mappings(vars.toolId, vars.keyId) });
       },
     },
   );
@@ -57,16 +60,16 @@ export function useSaveToolMappings() {
 
 export function useDownloadTool() {
   const qc = useQueryClient();
-  return useMutation<DownloadResult, ApiErrorShape, { toolId: string; input: ApplyInput }>({
-    mutationFn: ({ toolId, input }) =>
+  return useMutation<DownloadResult, ApiErrorShape, { toolId: string; keyId: string; input: ApplyInput }>({
+    mutationFn: ({ toolId, keyId, input }) =>
       consoleRequest<DownloadResult>(`/cli-tools/${encodeURIComponent(toolId)}/download`, {
         method: "POST",
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...input, keyId }),
       }),
-    onSuccess: async (_result, { toolId }) => {
+    onSuccess: async (_result, { toolId, keyId }) => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: queryKeys.cliTools.statuses }),
-        qc.invalidateQueries({ queryKey: queryKeys.cliTools.mappings(toolId) }),
+        qc.invalidateQueries({ queryKey: queryKeys.cliTools.mappings(toolId, keyId) }),
       ]);
     },
   });
@@ -81,19 +84,18 @@ export function useApplyTool() {
   return useMutation<
     ApplyConfigResult,
     ApiErrorShape,
-    { toolId: string; input: ApplyInput & { mode?: "file" | "remote" | "both" } }
+    { toolId: string; keyId: string; input: ApplyInput & { mode?: "file" | "remote" | "both" } }
   >({
-    mutationFn: ({ toolId, input }) =>
+    mutationFn: ({ toolId, keyId, input }) =>
       consoleRequest<ApplyConfigResult>(`/cli-tools/${encodeURIComponent(toolId)}/apply`, {
         method: "POST",
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...input, keyId }),
       }),
-    onSuccess: async (_result, { toolId }) => {
+    onSuccess: async (_result, { toolId, keyId }) => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: queryKeys.cliTools.statuses }),
-        qc.invalidateQueries({ queryKey: queryKeys.cliTools.mappings(toolId) }),
+        qc.invalidateQueries({ queryKey: queryKeys.cliTools.mappings(toolId, keyId) }),
       ]);
     },
   });
 }
-

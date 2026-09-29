@@ -6,6 +6,7 @@ import { eq, inArray } from "drizzle-orm";
 import { getDb, type CartethyiaDatabase } from "../../../src/persistence/postgres";
 import { dbDescribe } from "../../helpers/db-gate";
 import {
+  apiKeys,
   providers,
   tenants,
   models,
@@ -50,15 +51,22 @@ dbDescribe("createDatabaseSnapshotBuilder — model aliases/combos", () => {
   let db: CartethyiaDatabase;
   const tenantA = randomUUID();
   const tenantB = randomUUID();
+  const keyA = randomUUID();
+  const keyB = randomUUID();
   const providerId = `snapshot-builder-test-${randomUUID().slice(0, 8)}`;
   const modelId = `known-model-${randomUUID().slice(0, 8)}`;
-
   beforeAll(async () => {
     db = getDb();
     await db.insert(tenants)
       .values([
         { id: tenantA, name: "snapshot-builder-test-a", status: "active" },
         { id: tenantB, name: "snapshot-builder-test-b", status: "active" },
+      ])
+      .onConflictDoNothing();
+    await db.insert(apiKeys)
+      .values([
+        { id: keyA, tenantId: tenantA, keyHash: "hash-a", label: "key-a", scopes: ["routing:invoke"] },
+        { id: keyB, tenantId: tenantB, keyHash: "hash-b", label: "key-b", scopes: ["routing:invoke"] },
       ])
       .onConflictDoNothing();
     await db.insert(providers).values({ id: providerId, tenantId: tenantA, enabled: true });
@@ -78,9 +86,9 @@ dbDescribe("createDatabaseSnapshotBuilder — model aliases/combos", () => {
       { tenantId: tenantB, name: "pool-b", members: [modelId], strategy: "round_robin" },
     ]);
     await db.insert(cliToolMappings).values([
-      { tenantId: tenantA, toolId: "claude", slotKey: "sonnet", sourceModel: "claude-sonnet-4-5", targetModel: modelId, enabled: true },
-      { tenantId: tenantA, toolId: "claude", slotKey: "opus", sourceModel: "claude-opus-4-5", targetModel: modelId, enabled: false },
-      { tenantId: tenantB, toolId: "claude", slotKey: "haiku", sourceModel: "claude-haiku-4-5", targetModel: modelId, enabled: true },
+      { tenantId: tenantA, apiKeyId: keyA, toolId: "claude", slotKey: "sonnet", sourceModel: "claude-sonnet-4-5", targetModel: modelId, enabled: true },
+      { tenantId: tenantA, apiKeyId: keyA, toolId: "claude", slotKey: "opus", sourceModel: "claude-opus-4-5", targetModel: modelId, enabled: false },
+      { tenantId: tenantB, apiKeyId: keyB, toolId: "claude", slotKey: "haiku", sourceModel: "claude-haiku-4-5", targetModel: modelId, enabled: true },
     ]);
   });
 
@@ -88,6 +96,7 @@ dbDescribe("createDatabaseSnapshotBuilder — model aliases/combos", () => {
     await db.delete(cliToolMappings).where(inArray(cliToolMappings.tenantId, [tenantA, tenantB]));
     await db.delete(modelAliases).where(inArray(modelAliases.tenantId, [tenantA, tenantB]));
     await db.delete(modelCombos).where(inArray(modelCombos.tenantId, [tenantA, tenantB]));
+    await db.delete(apiKeys).where(inArray(apiKeys.id, [keyA, keyB]));
     await db.delete(models).where(eq(models.providerId, providerId));
     await db.delete(providers).where(eq(providers.id, providerId));
     await db.delete(tenants).where(inArray(tenants.id, [tenantA, tenantB]));
@@ -105,16 +114,14 @@ dbDescribe("createDatabaseSnapshotBuilder — model aliases/combos", () => {
     // scope (see `aliasMapFor()` in routing/router.ts). Keeping them out of
     // `aliases` is what stops a CLI slot name from being routable by a key
     // without that scope.
-    expect(built.cli_aliases?.[tenantA]).toEqual({
+    expect(built.cli_aliases?.[`${tenantA}:${keyA}`]).toEqual({
       "claude-sonnet-4-5": modelId,
-      // `cliMappingSourceKeys()` also registers the family slot and
-      // versioned aliases, so a bare family name resolves too.
       sonnet: modelId,
       "claude-sonnet-5": modelId,
       "claude-sonnet-5-1": modelId,
       "claude-sonnet-4-6": modelId,
     });
-    expect(built.cli_aliases?.[tenantB]).toEqual({
+    expect(built.cli_aliases?.[`${tenantB}:${keyB}`]).toEqual({
       "claude-haiku-4-5": modelId,
       haiku: modelId,
       "claude-haiku-5": modelId,
