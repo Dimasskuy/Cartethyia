@@ -3,6 +3,7 @@ import {
   expiryFromSeconds,
   nonEmptyTrimmedString,
   parseDeviceAuthStart,
+  postJsonTokenRequest,
   readJsonResponse,
   record,
 } from "../../authentication/oauth-flow-store";
@@ -203,13 +204,15 @@ export class ClineOAuthClient extends OAuthDeviceFlow {
   }
 
   override async refresh(refreshToken: string, signal?: AbortSignal): Promise<OAuthTokenRefreshResult> {
-    const response = await this.fetchFn(CLINE_REFRESH_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ refreshToken, grantType: "refresh_token" }),
-      ...(signal === undefined ? {} : { signal }),
+    const payload = await postJsonTokenRequest({
+      url: CLINE_REFRESH_URL,
+      fetchFn: this.fetchFn,
+      body: { refreshToken, grantType: "refresh_token" },
+      signal,
+      timeoutMs: 15_000,
+      label: "Cline OAuth refresh",
     });
-    return tokenResult(await parseJson(response, "Cline OAuth refresh"), refreshToken);
+    return tokenResult(payload, refreshToken);
   }
 }
 

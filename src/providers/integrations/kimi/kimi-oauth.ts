@@ -4,7 +4,7 @@
 import * as crypto from "node:crypto";
 import * as os from "node:os";
 import { isRecord } from "../../../protocol/primitives";
-import { devicePollBackoff, expiryFromSeconds, parseDeviceAuthStart, readJsonResponse } from "../../authentication/oauth-flow-store";
+import { devicePollBackoff, expiryFromSeconds, parseDeviceAuthStart, postFormTokenRequest, readJsonResponse } from "../../authentication/oauth-flow-store";
 import type { OAuthDeviceFlowContext, OAuthDevicePollResult, OAuthDeviceStartResult } from "../../authentication/oauth-flow-store";
 import type { OAuthTokenRefreshResult } from "../../authentication/oauth-refresh-service";
 import { OAuthDeviceFlow } from "../../authentication/oauth-device-flow";
@@ -227,38 +227,33 @@ export class KimiCodeOAuthClient extends OAuthDeviceFlow {
 
   override async refresh(refreshToken: string, signal?: AbortSignal): Promise<OAuthTokenRefreshResult> {
     const parsedRefresh = parseRefreshCredential(refreshToken);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
-    const onAbort = (): void => controller.abort();
-    signal?.addEventListener("abort", onAbort, { once: true });
-    try {
-      const body = new URLSearchParams({
+    // The fetcher used here takes plain `RequestInit`, so extra custom
+    // headers would change the type — the only per-device headers are the
+    // JSON-cookie shape, which the helper cannot merge.
+    const payload = (await postFormTokenRequest({
+      url: KIMI_CODE_TOKEN_URL,
+      fetchFn: this.fetchFn,
+      params: {
         client_id: KIMI_CODE_CLIENT_ID,
         grant_type: "refresh_token",
         refresh_token: parsedRefresh.refreshToken,
-      });
-      const response = await this.fetchFn(KIMI_CODE_TOKEN_URL, {
-        method: "POST",
-        headers: { ...jsonHeaders(parsedRefresh.deviceId), "content-type": "application/x-www-form-urlencoded" },
-        body,
-        signal: controller.signal,
-      });
-      const payload = (await readJsonResponse(response, "Kimi Code token refresh")) as DeviceTokenResponse;
-      const access = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
-      if (!access) throw new Error("Kimi Code refresh omitted access_token");
-      const nextRefresh =
-        typeof payload.refresh_token === "string" && payload.refresh_token.trim()
-          ? payload.refresh_token.trim()
-          : parsedRefresh.refreshToken;
-      return {
-        access: encodeKimiCredential(access, parsedRefresh.deviceId),
-        refresh: encodeRefreshCredential(nextRefresh, parsedRefresh.deviceId),
-        expiresAt: expiryFromSeconds(payload.expires_in, 86_400),
-      };
-    } finally {
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", onAbort);
-    }
+      },
+      headers: jsonHeaders(parsedRefresh.deviceId),
+      signal,
+      timeoutMs: 15_000,
+      label: "Kimi Code token refresh",
+    })) as DeviceTokenResponse;
+    const access = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
+    if (!access) throw new Error("Kimi Code refresh omitted access_token");
+    const nextRefresh =
+      typeof payload.refresh_token === "string" && payload.refresh_token.trim()
+        ? payload.refresh_token.trim()
+        : parsedRefresh.refreshToken;
+    return {
+      access: encodeKimiCredential(access, parsedRefresh.deviceId),
+      refresh: encodeRefreshCredential(nextRefresh, parsedRefresh.deviceId),
+      expiresAt: expiryFromSeconds(payload.expires_in, 86_400),
+    };
   }
 }
 

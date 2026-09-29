@@ -1,5 +1,6 @@
 import {
   decodeJwtPayload,
+  postFormTokenRequest,
   type OAuthDevicePollResult,
   type OAuthDeviceStartResult,
   type OAuthExchangeResult,
@@ -230,23 +231,22 @@ export class CodexOAuthClient extends OAuthDeviceFlow {
   }
 
   override async refresh(refreshToken: string, signal?: AbortSignal): Promise<OAuthTokenRefreshResult> {
-    const response = await this.fetchFn(CODEX_TOKEN_URL, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-      body: new URLSearchParams({
+    // Codex omits `content-type` and answers non-JSON error bodies — the
+    // shared helper throws with the status code, which names the failure
+    // better than the bare truncated body this used to return.
+    const payload = (await postFormTokenRequest({
+      url: CODEX_TOKEN_URL,
+      fetchFn: this.fetchFn,
+      params: {
         client_id: CODEX_CLIENT_ID,
         grant_type: "refresh_token",
         refresh_token: refreshToken,
-      }),
-      signal: signal ?? AbortSignal.timeout(30_000),
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      const detail = text.trim() ? text.trim().slice(0, 200) : "token refresh failed";
-      throw new Error(detail);
-    }
-    const payload = (JSON.parse(text) as TokenResponse) ?? {};
-    return asRefreshTokenResponse(payload);
+      },
+      signal,
+      timeoutMs: 30_000,
+      label: "Codex token refresh",
+    })) as TokenResponse;
+    return asRefreshTokenResponse(payload ?? {});
   }
 }
 
