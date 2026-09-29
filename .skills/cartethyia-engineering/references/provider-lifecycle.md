@@ -21,7 +21,7 @@ A provider is declared in several hand-maintained places that tests enforce as a
 
 3. **Tests that pin the provider set:** `test/providers/default-registry.test.ts` (set equality both directions), `test/providers/endpoint-map-parity.test.ts` (exact list of providers declaring `endpointPathsByWireFamily` — adding one means editing that literal list with a comment). Declare `endpointPathsByWireFamily` in the registry when the chat path is not the built-in default; keep it in agreement with the adapter spec's paths.
 
-4. **Docs (same change, guard K8):** `src/providers/PROVIDERS.md` (integrations table; extend the auth section if a new login shape appears), `CHANGELOG.md` bullet under `### Provider ecosystem & protocol fidelity`. `ARCHITECTURE.md` needs no edit (glob reference).
+4. **Docs (same change):** `src/providers/PROVIDERS.md` (integrations table; extend the auth section if a new login shape appears), `CHANGELOG.md` bullet under `### Provider ecosystem & protocol fidelity`. `ARCHITECTURE.md` needs no edit (glob reference).
 
 5. **Env vars:** adding a `process.env.*` read requires a `CONFIG_SPEC` row in `src/config.ts` plus a `.env.example` line (`test/config-env-drift.test.ts` derives the set from `CONFIG_SPEC`).
 
@@ -70,7 +70,7 @@ When a provider has a token endpoint accepting `grant_type=refresh_token` but pu
 - **Codex SSE in one blob:** ChatGPT Codex omits `content-type` and always answers SSE (even `stream:false`). `await res.clone().text()` waits for the whole body. Detect SSE as `request.stream === true || contentType includes "text/event-stream"`; for untyped non-stream bodies, peek only the first chunk and replay it (`sniffSseBody`). Never `text()` a possibly-streaming body. Verify with a raw TCP probe: success = many `data` events with non-zero gaps.
 - **Codex cache misses:** header affinity (`x-session-id`, `prompt_cache_key`, …) only reaches Codex when dispatch `context` is passed into `resolvePromptCacheKey(request, context)`; the 1-arg form never reads headers. Body `prompt_cache_key` wins over headers. Codex threshold is ~1792 tokens: two identical calls below ~1800 prompt tokens show `cached_tokens: 0` even with a stable key — that is upstream, not a bug; prove a hit with a larger prefix.
 
-## Remove a bundled provider (clean cutover, K1/K5/K7/K8)
+## Remove a bundled provider (clean cutover)
 
 No alias, no shim, no commented-out block.
 
@@ -79,7 +79,7 @@ No alias, no shim, no commented-out block.
 3. **Central registries:** drop the `RAW_BUNDLED_PROVIDER_METADATA` row (plus any comment block that introduced it) and drop the whole capability block in `default-registry.ts`. The record is `satisfies Record<BundledProviderId, …>`, so a leftover block fails typecheck.
 4. **Dashboard mirrors:** `provider-names.ts`, `ProviderIcon.tsx` (`iconAssets`), `scripts/build-icons.ts` (only if the icon file itself is removed).
 5. **Per-provider helpers that go dead:** grep for exported helpers only that provider used, then delete the whole chain — source row, resolver entry, every accessor. The `resolvers` object is `satisfies Record<keyof typeof VERSION_SOURCES, …>`, so removing only one half fails typecheck.
-6. **Shared hooks whose only implementor was the removed provider:** delete the hook from the interface AND its call site — do not leave a hook with zero implementors (K7).
+6. **Shared hooks whose only implementor was the removed provider:** delete the hook from the interface AND its call site — do not leave a hook with zero implementors.
 7. **Tests: neutralize, do not delete, when the logic survives.** Provider-specific behavior → delete with the provider. Generic logic whose *fixture* named the provider → keep the test, rename the fixture to a generic id (`"vendor"`). Same for worker tests: retarget an eligibility assertion to a surviving provider (`openai`) rather than losing the negative case.
 8. **Docs:** `PROVIDERS.md` table + any prose list naming the provider, `CHANGELOG.md` bullets (beware line-wrapped bullets: deleting a line range can splice the next bullet's opening line — edit by exact string match, then read the surroundings), any layer doc naming it in a rationale paragraph.
 9. **Residual sweep:** use Python or an out-of-repo script (a sweep inside the repo root matches its own patterns and reports false hits). Patterns: `<id>`, `<dir-name>`, `<SYMBOL_PREFIX>`, removed symbol names. Expect zero.

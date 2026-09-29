@@ -53,7 +53,7 @@ git diff --stat
 bun run typecheck
 ```
 
-**Watch out:** stale layer doc never overrides `router.ts` / `route-catalog.ts` / `compatible-adapter.ts`; a doc naming a path the repo lacks is a doc bug — fix it / provider identity is mirrored, not imported: dashboard keeps hand-copied names, icons, id sets; a backend rename isn't done until the mirrors move (K9) / capability flags change the upstream payload; telemetry is metadata-only, never blocks requests / bare model-id ambiguity is rejected, not guessed; route-contract changes need `dashboard:typecheck`; renames must pass `test/architecture/*-naming.test.ts`; dispatch errors use `GatewayError`.
+**Watch out:** stale layer doc never overrides `router.ts` / `route-catalog.ts` / `compatible-adapter.ts`; a doc naming a path the repo lacks is a doc bug — fix it / provider identity is mirrored, not imported: dashboard keeps hand-copied names, icons, id sets; a backend rename isn't done until the mirrors move / capability flags change the upstream payload; telemetry is metadata-only, never blocks requests / bare model-id ambiguity is rejected, not guessed; route-contract changes need `dashboard:typecheck`; renames must pass `test/architecture/*-naming.test.ts`; dispatch errors use `GatewayError`.
 
 ## 0.1 Goal-first testing
 

@@ -130,7 +130,7 @@ const e = new GatewayError("authentication_failed", 403, "request illegal",
 console.log(classifyAccountError(e, { ...classifyUpstreamFailure(e) }));'
 ```
 
-## Docs to sync (K8)
+## Docs to sync
 
 `src/providers/PROVIDERS.md` (category list + cooldown table + exceptions), `src/network/NETWORK.md` (pool cooldowns), `src/console/CONSOLE.md` (pool status policy), `CHANGELOG.md` under `## Unreleased`, `.env.example`, and this skill's references when a documented rule is intentionally reversed.
 

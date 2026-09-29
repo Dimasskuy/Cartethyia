@@ -1,5 +1,5 @@
 
-# K10 Skill self-improvement
+# Skill self-improvement
 
 After a cleanup review, rejected change, or newly discovered drift class.
 

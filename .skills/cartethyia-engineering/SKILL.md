@@ -18,7 +18,7 @@ Single entry point for repo work. Pick the row, read that reference, act.
 | Add / remove / BYOK / OAuth / handshake / live-verify provider, account action, catalog gap | `references/provider-lifecycle.md` |
 | Schema migration, telemetry column, full-stack rename, model metadata, availability, in-flight leak, reasoning replay | `references/schema-telemetry-catalog.md` |
 | Cleanup mistake pattern, new drift class, improving this skill | `references/self-improvement.md` |
-| K1–K11 contract, architecture, wire, naming, dead-key, docs, deadness, suppression (K7b), test-loop (K7c) | `references/guards.md` |
+| Repo invariants: aliases, drift, wire bytes, naming, dead code, docs sync | `references/guards.md` |
 
 Load only the reference the task needs. It holds the authority map, procedure, pitfalls, commands, and checklist. Never copy those details here or into product READMEs.
 
@@ -45,16 +45,16 @@ Then load the reference for your section.
 8. Verify the changed behavior at its real boundary, then run broader gates per impact.
 9. Audit acceptance criteria, stale names, aliases, dead code, unverified areas before reporting.
 
-## Fix or suppression
+## Fix, don't hide
 
 The common way this repo gets worse: a change that hides a failure without removing its cause. Answer in writing before committing to an approach:
 
 1. **Cause?** State it as a mechanism ("X reads Y, which is undefined when Z"). Can't state it → not ready to fix.
-2. **Fix or suppression?** Removing a throw, loosening validation, widening a type, adding a fallback, raising a timeout, catching an exception = suppression until proven otherwise.
-3. **Other arm?** A guard/probe/capability branch that looks "obviously dead" may be load-bearing for a partially-implemented dependency. Check before deleting (K11).
+2. **Fix or hiding?** Removing a throw, loosening validation, widening a type, adding a fallback, raising a timeout, catching an exception = hiding until proven otherwise.
+3. **Other arm?** A check that looks "obviously dead" may be load-bearing for a partially-implemented dependency. Check before deleting.
 4. **Intended design?** Capability degradation, operator-configured fallback, documented compatibility boundary = legitimate. Name it in a comment + layer doc; never masquerade it as a bug fix.
 
-A workaround is acceptable only as a named release boundary with a removal condition. Otherwise it is a defect you are adding.
+A workaround is fine only as a named temporary boundary with a removal condition. Otherwise it is a defect you are adding.
 
 ## Test with a goal, not a loop
 
@@ -93,7 +93,7 @@ Rename / move / new feature / contract cutover:
 
 No alias or forwarding shim to keep old imports compiling. Compatibility is allowed only when explicitly required, documented, with a removal condition.
 
-Deletion needs proof, not grep: rule out interface dispatch, callback fields, re-exports, dynamic imports, test doubles, own-file use, dashboard copies — and for a guard/probe, check what the other arm does. See K11 in `references/guards.md`.
+Deletion needs proof, not grep: rule out interface dispatch, callback fields, re-exports, dynamic imports, test doubles, own-file use, dashboard copies — and for a guard/probe, check what the other arm does (see "Proved deadness" in `references/guards.md`).
 
 ## Verification baseline
 
