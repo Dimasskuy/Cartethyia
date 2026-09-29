@@ -211,6 +211,9 @@ export async function handleProviderProxyRequest(
           ...(conversationAffinity ? { conversationAffinity } : {}),
           ...(candidate.user_agent === undefined ? {} : { userAgent: candidate.user_agent }),
           ...(wrappedOutboundFetch ? { outboundFetch: wrappedOutboundFetch } : {}),
+          ...(deps.networkBindingFactory
+            ? { outboundWebSocket: deps.networkBindingFactory.webSocket(networkPoolId, prepared.authorization.snapshot.tenant_id) }
+            : {}),
         });
         // `ProviderAdapter.dispatch` is declared to return a non-nullable
         // `AsyncIterable`, so an adapter that returned `undefined` would be a
@@ -807,6 +810,9 @@ export async function handleProviderProxyRequest(
                 providerCapture,
               ),
             }
+          : {}),
+        ...(deps.networkBindingFactory
+          ? { outboundWebSocket: deps.networkBindingFactory.webSocket(networkPoolId, prepared.authorization.snapshot.tenant_id) }
           : {}),
       });
       const dispatch = async (input: typeof canonicalRequest): Promise<CanonicalEvent[]> => {

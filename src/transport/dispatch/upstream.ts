@@ -1,4 +1,4 @@
-import type { ValidatedOutboundFetch } from "../../providers/provider-registry";
+import type { ValidatedOutboundFetch, ValidatedOutboundWebSocket } from "../../providers/provider-registry";
 import { GATEWAY_SECURITY_HEADERS } from "../../security/outbound-headers";
 
 const FORWARDED_REQUEST_HEADERS = new Set([
@@ -37,6 +37,7 @@ export function buildUpstreamDispatchContext(input: {
   readonly headers: Record<string, string>;
   readonly userAgent?: string;
   readonly outboundFetch?: ValidatedOutboundFetch;
+  readonly outboundWebSocket?: ValidatedOutboundWebSocket;
   /** Stable per-conversation cache affinity (preferred over random ids). */
   readonly conversationAffinity?: string;
   /** Opaque identity shared by retries of one logical gateway request. */
@@ -68,6 +69,7 @@ export function buildUpstreamDispatchContext(input: {
     ...(userAgent ? { user_agent: userAgent } : {}),
     ...(Object.keys(input.headers).length > 0 ? { request_headers: input.headers } : {}),
     ...(outboundFetch ? { outbound_fetch: outboundFetch } : {}),
+    ...(input.outboundWebSocket ? { outbound_websocket: input.outboundWebSocket } : {}),
     ...(input.conversationAffinity ? { conversation_affinity: input.conversationAffinity } : {}),
     ...(input.requestIdentity ? { request_identity: input.requestIdentity } : {}),
   } as Record<string, unknown>;
