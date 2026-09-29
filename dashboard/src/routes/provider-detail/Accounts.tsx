@@ -55,7 +55,30 @@ function accountStatusRank(status: string): number {
   return 3;
 }
 
-function AccountStatusBadge({
+/**
+ * The per-model backoff chip, shared by every status arm of the badge.
+ *
+ * A model-scoped throttle excludes only the (account, model) pair in the
+ * routing catalog, so it is independent of the account-wide status: it can be
+ * in force while the account reads `active`, `cooldown`, or `disabled`. Each
+ * arm used to render its own chip list, which is how the `disabled` arm lost
+ * the operator's last known health of the account.
+ */
+function ModelCooldownChip({
+  cooldowns,
+}: {
+  readonly cooldowns: { count: number; modelId: string; until: string } | undefined;
+}): ReactNode {
+  if (!cooldowns) return null;
+  const distance = formatResetDistance(cooldowns.until);
+  return (
+    <Badge tone="warn" dot title={`Soonest: ${cooldowns.modelId} — ${distance}`}>
+      {cooldowns.count} model{cooldowns.count === 1 ? "" : "s"} cooling · {distance}
+    </Badge>
+  );
+}
+
+export function AccountStatusBadge({
   account,
 }: {
   readonly account: ProviderAccountResponse;
@@ -86,6 +109,7 @@ function AccountStatusBadge({
             {account.lastErrorCategory}
           </Badge>
         ) : null}
+        <ModelCooldownChip cooldowns={modelCooldowns} />
       </Inline>
     );
   }
@@ -98,16 +122,7 @@ function AccountStatusBadge({
         <Badge tone="ok" dot>
           Active
         </Badge>
-        {modelCooldowns ? (
-          <Badge
-            tone="warn"
-            dot
-            title={`Soonest: ${modelCooldowns.modelId} — ${formatResetDistance(modelCooldowns.until)}`}
-          >
-            {modelCooldowns.count} model{modelCooldowns.count === 1 ? "" : "s"} cooling ·{" "}
-            {formatResetDistance(modelCooldowns.until)}
-          </Badge>
-        ) : null}
+        <ModelCooldownChip cooldowns={modelCooldowns} />
       </Inline>
     );
   }
@@ -123,6 +138,7 @@ function AccountStatusBadge({
             {account.lastErrorCategory}
           </Badge>
         ) : null}
+        <ModelCooldownChip cooldowns={modelCooldowns} />
       </Inline>
     );
   return <Badge tone="disabled">Disabled</Badge>;

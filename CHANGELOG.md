@@ -32,6 +32,18 @@ the canonical model does not carry (`auto` is not in `REASONING_EFFORTS`, so
 `(default)`. Grouping, routing, and cost joins still read the bare model id —
 `usageBy` aggregates on the column, not the display string.
 
+### A disabled account keeps showing its last known per-model health
+
+Disabling an account is not recovery: the backend deliberately preserves
+`model_cooldowns` on a status toggle and clears it only when the operator uses
+Recover or replaces the credential, because a model-scoped throttle excludes just
+that (account, model) pair while the account stays routable for every other model.
+The account badge checked `disabled` first and returned after its status and
+error-category chips, so the per-model backoffs disappeared from the row and the
+operator lost the account's last known health at exactly the moment they were
+deciding what to do about it. The `cooldown` arm had the same gap. All three arms
+now render one shared chip, so a future arm cannot silently drop it again.
+
 ### WorkBuddy quota reads the reference billing filter
 
 Tencent billing queries now send the reference filter envelope (`ProductCode: p_tcaca`, statuses `[0, 3]`, and the 101-year package window) plus `X-User-Id` when the access token carries a UID. An empty `{}` could answer success with zero credit packages for an account that has them, which surfaced as “No credit package found”.
