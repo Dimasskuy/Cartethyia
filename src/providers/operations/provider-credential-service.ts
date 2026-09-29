@@ -8,6 +8,7 @@ import { GatewayError } from "../../transport/gateway-error";
 import type { OAuthRefreshService, OAuthTokenRefresher } from "../authentication/oauth-refresh-service";
 import { CredentialResolver, parseProviderId, type CredentialAlternative, type CredentialKind } from "../provider-registry";
 import type { ResolvedCredential } from "../provider-registry";
+import { record } from "../authentication/oauth-flow-store";
 
 /** Default proactive OAuth refresh window. */
 export const OAUTH_REFRESH_SKEW_MS = 5 * 60 * 1000;
@@ -21,6 +22,9 @@ export interface AccountWithFreshnessRow {
   readonly credentialKind: CredentialKind;
   readonly credentialCiphertext: Buffer | null;
   readonly refreshCiphertext: Buffer | null;
+  /** Non-secret per-account auth config; `unknown` at the DB boundary, narrowed where read. */
+  readonly authState: unknown;
+  readonly clientSecretCiphertext: Buffer | null;
   readonly expiresAt: Date | null;
 }
 
@@ -48,6 +52,8 @@ export async function loadAccountWithFreshness(
       credentialKind: providerAccounts.credentialKind,
       credentialCiphertext: providerAccounts.credentialCiphertext,
       refreshCiphertext: providerOauthStates.refreshCiphertext,
+      authState: providerAccounts.authState,
+      clientSecretCiphertext: providerOauthStates.clientSecretCiphertext,
       expiresAt: providerOauthStates.expiresAt,
     })
     .from(providerAccounts);
@@ -115,11 +121,13 @@ export async function resolveCredentialForAccount(
     }
   }
 
+  const authState = record(row.authState);
   const alternative: CredentialAlternative = {
     provider_id: parseProviderId(row.providerId),
     account_id: row.id,
     credential_kind: row.credentialKind,
     ...(secret ? { secret } : {}),
+    ...(authState === undefined ? {} : { auth_state: authState }),
   };
   return resolver.resolve(parsedProviderId, [alternative]).credential;
 }
@@ -134,13 +142,71 @@ export async function resolveAccountSecretString(
   return credential.secret ? new TextDecoder().decode(credential.secret) : "";
 }
 
+/** Decrypts the stored provider tokens after refreshing an expired OAuth access token. */
+export async function resolveAccountCredentialsForExport(
+  db: CartethyiaDatabase,
+  providerId: string,
+  accountId: string,
+  oauth?: ResolveCredentialOAuth,
+): Promise<{ readonly accessToken: string; readonly refreshToken?: string }> {
+  let account = await loadAccountWithFreshness(db, accountId);
+  if (!account) {
+    throw new GatewayError("admission_unavailable", 503, "provider account no longer exists", {
+      provider_id: providerId,
+      account_id: accountId,
+    });
+  }
+
+  if (
+    account.row.credentialKind === "oauth" &&
+    oauth &&
+    account.dueAt !== undefined &&
+    account.dueAt <= Date.now()
+  ) {
+    const refresher = await oauth.resolveRefresher(account.row.providerId);
+    if (refresher) {
+      await oauth.refreshService.ensureFreshAccessToken(accountId, refresher);
+      account = await loadAccountWithFreshness(db, accountId);
+      if (!account) {
+        throw new GatewayError("admission_unavailable", 503, "provider account no longer exists", {
+          provider_id: providerId,
+          account_id: accountId,
+        });
+      }
+    }
+  }
+
+  const accessToken = account.row.credentialCiphertext
+    ? decryptCredentialToString(account.row.credentialCiphertext)
+    : "";
+  const refreshToken = account.row.refreshCiphertext
+    ? decryptCredentialToString(account.row.refreshCiphertext)
+    : undefined;
+  return {
+    accessToken,
+    ...(refreshToken === undefined ? {} : { refreshToken }),
+  };
+}
+
+/** Binds token decryption and refresh behavior for the provider-account export route. */
+export function createAccountExportCredentialsResolver(deps: {
+  readonly db: CartethyiaDatabase;
+  readonly resolveRefresher: (providerId: string) => Promise<OAuthTokenRefresher | undefined>;
+  readonly refreshService: Pick<OAuthRefreshService, "ensureFreshAccessToken">;
+}): (
+  providerId: string,
+  accountId: string,
+) => Promise<{ readonly accessToken: string; readonly refreshToken?: string }> {
+  return (providerId, accountId) =>
+    resolveAccountCredentialsForExport(deps.db, providerId, accountId, {
+      resolveRefresher: deps.resolveRefresher,
+      refreshService: deps.refreshService,
+    });
+}
+
 /**
- * Binds the refresh-aware credential path into one resolver function.
- *
- * Three consumers need exactly this behavior — the catalog export, the console
- * quota routes, and the background quota sweep — so the binding lives here
- * instead of being re-assembled at each composition site, where a missing
- * `resolveRefresher` would silently degrade OAuth accounts to stale tokens.
+ * Binds refresh-aware credential resolution for quota routes and the background
+ * quota sweep, avoiding a stale-token fallback when OAuth refresh is due.
  */
 export function createAccountSecretResolver(deps: {
   readonly db: CartethyiaDatabase;

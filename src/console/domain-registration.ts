@@ -38,7 +38,10 @@ import type { ConsoleCredentialService } from "./auth/service";
 
 import { OAuthFlowStore } from "../providers/authentication/oauth-flow-store";
 import { OAuthCallbackListener } from "./providers/oauth/callback-listener";
-import { createAccountSecretResolver } from "../providers/operations/provider-credential-service";
+import {
+  createAccountExportCredentialsResolver,
+  createAccountSecretResolver,
+} from "../providers/operations/provider-credential-service";
 import { syncByokProvider } from "../providers/operations/provider-catalog-service";
 import { DrizzleApiKeyStore } from "../persistence/api-key-store";
 import { DrizzleShareLinkStore } from "../persistence/share-store";
@@ -99,8 +102,13 @@ export function registerConsoleDomains(
 ): void {
   const observabilityStore = new DrizzleObservabilityStore(ctx.db, ctx.redis);
   const auditReadStore = new DrizzleAuditReadStore(ctx.db);
-  /** Refresh-aware credential resolution shared by the catalog export and quota routes. */
+  /** Refresh-aware credential resolution for quota routes. */
   const resolveCredential = createAccountSecretResolver({
+    db: ctx.db,
+    resolveRefresher: (id) => ctx.providerRegistry.resolveRefresher(id),
+    refreshService: ctx.oauthRefreshService,
+  });
+  const resolveExportCredentials = createAccountExportCredentialsResolver({
     db: ctx.db,
     resolveRefresher: (id) => ctx.providerRegistry.resolveRefresher(id),
     refreshService: ctx.oauthRefreshService,
@@ -214,7 +222,7 @@ export function registerConsoleDomains(
     auditSink: ctx.auditRecorder,
     providerRegistry: ctx.providerRegistry,
     snapshotInvalidator: ctx.routeSnapshotService,
-    resolveCredential,
+    resolveExportCredentials,
     // Without this, a custom provider only becomes dispatchable after a
     // restart: boot registers BYOK rows once, and the catalog routes are the
     syncByokProvider: (providerId) =>

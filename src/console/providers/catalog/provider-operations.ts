@@ -18,6 +18,7 @@ import {
 } from "../../shared/errors";
 import type { AccessDecision } from "../../../security/access-control";
 import { isBundledProviderId, type ProviderRegistry } from "../../../providers/provider-registry";
+import type { OAuthLoginField } from "../../../providers/authentication/oauth-flow-store";
 import {
   providerCredentialHint,
   providerCredentialUrl,
@@ -35,6 +36,7 @@ import {
   type ProviderAccountsExportResponse,
   type ProviderAccountResponse,
   type ProviderCatalogStore,
+  type ProviderLoginField,
   type ProviderRecord,
   type ProviderResponse,
   type UpdateProviderAccountRequest,
@@ -115,11 +117,13 @@ export interface ProviderCatalogConfig {
     }[];
   }>;
   /**
-   * Resolves a stored credential through the refresh-aware path, returning the
-   * plaintext secret. Only the account-export operation consumes it; when
-   * omitted, export returns `""` for every secret rather than failing.
+   * Resolves the stored credential and optional OAuth refresh token for export,
+   * decrypting them without applying provider-specific dispatch codecs.
    */
-  readonly resolveCredential?: (providerId: string, accountId: string) => Promise<string>;
+  readonly resolveExportCredentials?: (
+    providerId: string,
+    accountId: string,
+  ) => Promise<{ readonly accessToken: string; readonly refreshToken?: string }>;
 }
 async function attachProviderCapabilities(
   response: ProviderResponse,
@@ -154,7 +158,29 @@ async function attachProviderCapabilities(
     oauthFlows: {
       browser: hasBrowserFlow,
       device: client.supportsDeviceCode === true && typeof client.startDeviceAuth === "function",
+      // The import path is offered only when the client can actually complete
+      // one, so the dashboard never renders a form whose submit the server
+      // would refuse.
+      import: typeof client.importCredential === "function",
+      browserLoginFields: (client.browserLoginFields ?? []).map(toProviderLoginField),
+      deviceLoginFields: (client.deviceLoginFields ?? []).map(toProviderLoginField),
+      importFields: (client.importFields ?? []).map(toProviderLoginField),
     },
+  };
+}
+
+/** Copies a registry login-field descriptor into the browser-facing contract. */
+function toProviderLoginField(field: OAuthLoginField): ProviderLoginField {
+  return {
+    key: field.key,
+    label: field.label,
+    ...(field.placeholder === undefined ? {} : { placeholder: field.placeholder }),
+    ...(field.secret === undefined ? {} : { secret: field.secret }),
+    ...(field.required === undefined ? {} : { required: field.required }),
+    ...(field.defaultValue === undefined ? {} : { defaultValue: field.defaultValue }),
+    ...(field.options === undefined
+      ? {}
+      : { options: field.options.map((option) => ({ value: option.value, label: option.label })) }),
   };
 }
 export function createProviderCatalogOperations(config: ProviderCatalogConfig) {
@@ -460,14 +486,16 @@ export function createProviderCatalogOperations(config: ProviderCatalogConfig) {
         );
         const accounts = await Promise.all(
           selected.map(async (account): Promise<ProviderAccountExport> => {
-            let secret = "";
-            if (config.resolveCredential) {
+            let accessToken = "";
+            let refreshToken: string | undefined;
+            if (config.resolveExportCredentials) {
               try {
-                secret = await config.resolveCredential(providerId, account.id);
+                const credentials = await config.resolveExportCredentials(providerId, account.id);
+                accessToken = credentials.accessToken;
+                refreshToken = credentials.refreshToken;
               } catch {
                 // A refresh failure must not abort the whole export; the
-                // account still exports its metadata with an empty secret.
-                secret = "";
+                // account still exports its metadata with empty credentials.
               }
             }
             return {
@@ -476,7 +504,8 @@ export function createProviderCatalogOperations(config: ProviderCatalogConfig) {
               label: account.label,
               credentialKind: account.credentialKind,
               status: account.status,
-              secret,
+              accessToken,
+              ...(refreshToken === undefined ? {} : { refreshToken }),
               ...(account.inflight === undefined ? {} : { inflight: account.inflight }),
               createdAt: account.createdAt,
               ...(account.cooldownUntil ? { cooldownUntil: account.cooldownUntil } : {}),

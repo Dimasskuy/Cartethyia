@@ -954,6 +954,84 @@ describe("OAuthLoginOperations device-code flow", () => {
   });
 });
 
+describe("OAuthLoginOperations imported-credential flow", () => {
+  /** A client that completes a login from pasted material. */
+  function importingClient() {
+    let seen: { readonly credential: string; readonly fields: Readonly<Record<string, string>> } | undefined;
+    const client = {
+      supportsDeviceCode: false,
+      supportsBrowserCode: false,
+      importCredential: async (input: {
+        readonly credential: string;
+        readonly fields: Readonly<Record<string, string>>;
+      }) => {
+        if (input.credential === "dead") throw new Error("the refresh token was rejected by the upstream");
+        seen = input;
+        return { access: "imported-access", refresh: "imported-refresh", expiresAt: new Date() };
+      },
+      seenInput: () => seen,
+    };
+    return client;
+  }
+
+  test("persists an account from pasted material and returns its id", async () => {
+    const client = importingClient();
+    const accountStore = fakeAccountStore();
+    let invalidations = 0;
+    const factory = createOAuthLoginOperations({
+      providerRegistry: registryWith("kiro", client),
+      oauthFlowStore: new OAuthFlowStore(fakeRedis()),
+      accountStore,
+      accessResolver: () => fakeAccess({ tenantId: "tenant-7" }),
+      callbackListener: testCallbackListener(),
+      snapshotInvalidator: {
+        invalidate: async () => {
+          invalidations += 1;
+          return invalidations;
+        },
+      },
+    });
+    const result = await factory.importCredential(
+      fakeAccess({ tenantId: "tenant-7" }),
+      "kiro",
+      "operator-label",
+      "pasted-material",
+      { authMethod: "idc", region: "eu-west-1" },
+    );
+    expect(result.accountId).toBe("account-1");
+    expect(client.seenInput()).toEqual({
+      credential: "pasted-material",
+      fields: { authMethod: "idc", region: "eu-west-1" },
+    });
+    expect(accountStore.calls[0]).toMatchObject({ tenantId: "tenant-7", providerId: "kiro" });
+    expect(invalidations).toBe(1);
+  });
+
+  test("refuses an import for a provider that cannot complete one", async () => {
+    const { factory } = setup(claudeClient());
+    await expect(
+      factory.importCredential(fakeAccess(), "claude", "label", "material", {}),
+    ).rejects.toMatchObject({ code: "import_not_supported", status: 409 });
+  });
+
+  test("does not persist material the upstream rejected", async () => {
+    // The client validates before returning, so a dead credential never reaches
+    // the account table and the operator sees the upstream's own reason.
+    const accountStore = fakeAccountStore();
+    const factory = createOAuthLoginOperations({
+      providerRegistry: registryWith("kiro", importingClient()),
+      oauthFlowStore: new OAuthFlowStore(fakeRedis()),
+      accountStore,
+      accessResolver: () => fakeAccess({ tenantId: "tenant-7" }),
+      callbackListener: testCallbackListener(),
+    });
+    await expect(
+      factory.importCredential(fakeAccess({ tenantId: "tenant-7" }), "kiro", "label", "dead", {}),
+    ).rejects.toThrow("rejected by the upstream");
+    expect(accountStore.calls).toHaveLength(0);
+  });
+});
+
 describe("oauth routes — real Elysia schema validation", () => {
   test("device/poll rejects a missing body with 422 instead of crashing on a null read", async () => {
     const { providerRegistry } = setup(claudeClient());
@@ -1326,7 +1404,7 @@ describe("provider-catalog routes", () => {
         }),
       });
       const provider = await factory.getProviderDetail(tenantAccess, "vendor");
-      expect(provider.oauthFlows).toEqual({ browser: true, device: false });
+      expect(provider.oauthFlows).toEqual({ browser: true, device: false, import: false, browserLoginFields: [], deviceLoginFields: [], importFields: [] });
     });
 
     it("reports browser login for a statically buildable authorize URL", async () => {
@@ -1336,7 +1414,7 @@ describe("provider-catalog routes", () => {
         exchangeCode: async () => ({ access: "a", refresh: "r", expiresAt: new Date() }),
       });
       const provider = await factory.getProviderDetail(tenantAccess, "vendor");
-      expect(provider.oauthFlows).toEqual({ browser: true, device: false });
+      expect(provider.oauthFlows).toEqual({ browser: true, device: false, import: false, browserLoginFields: [], deviceLoginFields: [], importFields: [] });
     });
 
     it("hides the browser button when there is no exchange step", async () => {
@@ -1345,7 +1423,7 @@ describe("provider-catalog routes", () => {
         buildAuthorizeUrl: () => "https://login.test/authorization?state=s",
       });
       const provider = await factory.getProviderDetail(tenantAccess, "vendor");
-      expect(provider.oauthFlows).toEqual({ browser: false, device: false });
+      expect(provider.oauthFlows).toEqual({ browser: false, device: false, import: false, browserLoginFields: [], deviceLoginFields: [], importFields: [] });
     });
 
     it("hides the browser button for a device-only client that still exposes the methods", async () => {
@@ -1368,7 +1446,7 @@ describe("provider-catalog routes", () => {
         }),
       });
       const provider = await factory.getProviderDetail(tenantAccess, "vendor");
-      expect(provider.oauthFlows).toEqual({ browser: false, device: true });
+      expect(provider.oauthFlows).toEqual({ browser: false, device: true, import: false, browserLoginFields: [], deviceLoginFields: [], importFields: [] });
     });
 
     it("still reports browser login for a client that states the capability", async () => {
@@ -1381,7 +1459,7 @@ describe("provider-catalog routes", () => {
         exchangeCode: async () => ({ access: "a", refresh: "r", expiresAt: new Date() }),
       });
       const provider = await factory.getProviderDetail(tenantAccess, "vendor");
-      expect(provider.oauthFlows).toEqual({ browser: true, device: false });
+      expect(provider.oauthFlows).toEqual({ browser: true, device: false, import: false, browserLoginFields: [], deviceLoginFields: [], importFields: [] });
     });
 
     it("reports only device when the client exposes the device flow", async () => {
@@ -1396,7 +1474,7 @@ describe("provider-catalog routes", () => {
         }),
       });
       const provider = await factory.getProviderDetail(tenantAccess, "vendor");
-      expect(provider.oauthFlows).toEqual({ browser: false, device: true });
+      expect(provider.oauthFlows).toEqual({ browser: false, device: true, import: false, browserLoginFields: [], deviceLoginFields: [], importFields: [] });
     });
 
     it("omits oauthFlows entirely when no login client is registered", async () => {
@@ -1684,7 +1762,7 @@ describe("POST /providers/:providerId/accounts/export", () => {
     },
   ];
 
-  it("returns only the requested accounts with decrypted secrets", async () => {
+  it("returns only requested accounts with decrypted access and refresh tokens", async () => {
     const audit: Array<{ action: string; detail?: Record<string, unknown> }> = [];
     const app = createProviderCatalogRoutes({
       store: makeExportStore(rows),
@@ -1695,20 +1773,28 @@ describe("POST /providers/:providerId/accounts/export", () => {
           audit.push({ action: entry.action, ...(entry.detail ? { detail: entry.detail } : {}) });
         },
       },
-      resolveCredential: async (_providerId, accountId) => `secret-${accountId}`,
+      resolveExportCredentials: async (_providerId, accountId) => ({
+        accessToken: `access-${accountId}`,
+        refreshToken: `refresh-${accountId}`,
+      }),
     });
     const response = await app.handle(exportRequest(["acct-2"]));
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       exportedAt: string;
-      accounts: Array<{ id: string; secret: string; label: string }>;
+      accounts: Array<{ id: string; accessToken: string; refreshToken?: string; label: string }>;
     };
     expect(body.accounts).toHaveLength(1);
-    expect(body.accounts[0]).toMatchObject({ id: "acct-2", label: "backup", secret: "secret-acct-2" });
+    expect(body.accounts[0]).toMatchObject({
+      id: "acct-2",
+      label: "backup",
+      accessToken: "access-acct-2",
+      refreshToken: "refresh-acct-2",
+    });
     expect(typeof body.exportedAt).toBe("string");
   });
 
-  it("records an audit entry that names the ids but never the secret values", async () => {
+  it("records an audit entry that names ids but never raw tokens", async () => {
     const audit: Array<{ action: string; detail?: Record<string, unknown> }> = [];
     const app = createProviderCatalogRoutes({
       store: makeExportStore(rows),
@@ -1719,24 +1805,29 @@ describe("POST /providers/:providerId/accounts/export", () => {
           audit.push({ action: entry.action, ...(entry.detail ? { detail: entry.detail } : {}) });
         },
       },
-      resolveCredential: async (_providerId, accountId) => `secret-${accountId}`,
+      resolveExportCredentials: async (_providerId, accountId) => ({
+        accessToken: `access-${accountId}`,
+        refreshToken: `refresh-${accountId}`,
+      }),
     });
     await app.handle(exportRequest(["acct-1", "acct-2"]));
     const entry = audit.find((item) => item.action === "provider_account.exported");
     expect(entry).toBeDefined();
     expect(entry?.detail).toMatchObject({ accountIds: ["acct-1", "acct-2"] });
-    expect(JSON.stringify(entry?.detail)).not.toContain("secret-");
+    expect(JSON.stringify(entry?.detail)).not.toContain("access-");
+    expect(JSON.stringify(entry?.detail)).not.toContain("refresh-");
   });
 
-  it("exports an empty secret when no resolver is wired", async () => {
+  it("exports empty tokens when no resolver is wired", async () => {
     const app = createProviderCatalogRoutes({
       store: makeExportStore(rows),
       accessResolver: () => access,
       providerRegistry: testRegistry,
     });
     const response = await app.handle(exportRequest(["acct-1"]));
-    const body = (await response.json()) as { accounts: Array<{ secret: string }> };
-    expect(body.accounts[0]?.secret).toBe("");
+    const body = (await response.json()) as { accounts: Array<{ accessToken: string; refreshToken?: string }> };
+    expect(body.accounts[0]?.accessToken).toBe("");
+    expect(body.accounts[0]?.refreshToken).toBeUndefined();
   });
 
   it("never exports a pool-wide global account (tenantId null)", async () => {
@@ -1756,9 +1847,9 @@ describe("POST /providers/:providerId/accounts/export", () => {
       store: makeExportStore([...rows, globalRow]),
       accessResolver: () => access,
       providerRegistry: testRegistry,
-      resolveCredential: async (_providerId, accountId) => {
+      resolveExportCredentials: async (_providerId, accountId) => {
         resolverCalls += 1;
-        return `secret-${accountId}`;
+        return { accessToken: `access-${accountId}` };
       },
     });
     const response = await app.handle(exportRequest(["global-1", "acct-1"]));

@@ -837,7 +837,7 @@ describe("account operations", () => {
 });
 
 describe("exportAccounts", () => {
-  test("projects optional health fields and the resolved secret, and audits only the ids", async () => {
+  test("exports raw access and refresh tokens, projects health fields, and audits only the ids", async () => {
     const { store, state } = makeStore();
     state.accounts.push(
       account({
@@ -854,7 +854,10 @@ describe("exportAccounts", () => {
       accessResolver: () => tenantAccess,
       providerRegistry: registryWith(),
       auditSink: sink,
-      resolveCredential: async (_providerId, accountId) => `secret-${accountId}`,
+      resolveExportCredentials: async (_providerId, accountId) => ({
+        accessToken: `access-${accountId}`,
+        refreshToken: `refresh-${accountId}`,
+      }),
     });
 
     const result = await ops.exportAccounts(tenantAccess, "openai", ["acct-1", "acct-2"]);
@@ -865,7 +868,8 @@ describe("exportAccounts", () => {
         label: "acct-1",
         credentialKind: "api_key",
         status: "active",
-        secret: "secret-acct-1",
+        accessToken: "access-acct-1",
+        refreshToken: "refresh-acct-1",
         inflight: 3,
         createdAt: "2026-01-01T00:00:00.000Z",
         cooldownUntil: "2026-01-02T00:00:00.000Z",
@@ -877,30 +881,35 @@ describe("exportAccounts", () => {
         label: "acct-2",
         credentialKind: "api_key",
         status: "active",
-        secret: "secret-acct-2",
+        accessToken: "access-acct-2",
+        refreshToken: "refresh-acct-2",
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ]);
     expect(entries).toEqual([
       { action: "provider_account.exported", target: "openai", detail: { providerId: "openai", accountIds: ["acct-1", "acct-2"] } },
     ]);
-    expect(JSON.stringify(entries)).not.toContain("secret-");
+    expect(JSON.stringify(entries)).not.toContain("access-");
+    expect(JSON.stringify(entries)).not.toContain("refresh-");
   });
 
-  test("exports an empty secret when credential resolution fails, without aborting the export", async () => {
+  test("exports empty credentials when credential resolution fails, without aborting the export", async () => {
     const { store, state } = makeStore();
     state.accounts.push(account({ id: "acct-1" }), account({ id: "acct-2" }));
     const ops = createProviderCatalogOperations({
       store,
       accessResolver: () => tenantAccess,
       providerRegistry: registryWith(),
-      resolveCredential: async (_providerId, accountId) => {
+      resolveExportCredentials: async (_providerId, accountId) => {
         if (accountId === "acct-1") throw new Error("refresh failed");
-        return "secret-acct-2";
+        return { accessToken: "access-acct-2", refreshToken: "refresh-acct-2" };
       },
     });
 
     const result = await ops.exportAccounts(tenantAccess, "openai", ["acct-1", "acct-2"]);
-    expect(result.accounts.map((row) => row.secret)).toEqual(["", "secret-acct-2"]);
+    expect(result.accounts.map((row) => [row.accessToken, row.refreshToken])).toEqual([
+      ["", undefined],
+      ["access-acct-2", "refresh-acct-2"],
+    ]);
   });
 });
