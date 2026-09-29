@@ -82,6 +82,26 @@ describe("SurfaceAdapterRegistry.detectOnce", () => {
     expect(detection.surface).toBe("chat");
     expect(detection.winning_source).toBe("endpoint_path");
   });
+
+  test("path-vs-body disagreement without a marker is expected traffic, not a fault", () => {
+    // A standard chat body with max_tokens + block content matches the
+    // messages shape (chat adapter refuses max_tokens + block content), so
+    // the path and body genuinely disagree — while the client did nothing
+    // wrong. Only an explicit-marker contradiction is warn-worthy.
+    const detection = new SurfaceAdapterRegistry(adapters).detectOnce(
+      input({
+        body: {
+          model: "x/y",
+          messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+          max_tokens: 20,
+        },
+        path: "/v1/chat/completions",
+      }),
+    );
+    expect(detection).toMatchObject({ surface: "chat", winning_source: "endpoint_path" });
+    expect(detection.disagreement).toBe(true);
+    expect(detection.signals.some((s) => s.source === "explicit_marker")).toBe(false);
+  });
 });
 
 describe("parseToolDefinition — chat dialect", () => {

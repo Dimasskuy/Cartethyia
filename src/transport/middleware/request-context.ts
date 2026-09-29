@@ -149,11 +149,25 @@ export function createCanonicalRequestMiddleware(deps: {
       });
       const detection = deps.surfaceRegistry.detectOnce({ body, headers, path });
       if (detection.disagreement) {
-        log.warn("[surface] conflicting signals detected for surface routing", {
-          resolved: detection.surface,
-          winning_source: detection.winning_source,
-          signals: detection.signals,
-        });
+        // A path-vs-body disagreement is expected traffic, not a fault: a
+        // standard chat body ({model, messages[], max_tokens}) also matches
+        // the messages body shape, so nearly every chat request with
+        // max_tokens "disagrees". Warn only when the explicit header is
+        // involved — a marker contradicting the path means the client is
+        // genuinely confused about which surface it wants.
+        const markerInvolved = detection.signals.some((s) => s.source === "explicit_marker");
+        if (markerInvolved) {
+          log.warn("[surface] conflicting signals detected for surface routing", {
+            resolved: detection.surface,
+            winning_source: detection.winning_source,
+            signals: detection.signals,
+          });
+        } else {
+          log.debug("[surface] ambiguous body shape resolved by endpoint path", {
+            resolved: detection.surface,
+            signals: detection.signals,
+          });
+        }
       }
       const adapter = deps.adapters.get(detection.surface);
       if (!adapter)
