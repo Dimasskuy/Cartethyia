@@ -234,6 +234,12 @@ export function validateCompatibilityProfile(profile: CompatibilityProfile): voi
     extra_headers: true,
     extra_query_params: true,
     endpoint_paths_by_wire_family: true,
+    // Validated above and read by `probe-phases.ts` during model discovery:
+    // per-model wire-family routing for BYOK rows.
+    model_wire_families: true,
+    // Validated above and read by `compatible-adapter.ts` at dispatch.
+    streaming_usage_mode: true,
+    structured_output: true,
     // Read by `resolveCustomCliHeaders` in provider-catalog-service: a custom
     // provider's BYOK adapter stamps official CLI identity headers unless the
     // operator opts out. Omitting it here rejected every create/update that

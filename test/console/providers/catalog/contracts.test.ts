@@ -129,19 +129,18 @@ describe("validateCompatibilityProfile — endpoint_paths_by_wire_family", () =>
 });
 
 describe("validateCompatibilityProfile — model_wire_families", () => {
-  test("a well-formed rule array is still rejected by the unknown-field allow-list", () => {
-    // Observed inconsistency, pinned so a fix is deliberate: the field is
-    // validated above and then rejected below because `model_wire_families`
-    // is missing from the `allowed` map, so any provider profile carrying a
-    // rule set cannot be persisted at all. Reported, not silently repaired.
-    expect(
-      reject({
+  test("a well-formed rule array passes: the field is validated and allow-listed", () => {
+    // The validator and the allow-list must agree: this field has a runtime
+    // reader in `probe-phases.ts`, so rejecting it would make a documented
+    // BYOK knob unpersistable.
+    expect(() =>
+      accept({
         model_wire_families: [
           { pattern: "^gpt-5", wire_family: "responses" },
           { pattern: "^claude-", wire_family: "messages" },
         ],
-      }).message,
-    ).toBe("unknown compatibility_profile field model_wire_families has no runtime reader");
+      }),
+    ).not.toThrow();
   });
 
   test("rejects a non-array value", () => {
@@ -191,19 +190,14 @@ describe("validateCompatibilityProfile — streaming_usage_mode and structured_o
     ).toBe("structured_output.enabled must be boolean");
   });
 
-  test("both fields are absent from the unknown-field allow-list, so a valid value is still rejected", () => {
-    // Observed inconsistency, pinned so a fix is deliberate: the two fields are
-    // validated above but omitted from `allowed` below, so their declared
-    // values cannot pass. Reported, not silently repaired.
-    expect(reject({ streaming_usage_mode: "include_usage" }).message).toBe(
-      "unknown compatibility_profile field streaming_usage_mode has no runtime reader",
-    );
-    expect(reject({ streaming_usage_mode: "none" }).message).toBe(
-      "unknown compatibility_profile field streaming_usage_mode has no runtime reader",
-    );
-    expect(
-      reject({ structured_output: { mode: "json_schema", enabled: true } }).message,
-    ).toBe("unknown compatibility_profile field structured_output has no runtime reader");
+  test("valid values for both fields pass: validated above, allow-listed below", () => {
+    // Both fields have runtime readers in `compatible-adapter.ts`, so the
+    // allow-list must admit what the validation above accepts.
+    expect(() => accept({ streaming_usage_mode: "include_usage" })).not.toThrow();
+    expect(() => accept({ streaming_usage_mode: "none" })).not.toThrow();
+    expect(() =>
+      accept({ structured_output: { mode: "json_schema", enabled: true } }),
+    ).not.toThrow();
   });
 });
 

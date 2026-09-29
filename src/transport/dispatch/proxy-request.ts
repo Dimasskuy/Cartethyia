@@ -882,7 +882,12 @@ export async function handleProviderProxyRequest(
         ...ttfbFields(undefined, firstContentDeltaAtMs, state.upstreamDispatchStartedAtMs),
         usage: pricedUsage,
         commitUsage: pricedUsage,
-        responseBody: parseCapturedBody(output.bytes),
+        // Decode once: `output.bytes` is a `Uint8Array`, which
+        // `parseCapturedBody` returns untouched — the Server panel would store
+        // a byte-index map (`{"0":123,…}`) after redaction instead of the
+        // response. The client receives the same text we parse here, so both
+        // panels stay in sync.
+        responseBody: parseCapturedBody(new TextDecoder().decode(output.bytes)),
         // Non-stream: client receives the exact same bytes we just encoded —
         // keep Server and Client panels in sync so the drawer never shows “—”.
         clientResponseText: new TextDecoder().decode(output.bytes),
