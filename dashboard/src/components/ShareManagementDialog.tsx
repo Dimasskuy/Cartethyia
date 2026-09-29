@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from "./ui/state";
 import { ClipboardButton } from "./patterns/clipboard-button";
 import { toast } from "../shared/toast";
 import { getErrorMessage } from "../shared/helpers";
+import { quotaBarTone } from "../shared/quota-formatters";
 import type { ApiKeyResponse, SharedKeyActivityDetail, SharedKeySummary } from "../data/contracts";
 import {
   useRegenerateApiKey,
@@ -120,6 +121,76 @@ function BudgetBar({
 /** Active recipient count: child keys that have not been revoked. */
 function activeChildCount(children: readonly SharedKeySummary[]): number {
   return children.filter((child) => child.revokedAt === null).length;
+}
+
+/**
+ * Total tokens spent across all recipients (active or revoked): the parent's
+ * global consumption, matching the quota the gateway enforces per request.
+ */
+function childrenTotal(children: readonly SharedKeySummary[]): number {
+  return children.reduce((sum, child) => sum + child.allTime.totalTokens, 0);
+}
+
+/**
+ * Parent-level quota bar: consumed vs budget, with the remaining pill.
+ *
+ * Same visual language as the quota page (`quota-bar-*` tones by remaining
+ * percent), but the numbers here are the parent's: total children consumption
+ * against the parent's lifetime budget, or the raw total when no budget is
+ * set. Shown in its own section below the link, above the recipients table.
+ */
+function ParentQuotaBar({
+  consumed,
+  budget,
+}: {
+  readonly consumed: number;
+  readonly budget: number | null | undefined;
+}): ReactNode {
+  if (budget == null) {
+    return (
+      <div className="share-budget">
+        <div className="share-budget-head">
+          <span>Total quota used</span>
+          <span className="share-budget-figures">{compactTokens(consumed)}</span>
+        </div>
+      </div>
+    );
+  }
+  const pct = budget > 0 ? Math.min(100, (consumed / budget) * 100) : 0;
+  const remaining = budget > 0 ? Math.max(0, 100 - (consumed / budget) * 100) : 100;
+  const left = Math.max(0, budget - consumed);
+  const colors = quotaBarTone(consumed >= budget ? 0 : remaining);
+  const exhausted = consumed >= budget;
+  return (
+    <div className="share-budget">
+      <div className="share-budget-head">
+        <span>Total quota</span>
+        <span className="share-budget-figures">
+          {compactTokens(consumed)} / {compactTokens(budget)}
+        </span>
+        <span
+          className="share-quota-pill"
+          style={{ color: colors.text, borderColor: colors.text }}
+        >
+          {exhausted ? "Exhausted" : `${compactTokens(left)} left`}
+        </span>
+      </div>
+      <div
+        className="share-bar-track"
+        role="progressbar"
+        aria-label="Total quota consumed"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pct)}
+        aria-valuetext={`${compactTokens(consumed)} of ${compactTokens(budget)} tokens consumed`}
+      >
+        <div
+          className={`share-bar-fill${exhausted ? " share-bar-fill--exhausted" : ""}`}
+          style={{ width: `${pct}%`, background: exhausted ? undefined : colors.bar }}
+        />
+      </div>
+    </div>
+  );
 }
 
 /** Expanded recipient body: model totals and recent requests, loaded on demand. */
@@ -320,7 +391,17 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
           </dl>
         </section>
       ) : (
-        <section aria-label="Recipients" className="share-section">
+        <>
+          <section aria-label="Total quota" className="share-section">
+            <div className="share-section-head">
+              <strong>Total quota</strong>
+            </div>
+            <ParentQuotaBar
+              consumed={childrenTotal(children)}
+              budget={parent.lifetimeTokenBudget}
+            />
+          </section>
+          <section aria-label="Recipients" className="share-section">
           <div className="share-section-head">
             <strong>Recipients</strong>
             {/* Counting only unrevoked children: a revoked key is still listed
@@ -434,7 +515,8 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
               </table>
             </div>
           )}
-        </section>
+          </section>
+        </>
       )}
         {/* Nested rather than a sibling: `Dialog` renders through
             `createPortal`, so this adds no DOM child and cannot become a stray

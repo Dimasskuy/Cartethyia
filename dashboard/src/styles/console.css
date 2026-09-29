@@ -2470,6 +2470,21 @@
   background: var(--red);
 }
 
+/* Remaining-quota pill beside the figures: the same green/orange/red ladder
+   as the quota page, drawn as an outlined chip so it reads as a status, not
+   a second set of figures. */
+.share-quota-pill {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: normal;
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
 /* Active-recipient count. Pushed away from the heading by the auto margin so it
    reads as a figure about the list, not part of the section title. */
 .share-active-count {

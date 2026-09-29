@@ -174,6 +174,40 @@ describe("share management dialog", () => {
     expect(markup).toContain("Create link");
   });
 
+  test("a share template shows the parent quota bar above recipients", () => {
+    // Three mocked recipients at 30 tokens each: the total is 90 against the
+    // parent's budget, and the pill names what is left.
+    const markup = renderNode(
+      createElement(ShareManagementContent, {
+        parent: key({
+          id: "template-1",
+          keyMode: "share",
+          label: "share template",
+          lifetimeTokenBudget: 1_000,
+        }),
+      }),
+    );
+    expect(markup).toContain("Total quota");
+    expect(markup).toContain("90 / 1K");
+    expect(markup).toContain("910 left");
+    expect(markup).toContain('role="progressbar"');
+  });
+
+  test("the parent quota bar without a budget shows only the total", () => {
+    const markup = renderNode(
+      createElement(ShareManagementContent, {
+        parent: key({
+          id: "template-1",
+          keyMode: "share",
+          label: "share template",
+          lifetimeTokenBudget: undefined,
+        }),
+      }),
+    );
+    expect(markup).toContain("Total quota used");
+    expect(markup).not.toContain("left");
+  });
+
   test("the lifetime budget renders as a bar with both figures", () => {
     const markup = renderNode(
       createElement(ShareManagementContent, {
