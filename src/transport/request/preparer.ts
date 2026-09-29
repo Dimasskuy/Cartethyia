@@ -389,6 +389,7 @@ export class ProxyRequestPreparer {
           authorization.tenantId,
           variant.required,
           allowCliMappings,
+          authorization.id,
         );
       } catch (error) {
         if (error instanceof GatewayError && error.code === "capability_unsupported") continue;

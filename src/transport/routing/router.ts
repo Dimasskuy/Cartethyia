@@ -532,6 +532,7 @@ export class RoutingEngine {
     tenantId?: string | null,
     requiredCapabilities?: readonly RequiredCapability[],
     allowCliMappings = false,
+    keyId?: string,
   ): Promise<RoutePlan> {
     const tid = tenantId ?? null;
     const { resolved, matching } = this.resolveMatchingCandidates(
@@ -539,6 +540,7 @@ export class RoutingEngine {
       snapshot,
       tid,
       allowCliMappings,
+      keyId,
     );
     // `matching` non-empty but nothing eligible means every account serving
     // this model is currently unusable — NOT a missing model. Distinct from
@@ -622,6 +624,7 @@ export class RoutingEngine {
     snapshot: RouteSnapshot,
     tid: string | null,
     allowCliMappings: boolean,
+    keyId?: string,
   ): {
     resolved: ReturnType<typeof resolveAlias>;
     combo: ComboDefinition | undefined;
@@ -629,7 +632,7 @@ export class RoutingEngine {
   } {
     const safeResolve = (name: string) => {
       try {
-        return resolveAlias(name, snapshot, tid, allowCliMappings);
+        return resolveAlias(name, snapshot, tid, allowCliMappings, keyId);
       } catch {
         throw modelNotFoundError(requestedModel);
       }

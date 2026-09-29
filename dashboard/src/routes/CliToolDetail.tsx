@@ -1,5 +1,5 @@
-import { ArrowLeft, CheckCircle2, Download, Search, Settings2, XCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { ArrowLeft, CheckCircle2, Download, Search, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -15,7 +15,6 @@ import { downloadTextFile } from "../shared/download";
 import { toast } from "../shared/toast";
 import { useApiKeys, useUpdateApiKey } from "../hooks/api-keys";
 import {
-  useApplyTool,
   useDownloadTool,
   useSaveToolMappings,
   useToolMappings,
@@ -90,7 +89,6 @@ function CliToolDetailBody({
 }): ReactNode {
   // User MUST manually select the API key — no auto-select.
   const [selectedKeyId, setSelectedKeyId] = useState("");
-  const [applyMode, setApplyMode] = useState<"file" | "remote" | "both">("both");
   const [endpoint, setEndpoint] = useState(() =>
     typeof window === "undefined" ? "http://localhost:12800" : window.location.origin,
   );
@@ -100,6 +98,9 @@ function CliToolDetailBody({
   const [bypassPermissions, setBypassPermissions] = useState(false);
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [pickerMode, setPickerMode] = useState<"slot" | "target">("slot");
+
+  // Track the last-saved mapping state to avoid re-saving unchanged data.
+  const lastSavedRef = useRef<string | null>(null);
 
   // Only personal keys carry a recoverable encrypted secret; share templates
   // have no key_encrypted column and cannot be resolved server-side.
@@ -112,7 +113,6 @@ function CliToolDetailBody({
   const mappingsQuery = useToolMappings(tool.id, selectedKeyId);
   const saveMappings = useSaveToolMappings();
   const downloadTool = useDownloadTool();
-  const applyTool = useApplyTool();
   const updateApiKey = useUpdateApiKey();
 
   const selectedKey = personalKeys.find((key) => key.id === selectedKeyId);
@@ -120,12 +120,14 @@ function CliToolDetailBody({
   const canAct = selectedKey !== undefined;
 
   useEffect(() => {
+    // When switching tool or key: reset local draft to tool defaults.
     const defaults = Object.fromEntries(
       tool.defaultModels.map((model) => [model.alias, model.defaultValue ?? model.id]),
     );
     setSlotModels(defaults);
     setMappingTargets({});
-  }, [tool]);
+    lastSavedRef.current = null;
+  }, [tool, selectedKeyId]);
 
   useEffect(() => {
     const settings = mappingsQuery.data;
@@ -140,13 +142,14 @@ function CliToolDetailBody({
         ...prev,
         ...Object.fromEntries(settings.mappings.map((row) => [row.slotKey, row.targetModel])),
       }));
-      return;
+    } else {
+      const defaults = Object.fromEntries(
+        tool.defaultModels.map((model) => [model.alias, model.defaultValue ?? model.id]),
+      );
+      setSlotModels(defaults);
+      setMappingTargets({});
     }
-    const defaults = Object.fromEntries(
-      tool.defaultModels.map((model) => [model.alias, model.defaultValue ?? model.id]),
-    );
-    setSlotModels(defaults);
-    setMappingTargets({});
+    lastSavedRef.current = JSON.stringify({ enabled: settings.enabled, mappings: settings.mappings });
   }, [mappingsQuery.data, tool.defaultModels]);
 
   const installed = status?.installed ?? false;
@@ -176,6 +179,30 @@ function CliToolDetailBody({
         : [],
     };
   }, [mappingEnabled, mappingTargets, slotModels, tool.defaultModels, tool.mappingSupported]);
+
+  // Auto-save on select / edit: whenever targets, slots, or toggle change and
+  // an API key is selected, debounce-save to the backend.
+  useEffect(() => {
+    if (!tool.mappingSupported || selectedKeyId.length === 0) return;
+    const server = mappingsQuery.data;
+    if (!server || server.apiKeyId !== selectedKeyId) return;
+    const input = buildMappingInput();
+    if (!input) return;
+    const fingerprint = JSON.stringify({ enabled: input.enabled, mappings: input.mappings });
+    if (fingerprint === lastSavedRef.current) return;
+    const timer = setTimeout(() => {
+      saveMappings.mutate(
+        { toolId: tool.id, keyId: selectedKeyId, input },
+        {
+          onSuccess: () => {
+            lastSavedRef.current = fingerprint;
+          },
+          onError: (error) => toast.error(getErrorMessage(error, "Could not save mappings.")),
+        },
+      );
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [buildMappingInput, mappingsQuery.data, saveMappings, selectedKeyId, tool.id, tool.mappingSupported]);
 
   const buildApplyInput = useCallback((): ApplyInput => {
     const modelSlots = Object.fromEntries(
@@ -368,6 +395,7 @@ function CliToolDetailBody({
             tool.mappingSupported ? (
               <Switch
                 checked={mappingEnabled}
+                disabled={!selectedKeyId}
                 onChange={(enabled) => {
                   setMappingEnabled(enabled);
                   if (!selectedKeyId) {
@@ -408,178 +436,148 @@ function CliToolDetailBody({
         />
         <CardBody>
           {!selectedKeyId ? (
-            <p style={{ fontSize: "12px", color: "var(--text-tertiary)", margin: "8px 0" }}>
-              Select an API key above to view and configure its model routes.
+            <p style={{ fontSize: "11.5px", color: "var(--text-tertiary)", marginBottom: "10px" }}>
+              Select an API key above to load and save remote routes for that key. You can still set models below to download a config file.
             </p>
-          ) : (
-            <>
-              {tool.mappingSupported ? (
+          ) : null}
+
+          {tool.mappingSupported ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "6px 10px",
+                marginBottom: "10px",
+                borderRadius: "8px",
+                background: "var(--surface-2)",
+                border: "1px solid var(--inner-border)",
+                fontSize: "10.5px",
+                color: "var(--text-tertiary)",
+              }}
+            >
+              <span style={{ flex: 1 }}>CLI asks for</span>
+              <span style={{ width: "18px", textAlign: "center" }}>→</span>
+              <span style={{ flex: 1 }}>Cartethyia routes to</span>
+            </div>
+          ) : null}
+
+          <Stack gap="6px">
+            {tool.defaultModels.map((model) => {
+              const slotValue = slotModels[model.alias] ?? model.defaultValue ?? model.id;
+              const targetValue = mappingTargets[model.alias] ?? "";
+              const sameAsSource = targetValue === slotValue;
+              return (
                 <div
+                  key={model.alias}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
+                    display: "grid",
+                    gridTemplateColumns: tool.mappingSupported ? "1fr 1fr" : "1fr",
                     gap: "8px",
-                    padding: "6px 10px",
-                    marginBottom: "10px",
-                    borderRadius: "8px",
-                    background: "var(--surface-2)",
-                    border: "1px solid var(--inner-border)",
-                    fontSize: "10.5px",
-                    color: "var(--text-tertiary)",
+                    alignItems: "center",
                   }}
                 >
-                  <span style={{ flex: 1 }}>CLI asks for</span>
-                  <span style={{ width: "18px", textAlign: "center" }}>→</span>
-                  <span style={{ flex: 1 }}>Cartethyia routes to</span>
-                </div>
-              ) : null}
-
-              <Stack gap="6px">
-                {tool.defaultModels.map((model) => {
-                  const slotValue = slotModels[model.alias] ?? model.defaultValue ?? model.id;
-                  const targetValue = mappingTargets[model.alias] ?? "";
-                  const sameAsSource = targetValue === slotValue;
-                  return (
-                    <div
-                      key={model.alias}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPickerFor(model.alias);
+                        setPickerMode("slot");
+                      }}
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: tool.mappingSupported ? "1fr 1fr" : "1fr",
-                        gap: "8px",
+                        display: "flex",
                         alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "8px",
+                        padding: "7px 10px",
+                        borderRadius: "8px",
+                        border: "1px solid var(--inner-border)",
+                        background: "var(--surface-2)",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "11.5px",
+                        color: "var(--text-primary)",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        width: "100%",
+                        minWidth: 0,
                       }}
                     >
-                      <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPickerFor(model.alias);
-                            setPickerMode("slot");
-                          }}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: "8px",
-                            padding: "7px 10px",
-                            borderRadius: "8px",
-                            border: "1px solid var(--inner-border)",
-                            background: "var(--surface-2)",
-                            fontFamily: "var(--font-mono)",
-                            fontSize: "11.5px",
-                            color: "var(--text-primary)",
-                            cursor: "pointer",
-                            textAlign: "left",
-                            width: "100%",
-                            minWidth: 0,
-                          }}
-                        >
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {slotValue}
-                          </span>
-                          <Search size={12} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
-                        </button>
-                        <span style={{ fontSize: "10px", color: "var(--text-tertiary)", paddingLeft: "2px" }}>
-                          {model.roleLabel ?? model.name}
-                        </span>
-                      </div>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {slotValue}
+                      </span>
+                      <Search size={12} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
+                    </button>
+                    <span style={{ fontSize: "10px", color: "var(--text-tertiary)", paddingLeft: "2px" }}>
+                      {model.roleLabel ?? model.name}
+                    </span>
+                  </div>
 
-                      {tool.mappingSupported ? (
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+                  {tool.mappingSupported ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPickerFor(model.alias);
+                          setPickerMode("target");
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "8px",
+                          padding: "7px 10px",
+                          borderRadius: "8px",
+                          border: `1px solid ${sameAsSource ? "var(--inner-border)" : "var(--accent)"}`,
+                          background: sameAsSource ? "var(--surface-2)" : "var(--accent-soft)",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "11.5px",
+                          color: targetValue.length > 0 ? "var(--text-primary)" : "var(--text-tertiary)",
+                          cursor: "pointer",
+                          textAlign: "left",
+                          width: "100%",
+                          minWidth: 0,
+                        }}
+                      >
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {targetValue.length > 0 ? targetValue : "Not routed"}
+                        </span>
+                        <Search size={12} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
+                      </button>
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          paddingLeft: "2px",
+                          color: targetValue.length === 0 ? "var(--text-tertiary)" : "var(--accent)",
+                        }}
+                      >
+                        {targetValue.length === 0 ? "not routed" : "rerouted"}
+                        {targetValue.length > 0 ? (
                           <button
                             type="button"
-                            onClick={() => {
-                              setPickerFor(model.alias);
-                              setPickerMode("target");
-                            }}
+                            onClick={() =>
+                              setMappingTargets((prev) => ({ ...prev, [model.alias]: "" }))
+                            }
                             style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: "8px",
-                              padding: "7px 10px",
-                              borderRadius: "8px",
-                              border: `1px solid ${sameAsSource ? "var(--inner-border)" : "var(--accent)"}`,
-                              background: sameAsSource ? "var(--surface-2)" : "var(--accent-soft)",
-                              fontFamily: "var(--font-mono)",
-                              fontSize: "11.5px",
-                              color: targetValue.length > 0 ? "var(--text-primary)" : "var(--text-tertiary)",
-                              cursor: "pointer",
-                              textAlign: "left",
-                              width: "100%",
-                              minWidth: 0,
-                            }}
-                          >
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {targetValue.length > 0 ? targetValue : "Not routed"}
-                            </span>
-                            <Search size={12} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
-                          </button>
-                          <span
-                            style={{
+                              marginLeft: "6px",
+                              border: "none",
+                              background: "none",
+                              padding: 0,
                               fontSize: "10px",
-                              paddingLeft: "2px",
-                              color: targetValue.length === 0 ? "var(--text-tertiary)" : "var(--accent)",
+                              color: "var(--text-tertiary)",
+                              cursor: "pointer",
+                              textDecoration: "underline",
                             }}
                           >
-                            {targetValue.length === 0 ? "not routed" : "rerouted"}
-                            {targetValue.length > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setMappingTargets((prev) => ({ ...prev, [model.alias]: "" }))
-                                }
-                                style={{
-                                  marginLeft: "6px",
-                                  border: "none",
-                                  background: "none",
-                                  padding: 0,
-                                  fontSize: "10px",
-                                  color: "var(--text-tertiary)",
-                                  cursor: "pointer",
-                                  textDecoration: "underline",
-                                }}
-                              >
-                                clear
-                              </button>
-                            ) : null}
-                          </span>
-                        </div>
-                      ) : null}
+                            clear
+                          </button>
+                        ) : null}
+                      </span>
                     </div>
-                  );
-                })}
-              </Stack>
-
-              {tool.mappingSupported ? (
-                <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end" }}>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => {
-                      if (!selectedKeyId) {
-                        toast.error("Select an API key first.");
-                        return;
-                      }
-                      const input = buildMappingInput();
-                      if (input)
-                        saveMappings.mutate(
-                          { toolId: tool.id, keyId: selectedKeyId, input },
-                          {
-                            onSuccess: () => toast.success("Mappings saved for this key."),
-                            onError: (error) =>
-                              toast.error(getErrorMessage(error, "Could not save mappings.")),
-                          },
-                        );
-                    }}
-                    disabled={saveMappings.isPending || !selectedKeyId}
-                  >
-                    Save routing
-                  </Button>
+                  ) : null}
                 </div>
-              ) : null}
-            </>
-          )}
+              );
+            })}
+          </Stack>
         </CardBody>
       </Card>
 
@@ -627,53 +625,10 @@ function CliToolDetailBody({
 
       <Card>
         <CardHeader
-          title="Apply"
-          subtitle="Apply writes the tool's config on the gateway host and/or records the remote route. Download saves the config text for you to place yourself."
+          title="Config file"
+          subtitle="Download the config file for this CLI tool. The selected API key secret is decrypted automatically into the download."
         />
         <CardBody style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
-              Where to apply
-            </span>
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-              {(
-                [
-                  { id: "both", label: "File + remote" },
-                  { id: "file", label: "Config file" },
-                  { id: "remote", label: "Remote route" },
-                ] as const
-              ).map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  aria-pressed={applyMode === option.id}
-                  onClick={() => setApplyMode(option.id)}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: "99px",
-                    fontSize: "12px",
-                    cursor: "pointer",
-                    border: `1px solid ${applyMode === option.id ? "var(--accent)" : "var(--inner-border)"}`,
-                    background: applyMode === option.id ? "var(--accent-soft)" : "var(--surface-2)",
-                    color: applyMode === option.id ? "var(--accent)" : "var(--text-secondary)",
-                  }}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>
-              {applyMode === "file"
-                ? "Writes the config on the gateway host. Only reaches your CLI when both run on the same machine."
-                : applyMode === "remote"
-                  ? "Saves the routing rows only — works with a remote or containerised gateway, no filesystem access."
-                  : "Writes the config and saves the routing rows."}
-              {applyMode !== "file" && !cliEligible && selectedKey !== undefined
-                ? " This key lacks routing:cli_mapping, so the remote route will not be used until you toggle Remote Routing on."
-                : ""}
-            </span>
-          </div>
-
           {tool.id === "claude" ? (
             <div
               style={{
@@ -705,29 +660,7 @@ function CliToolDetailBody({
 
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
             <Button
-              icon={<Settings2 size={14} />}
-              onClick={() => {
-                if (!selectedKeyId) {
-                  toast.error("Select an API key first.");
-                  return;
-                }
-                applyTool.mutate(
-                  { toolId: tool.id, keyId: selectedKeyId, input: { ...buildApplyInput(), mode: applyMode } },
-                  {
-                    onSuccess: (result) => {
-                      toast.success(result.message);
-                    },
-                    onError: (error) =>
-                      toast.error(getErrorMessage(error, "Could not apply config.")),
-                  },
-                );
-              }}
-              disabled={applyTool.isPending || !canAct}
-            >
-              {applyTool.isPending ? "Applying…" : "Apply"}
-            </Button>
-            <Button
-              variant="secondary"
+              variant="primary"
               icon={<Download size={14} />}
               onClick={() => {
                 if (!selectedKeyId) {
@@ -748,12 +681,12 @@ function CliToolDetailBody({
               }}
               disabled={downloadTool.isPending || !canAct}
             >
-              {downloadTool.isPending ? "Downloading…" : "Download"}
+              {downloadTool.isPending ? "Downloading…" : "Download config"}
             </Button>
           </div>
           {!canAct ? (
             <p style={{ fontSize: "11.5px", color: "var(--text-tertiary)", textAlign: "right" }}>
-              Select an API key above to enable apply and download.
+              Select an API key above to enable downloading the config file.
             </p>
           ) : null}
         </CardBody>
