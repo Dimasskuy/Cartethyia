@@ -35,10 +35,19 @@ import { OAuthDeviceFlow } from "../../authentication/oauth-device-flow";
 import type { FetchLike } from "../../authentication/oauth-client";
 
 /** Public xAI OAuth client id for the Grok subscriptions; not a secret. */
-export const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828" as const;
-export const XAI_DEVICE_URL = "https://auth.x.ai/oauth2/device/code" as const;
-export const XAI_TOKEN_URL = "https://auth.x.ai/oauth2/token" as const;
-export const XAI_USERINFO_URL = "https://auth.x.ai/oauth2/userinfo" as const;
+/** One authorization server, one public client registration for both Grok products. */
+const XAI_AUTH_SERVER = {
+  clientId: "b1a00492-073a-47ea-816f-4c329264a828",
+  deviceUrl: "https://auth.x.ai/oauth2/device/code",
+  tokenUrl: "https://auth.x.ai/oauth2/token",
+  userinfoUrl: "https://auth.x.ai/oauth2/userinfo",
+} as const;
+
+export { XAI_AUTH_SERVER };
+export const XAI_CLIENT_ID = XAI_AUTH_SERVER.clientId;
+export const XAI_DEVICE_URL = XAI_AUTH_SERVER.deviceUrl;
+export const XAI_TOKEN_URL = XAI_AUTH_SERVER.tokenUrl;
+export const XAI_USERINFO_URL = XAI_AUTH_SERVER.userinfoUrl;
 
 /**
  * Scopes the subscription token needs.

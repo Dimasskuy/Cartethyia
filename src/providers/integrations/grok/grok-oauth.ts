@@ -8,10 +8,16 @@ import type {
 import type { OAuthTokenRefreshResult } from "../../authentication/oauth-refresh-service";
 import { OAuthDeviceFlow } from "../../authentication/oauth-device-flow";
 import type { FetchLike } from "../../authentication/oauth-client";
+import { XAI_AUTH_SERVER } from "../xai/xai-oauth";
 
-export const GROK_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828" as const;
-export const GROK_DEVICE_URL = "https://auth.x.ai/oauth2/device/code" as const;
-export const GROK_TOKEN_URL = "https://auth.x.ai/oauth2/token" as const;
+/**
+ * The Grok Build client registers against the same authorization server as
+ * the xAI subscription client, so the client id and the device/token
+ * endpoints are read from the one declaration rather than restated here.
+ */
+export const GROK_CLIENT_ID = XAI_AUTH_SERVER.clientId;
+export const GROK_DEVICE_URL = XAI_AUTH_SERVER.deviceUrl;
+export const GROK_TOKEN_URL = XAI_AUTH_SERVER.tokenUrl;
 export const GROK_USER_URL = "https://cli-chat-proxy.grok.com/v1/user" as const;
 export const GROK_SCOPE = [
   "openid",
