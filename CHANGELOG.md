@@ -21,6 +21,17 @@ provider that served the request, and no provider did — but the caller's quali
 `provider/model` ref still names one, so the column resolves from that instead of
 rendering a bare dash.
 
+### The Usage table labels a request that resolved no effort as `default`
+
+The effort suffix was omitted whenever `requested_effort` was NULL, so the Model
+column showed a bare model id whose effort was indistinguishable from one the
+table merely failed to display. `requested_effort` is NULL for both situations
+that leave no effort resolved: the client stated none, and the client stated one
+the canonical model does not carry (`auto` is not in `REASONING_EFFORTS`, so
+`parseReasoningIntent` drops it before it can be recorded). Both now read
+`(default)`. Grouping, routing, and cost joins still read the bare model id —
+`usageBy` aggregates on the column, not the display string.
+
 ### WorkBuddy quota reads the reference billing filter
 
 Tencent billing queries now send the reference filter envelope (`ProductCode: p_tcaca`, statuses `[0, 3]`, and the 101-year package window) plus `X-User-Id` when the access token carries a UID. An empty `{}` could answer success with zero credit packages for an account that has them, which surfaced as “No credit package found”.

@@ -133,6 +133,16 @@ dbDescribe("DrizzleObservabilityStore", () => {
     expect(page.items.find((i) => i.requestId === requestId)?.model).toBe("test-model (xhigh)");
   });
 
+  test("usageRequests labels a request that resolved no effort as default", async () => {
+    // `requested_effort` is NULL both when the client stated no effort and when
+    // it stated one the canonical model does not carry (`auto`), so the row must
+    // say `default` rather than render a bare model id that reads as missing data.
+    const page = await store.usageRequests(tenantId, "24h", 50);
+    expect(page.items.find((i) => i.requestId === cancelledRequestId)?.model).toBe(
+      "test-model (default)",
+    );
+  });
+
   test("usageRequestDetail returns the event with proxy label", async () => {
     const detail = await store.usageRequestDetail(tenantId, requestId);
     expect(detail?.requestId).toBe(requestId);
