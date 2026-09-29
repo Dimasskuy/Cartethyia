@@ -29,7 +29,14 @@ describe("provider User-Agent setting visibility", () => {
       providerCanConfigureUserAgent({
         isBuiltIn: true,
         requiresAccount: true,
-        oauthFlows: { browser: false, device: true },
+        oauthFlows: {
+    browser: false,
+    device: true,
+    import: false,
+    browserLoginFields: [],
+    deviceLoginFields: [],
+    importFields: [],
+  },
         hasAdapterUserAgent: false,
       }),
     ).toBe(false);

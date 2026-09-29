@@ -118,29 +118,55 @@ describe("parseCredentialBatch", () => {
     expect(entries[0]?.identity).toBe("a@example.com");
   });
 
-  test("a Cartethyia export wrapper re-imports each account with its kind and secret", () => {
-    // Regression: `{ exportedAt, accounts: [...] }` was read as one opaque
-    // entry, so a round-trip import landed the whole JSON as an API key and
-    // lost every credential.
+  test("a Cartethyia export wrapper re-imports the raw access token and account kind", () => {
     const body = {
       exportedAt: "2026-09-27T00:00:00.000Z",
       accounts: [
-        { id: "a1", providerId: "mimostudio", label: "6874327696", credentialKind: "oauth", status: "active", secret: "{\"cookies\":[]}", createdAt: "x" },
-        { id: "a2", providerId: "mimostudio", label: "6895175265", credentialKind: "api_key", status: "active", secret: "sk-live-abc", createdAt: "x" },
+        {
+          id: "a1",
+          providerId: "codex",
+          label: "u@example.com",
+          credentialKind: "oauth",
+          status: "active",
+          accessToken: "access",
+          refreshToken: "refresh",
+          createdAt: "x",
+        },
+        {
+          id: "a2",
+          providerId: "openai",
+          label: "primary",
+          credentialKind: "api_key",
+          status: "active",
+          accessToken: "sk-live-abc",
+          createdAt: "x",
+        },
       ],
     };
     const entries = parseCredentialBatch(JSON.stringify(body));
     expect(entries).toHaveLength(2);
-    expect(entries[0]).toEqual({ value: "{\"cookies\":[]}", kind: "oauth", identity: "6874327696" });
-    expect(entries[1]).toEqual({ value: "sk-live-abc", kind: "api_key", identity: "6895175265" });
+    expect(entries[0]).toEqual({
+      value: "access",
+      kind: "oauth",
+      identity: "u@example.com",
+    });
+    expect(entries[1]).toEqual({ value: "sk-live-abc", kind: "api_key", identity: "primary" });
   });
 
-  test("a bare export rows array re-imports each row from credentialKind + secret", () => {
+  test("a bare exported OAuth row extracts its raw access token", () => {
     const rows = [
-      { providerId: "codex", label: "u@example.com", credentialKind: "oauth", secret: "{\"access\":\"t\"}" },
+      {
+        providerId: "codex",
+        label: "u@example.com",
+        credentialKind: "oauth",
+        accessToken: "access",
+        refreshToken: "refresh",
+      },
     ];
     const entries = parseCredentialBatch(JSON.stringify(rows));
-    expect(entries).toEqual([{ value: "{\"access\":\"t\"}", kind: "oauth", identity: "u@example.com" }]);
+    expect(entries).toEqual([
+      { value: "access", kind: "oauth", identity: "u@example.com" },
+    ]);
   });
 
   test("a `{ accounts: [...] }` wrapper (reference batch-import shape) unwraps to one entry per row", () => {

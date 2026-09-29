@@ -341,12 +341,18 @@ export function useStartOAuthAuthorize() {
   return useMutation<
     OAuthAuthorizeResult,
     ApiErrorShape,
-    { providerId: string; accountLabel?: string }
+    { providerId: string; accountLabel?: string; parameters?: Record<string, string> }
   >({
-    mutationFn: ({ providerId, accountLabel }) =>
+    mutationFn: ({ providerId, accountLabel, parameters }) =>
       consoleRequest<OAuthAuthorizeResult>(
         `/providers/${encodeURIComponent(providerId)}/oauth/authorize`,
-        { method: "POST", body: JSON.stringify(accountLabel ? { accountLabel } : {}) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...(accountLabel ? { accountLabel } : {}),
+            ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
+          }),
+        },
       ),
   });
 }
@@ -393,13 +399,52 @@ export function useStartOAuthDevice() {
   return useMutation<
     OAuthDeviceStartResult,
     ApiErrorShape,
-    { providerId: string; accountLabel?: string }
+    { providerId: string; accountLabel?: string; parameters?: Record<string, string> }
   >({
-    mutationFn: ({ providerId, accountLabel }) =>
+    mutationFn: ({ providerId, accountLabel, parameters }) =>
       consoleRequest<OAuthDeviceStartResult>(
         `/providers/${encodeURIComponent(providerId)}/oauth/device/start`,
-        { method: "POST", body: JSON.stringify(accountLabel ? { accountLabel } : {}) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...(accountLabel ? { accountLabel } : {}),
+            ...(parameters && Object.keys(parameters).length > 0 ? { parameters } : {}),
+          }),
+        },
       ),
+  });
+}
+
+/**
+ * Completes a login from credential material the operator already holds.
+ *
+ * The server validates the material against the provider before persisting it,
+ * so a failed import surfaces the upstream's own reason and leaves no account
+ * behind — there is nothing to roll back in the dashboard.
+ */
+export function useImportOAuthCredential() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    { accountId: string },
+    ApiErrorShape,
+    { providerId: string; credential: string; fields?: Record<string, string>; accountLabel?: string }
+  >({
+    mutationFn: ({ providerId, credential, fields, accountLabel }) =>
+      consoleRequest<{ accountId: string }>(
+        `/providers/${encodeURIComponent(providerId)}/oauth/import`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            credential,
+            ...(fields && Object.keys(fields).length > 0 ? { fields } : {}),
+            ...(accountLabel ? { accountLabel } : {}),
+          }),
+        },
+      ),
+    onSuccess: async (_result, variables) => {
+      await invalidateProviderAccounts(queryClient, variables.providerId);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.quota.all });
+    },
   });
 }
 

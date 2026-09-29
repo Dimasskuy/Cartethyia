@@ -35,12 +35,11 @@ const OAUTH_SHAPE_FIELDS = [
 
 /**
  * Fields whose presence identifies one record as a Cartethyia account export
- * row (`ProviderAccountExport`). Such a row carries the credential under
- * `secret` and the kind under `credentialKind`; without this, an exported row
- * was read as an opaque blob, so a re-import landed the whole JSON as an API
- * key and lost the credential entirely.
+ * row (`ProviderAccountExport`). Such a row carries its credential under
+ * `accessToken` and its kind under `credentialKind`; without this, an exported
+ * row is read as an opaque blob and loses its credential during re-import.
  */
-const EXPORT_ROW_FIELDS = ["credentialKind", "providerId", "secret"] as const;
+const EXPORT_ROW_FIELDS = ["credentialKind", "providerId", "accessToken"] as const;
 
 /**
  * Wrapper keys a batch export nests its rows under. Cartethyia's own export
@@ -257,19 +256,17 @@ function entryFromCookieBundle(
 }
 
 function entryFromObject(obj: Record<string, unknown>): ParsedCredentialEntry {
-  // A Cartethyia export row names its credential kind and carries the value
-  // under `secret`; read those directly instead of guessing from shape.
   const exportKind = obj["credentialKind"];
   if (
     typeof exportKind === "string" &&
-    typeof obj["secret"] === "string" &&
+    typeof obj["accessToken"] === "string" &&
     EXPORT_ROW_FIELDS.every((field) => field in obj)
   ) {
     const label = typeof obj["label"] === "string" && obj["label"].trim().length > 0
       ? obj["label"].trim()
       : undefined;
     return {
-      value: obj["secret"],
+      value: obj["accessToken"],
       kind: exportKind === "oauth" ? "oauth" : "api_key",
       ...(label ? { identity: label } : {}),
     };

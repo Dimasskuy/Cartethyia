@@ -44,7 +44,14 @@ describe("CredentialNotice", () => {
         provider={provider({
           providerId: "claude",
           credentialUrl: "https://claude.ai",
-          oauthFlows: { browser: true, device: false },
+          oauthFlows: {
+    browser: true,
+    device: false,
+    import: false,
+    browserLoginFields: [],
+    deviceLoginFields: [],
+    importFields: [],
+  },
         })}
       />,
     );

@@ -272,9 +272,12 @@ function verificationHost(uri: string): string {
 
 export function DeviceCodeDialog({
   providerId,
+  parameters,
   onClose,
 }: {
   readonly providerId: string;
+  /** Values the provider declared for its device flow, chosen before it started. */
+  readonly parameters?: Record<string, string>;
   readonly onClose: () => void;
 }): ReactNode {
   const startDevice = useStartOAuthDevice();
@@ -291,7 +294,10 @@ export function DeviceCodeDialog({
   const scheduleCopyReset = useTrackedTimeout();
   useEffect(() => {
     startDevice.mutate(
-      { providerId },
+      {
+        providerId,
+        ...(parameters === undefined || Object.keys(parameters).length === 0 ? {} : { parameters }),
+      },
       {
         onSuccess: (result) => setSession(result),
         onError: (err) => {

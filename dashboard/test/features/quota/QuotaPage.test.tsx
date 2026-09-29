@@ -55,7 +55,7 @@ mock.module("../../../src/hooks/quota", () => ({
   useUpdateAccountActive: () => ({ mutateAsync: async () => undefined }),
   useSetAccountsActiveBatch: () => ({ mutateAsync: async () => undefined }),
   useDeleteQuotaAccount: () => ({ mutateAsync: async () => undefined }),
-  supportsAccountCheckin: () => false,
+  supportsAccountCheckin: () => true,
   supportsAccountReset: () => false,
 }));
 
@@ -72,6 +72,33 @@ describe("quota card pagination", () => {
     expect(markup).toContain("Showing 1–4 of 6");
     expect(markup).toContain('aria-label="Next quota windows for quota@example.test"');
     expect(markup).toContain('aria-label="Previous quota windows for quota@example.test"');
+  });
+});
+
+describe("quota credit values", () => {
+  test("shows absolute used and total remaining credits without an unreported check-in suffix", () => {
+    const creditWindows: QuotaWindow[] = [
+      { label: "Monthly", remainingPercent: 98.46, usedPercent: 1.54, used: 1.54, limit: 100, resetsAt: null },
+      { label: "Bonus Pack 1", remainingPercent: 100, usedPercent: 0, used: 0, limit: 250, resetsAt: null },
+      { label: "Bonus Pack 2", remainingPercent: 100, usedPercent: 0, used: 0, limit: 30, resetsAt: null },
+      { label: "Bonus Pack 3", remainingPercent: 100, usedPercent: 0, used: 0, limit: 30, resetsAt: null },
+    ];
+    overviewAccounts = [
+      {
+        ...account,
+        checkin: { attemptedToday: true },
+        quota: { ...account.quota!, windows: creditWindows },
+      },
+    ];
+
+    const markup = renderToStaticMarkup(createElement(QuotaPage));
+
+    expect(markup).toContain("1.54 used");
+    expect(markup).toContain("Total credits: 408.46");
+    expect(markup).toContain("Check-in attempted today");
+    expect(markup).not.toContain("Not reported");
+
+    overviewAccounts = [account];
   });
 });
 

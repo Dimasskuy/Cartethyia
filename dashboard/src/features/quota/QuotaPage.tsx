@@ -308,8 +308,20 @@ function QuotaCard({
     : attemptedToday
       ? "Check-in attempted today"
       : "Check-in due";
-  const activityHint = lastReported ? "Reported today" : "Not reported";
-  const statusHint = `${checkinHint} · ${activityHint}`;
+  const statusHint = `${checkinHint}${lastReported ? " · Reported today" : ""}`;
+  const totalCredits = quotaWindows.reduce((total, window) => {
+    const limit = window.limit;
+    if (typeof limit !== "number" || !Number.isFinite(limit)) return total;
+    const remaining =
+      typeof window.remaining === "number" && Number.isFinite(window.remaining)
+        ? window.remaining
+        : typeof window.used === "number" && Number.isFinite(window.used)
+          ? limit - window.used
+          : typeof window.remainingPercent === "number" && Number.isFinite(window.remainingPercent)
+            ? (limit * window.remainingPercent) / 100
+            : null;
+    return remaining === null ? total : total + Math.max(0, remaining);
+  }, 0);
   const rawError =
     (refresh.error ? getErrorMessage(refresh.error, "Unable to refresh this account") : null) ??
     quota?.error ??
@@ -443,13 +455,23 @@ function QuotaCard({
             </div>
           )}
           {canCheckin && (
-            <div
-              className="truncate text-[10px] text-[var(--text-tertiary)]"
-              style={{ fontSize: "10px", color: "var(--text-tertiary)" }}
-              title="Daily growth state: manual pass result, else the sweep ledger for today"
-            >
-              {growth.isPending ? "Running growth pass…" : statusHint}
-            </div>
+            <>
+              <div
+                className="truncate text-[10px] text-[var(--text-tertiary)]"
+                style={{ fontSize: "10px", color: "var(--text-tertiary)" }}
+                title="Daily growth state: manual pass result, else the sweep ledger for today"
+              >
+                {growth.isPending ? "Running growth pass…" : statusHint}
+              </div>
+              {quotaWindows.some((window) => typeof window.limit === "number" && Number.isFinite(window.limit)) && (
+                <div
+                  className="truncate text-[10px] text-[var(--text-tertiary)]"
+                  style={{ fontSize: "10px", color: "var(--text-tertiary)" }}
+                >
+                  Total credits: {totalCredits.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </div>
+              )}
+            </>
           )}
         </div>
         <div
@@ -597,6 +619,16 @@ function QuotaCard({
           {pagination.items.map((window, index) => {
             const remaining = window.remainingPercent ?? null;
             const limit = window.limit ?? null;
+            const usedCredits =
+              typeof window.used === "number" && Number.isFinite(window.used)
+                ? window.used
+                : limit !== null && window.usedPercent !== null && window.usedPercent !== undefined
+                  ? (limit * window.usedPercent) / 100
+                  : null;
+            const remainingCredits =
+              typeof window.remaining === "number" && Number.isFinite(window.remaining)
+                ? window.remaining
+                : null;
             const colors = quotaBarTone(remaining);
             const quotaFillPct = remaining !== null ? Math.max(0, Math.min(100, remaining)) : 0;
             return (
@@ -671,12 +703,19 @@ function QuotaCard({
                     marginTop: "3px",
                   }}
                 >
-                  {(window.usedPercent !== null || limit !== null) && (
+                  {(usedCredits !== null || limit !== null) && (
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {window.usedPercent !== null ? `${window.usedPercent}% used` : ""}
-                      {limit !== null
-                        ? `${window.usedPercent !== null ? " · " : ""}limit ${limit.toLocaleString()}`
+                      {usedCredits !== null
+                        ? `${usedCredits.toLocaleString(undefined, { maximumFractionDigits: 2 })} used`
                         : ""}
+                      {limit !== null
+                        ? `${usedCredits !== null ? " · " : ""}limit ${limit.toLocaleString()}`
+                        : ""}
+                    </span>
+                  )}
+                  {remainingCredits !== null && (
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {remainingCredits.toLocaleString(undefined, { maximumFractionDigits: 2 })} available
                     </span>
                   )}
                   {window.resetsAt && (

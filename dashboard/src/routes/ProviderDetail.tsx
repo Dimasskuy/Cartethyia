@@ -1,6 +1,7 @@
 import {
   Boxes,
   Cable,
+  Download,
   ExternalLink,
   KeyRound,
   LockOpen,
@@ -19,6 +20,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardBody, CardHeader } from "../components/ui/card";
 import { BackLink, PageHeader } from "../components/ui/page-header";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Dialog } from "../components/ui/dialog";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/state";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
@@ -40,6 +42,12 @@ import { RoutingStrategyCard } from "./provider-detail/RoutingStrategyCard";
 import { CredentialNotice } from "./provider-detail/CredentialNotice";
 import { AccountsList, AddAccountModal } from "./provider-detail/Accounts";
 import { DeviceCodeDialog, OAuthBrowserDialog } from "./provider-detail/OAuthDialogs";
+import {
+  ImportCredentialDialog,
+  LoginFieldsForm,
+  initialFieldValues,
+  missingRequiredFields,
+} from "./provider-detail/ImportCredentialDialog";
 import { AddModelModal, ModelGrid, ThinkingSelect } from "./provider-detail/Models";
 import type { ProbeReasoningEffort } from "../data/contracts";
 
@@ -62,6 +70,12 @@ export default function ProviderDetail(): ReactNode {
   // supports reasoning is often exactly what the test is trying to find out.
   const [thinkingEffort, setThinkingEffort] = useState<ProbeReasoningEffort>("auto");
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  // Which flow is collecting its declared fields before it starts. `null` means
+  // no prompt is open. A flow whose provider declares no fields starts directly.
+  const [flowPrompt, setFlowPrompt] = useState<"browser" | "device" | null>(null);
+  const [flowValues, setFlowValues] = useState<Record<string, string>>({});
+  const [deviceParameters, setDeviceParameters] = useState<Record<string, string>>({});
   const [deleteTarget, setDeleteTarget] = useState<ProviderAccountResponse | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [oauthBrowserSession, setOauthBrowserSession] = useState<{
@@ -128,7 +142,49 @@ export default function ProviderDetail(): ReactNode {
 
   const activeAccounts = accounts.filter((a) => a.status === "active").length;
 
-  const handleOAuthBrowser = () => {
+  /**
+   * Starts a flow, collecting its declared fields first when it has any.
+   *
+   * The provider declares which values it needs and whether they are required,
+   * so a flow with nothing to ask starts on the click and one with a question
+   * opens the prompt instead of failing server-side for a missing value.
+   */
+  const beginFlow = (flow: "browser" | "device") => {
+    const fields =
+      flow === "browser"
+        ? (provider?.oauthFlows?.browserLoginFields ?? [])
+        : (provider?.oauthFlows?.deviceLoginFields ?? []);
+    if (fields.length === 0) {
+      if (flow === "browser") handleOAuthBrowser();
+      else setDeviceDialogOpen(true);
+      return;
+    }
+    setFlowValues(initialFieldValues(fields));
+    setFlowPrompt(flow);
+  };
+
+  /** Confirms the open prompt, then starts the flow it was collecting for. */
+  const submitFlowPrompt = () => {
+    if (flowPrompt === null) return;
+    const fields =
+      flowPrompt === "browser"
+        ? (provider?.oauthFlows?.browserLoginFields ?? [])
+        : (provider?.oauthFlows?.deviceLoginFields ?? []);
+    const missing = missingRequiredFields(fields, flowValues);
+    if (missing.length > 0) {
+      toast.error("Missing required fields", `Fill in: ${missing.join(", ")}`);
+      return;
+    }
+    const flow = flowPrompt;
+    setFlowPrompt(null);
+    if (flow === "browser") handleOAuthBrowser(flowValues);
+    else {
+      setDeviceParameters(flowValues);
+      setDeviceDialogOpen(true);
+    }
+  };
+
+  const handleOAuthBrowser = (parameters?: Record<string, string>) => {
     // Opened synchronously in the click handler so popup blockers allow it.
     // `opener` is severed (noopener equivalent) while retaining the handle
     // needed to navigate/close the window; `window.open` with a literal
@@ -139,7 +195,7 @@ export default function ProviderDetail(): ReactNode {
       oauthPopupRef.current = blankPopup;
     }
     startAuthorize.mutate(
-      { providerId: id },
+      { providerId: id, ...(parameters === undefined ? {} : { parameters }) },
       {
         onSuccess: ({ authorizeUrl, state }) => {
           let target: Window | null = null;
@@ -287,7 +343,7 @@ export default function ProviderDetail(): ReactNode {
                     size="sm"
                     icon={<ExternalLink size={13} />}
                     disabled={startAuthorize.isPending}
-                    onClick={handleOAuthBrowser}
+                    onClick={() => beginFlow("browser")}
                     title="Browser OAuth login — opens the provider authorize page in a popup"
                   >
                     {startAuthorize.isPending ? "Starting..." : "Login with browser"}
@@ -298,10 +354,21 @@ export default function ProviderDetail(): ReactNode {
                     variant="secondary"
                     size="sm"
                     icon={<KeyRound size={13} />}
-                    onClick={() => setDeviceDialogOpen(true)}
+                    onClick={() => beginFlow("device")}
                     title="Device-code login — enter the shown code on the provider site"
                   >
                     Login with device code
+                  </Button>
+                )}
+                {provider.oauthFlows?.import && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Download size={13} />}
+                    onClick={() => setImportDialogOpen(true)}
+                    title="Import a credential you already hold — a refresh token, an exported auth blob, or an API key"
+                  >
+                    Import credential
                   </Button>
                 )}
                 <Button
@@ -505,7 +572,58 @@ export default function ProviderDetail(): ReactNode {
         danger
       />
       {deviceDialogOpen && (
-        <DeviceCodeDialog providerId={id} onClose={() => setDeviceDialogOpen(false)} />
+        <DeviceCodeDialog
+          providerId={id}
+          parameters={deviceParameters}
+          onClose={() => {
+            setDeviceDialogOpen(false);
+            setDeviceParameters({});
+          }}
+        />
+      )}
+      {flowPrompt !== null && (
+        <Dialog
+          open={true}
+          onClose={() => setFlowPrompt(null)}
+          title={flowPrompt === "browser" ? "Sign in with" : "Device sign-in details"}
+          width={420}
+          footer={
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setFlowPrompt(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={submitFlowPrompt}>
+                Continue
+              </Button>
+            </>
+          }
+        >
+          <Stack gap="12px">
+            <p className="oauth-hint">
+              {flowPrompt === "browser"
+                ? `Choose how ${providerDisplayName(id)} should identify you, then continue to its sign-in page.`
+                : "These decide which organization the device code is issued for."}
+            </p>
+            <LoginFieldsForm
+              fields={
+                flowPrompt === "browser"
+                  ? (provider?.oauthFlows?.browserLoginFields ?? [])
+                  : (provider?.oauthFlows?.deviceLoginFields ?? [])
+              }
+              values={flowValues}
+              idPrefix={`flow-${flowPrompt}`}
+              onChange={(key, value) => setFlowValues((prev) => ({ ...prev, [key]: value }))}
+            />
+          </Stack>
+        </Dialog>
+      )}
+      {importDialogOpen && provider?.oauthFlows?.import === true && (
+        <ImportCredentialDialog
+          providerId={id}
+          providerName={providerDisplayName(id)}
+          fields={provider.oauthFlows.importFields}
+          onClose={() => setImportDialogOpen(false)}
+        />
       )}
       {oauthBrowserSession && (
         <OAuthBrowserDialog

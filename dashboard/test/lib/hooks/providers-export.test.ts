@@ -57,7 +57,7 @@ describe("useExportProviderAccounts", () => {
             label: "primary",
             credentialKind: "api_key",
             status: "active",
-            secret: "sk-secret",
+            accessToken: "sk-secret",
             createdAt: "2026-01-01T00:00:00.000Z",
           },
         ],
@@ -71,6 +71,6 @@ describe("useExportProviderAccounts", () => {
     expect(calls[0]?.url).toContain("/providers/openai/accounts/export");
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.body).toEqual({ accountIds: ["acct-1"] });
-    expect((body as { accounts: Array<{ secret: string }> }).accounts[0]?.secret).toBe("sk-secret");
+    expect((body as { accounts: Array<{ accessToken: string }> }).accounts[0]?.accessToken).toBe("sk-secret");
   });
 });
