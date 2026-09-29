@@ -49,6 +49,8 @@ async function insertAccount(opts: {
   expiresAt: Date | undefined;
   status?: "active" | "cooldown" | "disabled";
   cooldownUntil?: Date;
+  authState?: Record<string, unknown>;
+  clientSecret?: string;
 }): Promise<string> {
   await requireDb()
     .insert(providers)
@@ -63,6 +65,7 @@ async function insertAccount(opts: {
       credentialCiphertext: encryptCredential("initial-access-token"),
       ...(opts.status ? { status: opts.status } : {}),
       ...(opts.cooldownUntil ? { cooldownUntil: opts.cooldownUntil } : {}),
+      ...(opts.authState ? { authState: opts.authState } : {}),
     })
     .returning({ id: providerAccounts.id });
   if (!row) throw new Error("failed to insert test account");
@@ -74,6 +77,9 @@ async function insertAccount(opts: {
         providerAccountId: row.id,
         refreshCiphertext: encryptCredential(opts.refreshToken),
         expiresAt: opts.expiresAt,
+        ...(opts.clientSecret === undefined
+          ? {}
+          : { clientSecretCiphertext: encryptCredential(opts.clientSecret) }),
       });
   }
   return row.id;
@@ -151,6 +157,77 @@ dbDescribe("OAuthRefreshService", () => {
       .where(eq(providerOauthStates.providerAccountId, accountId));
     expect(oauthState?.leaseOwner).toBeNull();
     expect(account?.status).toBe("active");
+  });
+
+  test("hands the refresher the account's stored auth state and companion secret", async () => {
+    const accountId = await insertAccount({
+      providerId: "kiro",
+      refreshToken: "refresh-kiro",
+      expiresAt: new Date(Date.now() + 60 * 1000),
+      authState: { authMethod: "idc", region: "eu-west-1" },
+      clientSecret: "registered-client-secret",
+    });
+    const service = new OAuthRefreshService(requireDb());
+    let seenContext: unknown;
+    const token = await service.ensureFreshAccessToken(
+      accountId,
+      fakeRefresher(async (_refreshToken, _signal, context) => {
+        seenContext = context;
+        return { access: "kiro-access", expiresAt: new Date(Date.now() + 3600_000) };
+      }),
+    );
+    expect(token).toBe("kiro-access");
+    expect(seenContext).toEqual({
+      account_id: accountId,
+      auth_state: { authMethod: "idc", region: "eu-west-1" },
+      client_secret: "registered-client-secret",
+    });
+  });
+
+  test("persists an auth state a refresh reports and leaves the stored one alone otherwise", async () => {
+    const accountId = await insertAccount({
+      providerId: "kiro",
+      refreshToken: "refresh-kiro-2",
+      expiresAt: new Date(Date.now() + 60 * 1000),
+      authState: { authMethod: "builder-id" },
+    });
+    const service = new OAuthRefreshService(requireDb());
+    await service.ensureFreshAccessToken(
+      accountId,
+      fakeRefresher(async () => ({
+        access: "kiro-access-2",
+        expiresAt: new Date(Date.now() + 3600_000),
+        auth_state: { authMethod: "builder-id", profileArn: "arn:aws:codewhisperer:us-east-1:1:profile/AAA" },
+      })),
+    );
+    const [account] = await requireDb()
+      .select()
+      .from(providerAccounts)
+      .where(eq(providerAccounts.id, accountId));
+    expect(account?.authState).toEqual({
+      authMethod: "builder-id",
+      profileArn: "arn:aws:codewhisperer:us-east-1:1:profile/AAA",
+    });
+
+    // A later refresh that reports nothing must not blank what is stored: the
+    // account keeps the profile it resolved earlier.
+    const service2 = new OAuthRefreshService(requireDb());
+    await service2.ensureFreshAccessToken(
+      accountId,
+      fakeRefresher(async () => ({
+        access: "kiro-access-3",
+        expiresAt: new Date(Date.now() + 3600_000),
+      })),
+      { force: true },
+    );
+    const [after] = await requireDb()
+      .select()
+      .from(providerAccounts)
+      .where(eq(providerAccounts.id, accountId));
+    expect(after?.authState).toEqual({
+      authMethod: "builder-id",
+      profileArn: "arn:aws:codewhisperer:us-east-1:1:profile/AAA",
+    });
   });
 
   test("refreshes disabled accounts without re-enabling or clearing cooldown health state", async () => {
