@@ -3,8 +3,13 @@
  *
  * Talks to the Cascade chat API (`https://server.codeium.com`,
  * Connect+protobuf over HTTP/1.1) using the generated declarations in
- * `src/providers/integrations/devin/generated/` (generated from `vendor/devin/proto` via
- * `buf generate`; never hand-edit generated files, only this wiring).
+ * `src/providers/integrations/devin/generated/` (generated from the oh-my-pi
+ * protos via `buf generate`; never hand-edit generated files, only this wiring).
+ *
+ * Do NOT slim the generated folder: api_server.proto imports cortex,
+ * codeium_common, trust, etc., and protoc-gen-es emits per-file — dropping a
+ * file breaks TS imports in the files we keep (tried, 13 typecheck errors).
+ * The 20 committed files are the minimal transitive closure of the chat flow.
  *
  * API-key and OAuth credential support. Both credential kinds carry a Devin
  * session token; OAuth exchanges produce the same token shape as an API key.
