@@ -216,6 +216,16 @@ export function createGatewayApp(deps: GatewayAppDeps) {
     )
     .get("/health", () => ({ status: "ok" as const }))
     .get("/health/ready", async () => {
+      // A draining process reports not-ready so the orchestrator stops
+      // sending it traffic and the replacement takes over without the old
+      // one crashing first: SIGTERM → draining → 503 here → Docker routes
+      // to the new container → old one finishes in flight and exits 0.
+      if (deps.shutdownCoordinator?.isDraining()) {
+        return new Response(JSON.stringify({ status: "not_ready" as const, reason: "shutting_down" }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        });
+      }
       const readiness = deps.readiness ? await deps.readiness() : undefined;
       const results = readiness
         ? [

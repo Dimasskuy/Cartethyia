@@ -44,6 +44,31 @@ describe("readiness in single_instance_local mode", () => {
       reason: "database migrations pending",
     });
   });
+
+  test("/health/ready returns 503 while draining, so the orchestrator routes away first", async () => {
+    // SIGTERM → draining → 503 here → Docker sends traffic to the new
+    // container → the old one finishes in flight and exits 0. Without this
+    // the old container keeps receiving traffic until it dies, which is the
+    // crash-first handover the operator saw.
+    const app = createGatewayShell({
+      readiness: async () => ({
+        status: "ready" as const,
+        db: "connected" as const,
+        migrations: "applied" as const,
+        redis: "not_configured" as const,
+      }),
+      shutdownCoordinator: {
+        track: () => undefined,
+        untrack: () => undefined,
+        isDraining: () => true,
+      },
+    });
+    const response = await app.handle(new Request("http://localhost/health/ready"));
+    expect(response.status).toBe(503);
+    expect((await response.json()) as Record<string, unknown>).toMatchObject({
+      reason: "shutting_down",
+    });
+  });
 });
 
 describe("payload capture redaction", () => {

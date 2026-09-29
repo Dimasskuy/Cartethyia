@@ -1,6 +1,6 @@
 // Persisted API-key store: the console API-key domain and gateway authentication both consume this boundary.
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { CartethyiaDatabase } from "./postgres";
 import { apiKeys, shareLinks, type ApiKeyMode } from "./schema";
 import type { AccessScope } from "../security/access-control";
@@ -88,6 +88,8 @@ export interface ApiKeyStore {
   update(tenantId: string, keyId: string, patch: ApiKeyPatch): Promise<ApiKeyRecord | undefined>;
   revoke(tenantId: string, keyId: string, revokedAt: Date): Promise<boolean>;
   findActiveByHash?(hash: string): Promise<typeof apiKeys.$inferSelect | undefined>;
+  findActiveById?(keyId: string): Promise<typeof apiKeys.$inferSelect | undefined>;
+  sumChildrenConsumed?(parentKeyId: string): Promise<number>;
 }
 
 export class DrizzleApiKeyStore implements ApiKeyStore {
@@ -289,5 +291,29 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
       .where(and(eq(apiKeys.keyHash, hash), isNull(apiKeys.revokedAt)))
       .limit(1);
     return rows[0];
+  }
+
+  async findActiveById(keyId: string): Promise<typeof apiKeys.$inferSelect | undefined> {
+    const rows = await this.db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.id, keyId), isNull(apiKeys.revokedAt)))
+      .limit(1);
+    return rows[0];
+  }
+
+  /**
+   * Total lifetime consumption across one key's active children.
+   *
+   * The parent's own counter never moves for child traffic — attribution
+   * lands on the child row — so quota enforcement reads the parent plus this
+   * sum rather than the parent alone.
+   */
+  async sumChildrenConsumed(parentKeyId: string): Promise<number> {
+    const rows = await this.db
+      .select({ total: sql<number>`coalesce(sum(${apiKeys.lifetimeTokensConsumed}), 0)` })
+      .from(apiKeys)
+      .where(and(eq(apiKeys.parentKeyId, parentKeyId), isNull(apiKeys.revokedAt)));
+    return Number(rows[0]?.total ?? 0);
   }
 }

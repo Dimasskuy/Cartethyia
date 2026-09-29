@@ -11,7 +11,7 @@ import { canonicalClientIpKey } from "../../security/ip-boundary";
 import { decryptCredentialToString } from "../../security/crypto";
 import { isModelAllowed, type ApiKeyAuthorizationSnapshot } from "../../security/api-key-auth";
 import { API_CONTENT_SECURITY_POLICY, X_FRAME_OPTIONS } from "../../security/outbound-headers";
-import { generateApiKeySecret } from "../domains/api-keys/contracts";
+import { SHARED_CHILD_HINT_MAX_LENGTH, generateApiKeySecret } from "../domains/api-keys/contracts";
 import {
   hashShareToken,
   type ShareLinkPolicy,
@@ -187,6 +187,19 @@ export function createShareRouter(options: ShareRouterOptions): Elysia {
       const resolved = await shareStore.resolveShareLink(tokenHash);
       // A handoff link reveals an existing key; it never mints one.
       if (resolved === null || resolved.kind !== "enroll") return notFound();
+      // The recipient's display-name hint rides the issue body (the page caps
+      // it at 20); the store composes the final `hint-random` label and caps
+      // it at 12. Anything else in the body is ignored — the issue call mints
+      // policy from the link's template, never from the request.
+      let nameHint: string | undefined;
+      try {
+        const body = (await request.json().catch(() => null)) as { nameHint?: unknown } | null;
+        if (typeof body?.nameHint === "string" && body.nameHint.trim()) {
+          nameHint = body.nameHint.trim().slice(0, SHARED_CHILD_HINT_MAX_LENGTH);
+        }
+      } catch {
+        nameHint = undefined;
+      }
       const template = resolved.key;
       const generated = generateApiKeySecret(template.keyPrefix ?? undefined);
       const issued = await shareStore.issueSharedApiKey(tokenHash, {
@@ -194,6 +207,7 @@ export function createShareRouter(options: ShareRouterOptions): Elysia {
         keyPrefix: generated.prefix,
         clientIp,
         clientIpKey,
+        ...(nameHint === undefined ? {} : { nameHint }),
       });
       if (issued.kind === "link_unavailable") return notFound();
       if (issued.kind === "ip_limit") {

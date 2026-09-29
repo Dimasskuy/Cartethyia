@@ -392,7 +392,7 @@ export function ShareManagementContent({ parent }: { parent: ApiKeyResponse }): 
                             </button>
                           </td>
                           <td>
-                            <code>{child.keyPrefix ?? "key"}…</code>
+                            <code>{child.label || child.keyPrefix || "key"}…</code>
                             <div className="share-recipient-context">
                               {child.issuedClientIp ?? "IP hidden"}
                             </div>

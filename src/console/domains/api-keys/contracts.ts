@@ -128,6 +128,9 @@ export function resolveKeyPrefix(raw: string | undefined): string {
   return trimmed && trimmed.length > 0 ? trimmed : DEFAULT_API_KEY_PREFIX;
 }
 
+/** Maximum hint the enroll page accepts; the dashboard caps its input there. */
+export const SHARED_CHILD_HINT_MAX_LENGTH = 20;
+
 /** Hashes an owner-supplied personal key; persistence encrypts it for Studio handoff. */
 export function prepareCustomKey(secret: string): { secret: string; hash: string } {
   if (secret.trim().length === 0) {

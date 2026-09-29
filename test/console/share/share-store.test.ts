@@ -99,6 +99,10 @@ dbDescribe("shared API-key persistence", () => {
     const revokedChildren = await apiKeys.listChildren(issuedTenantId, issued.parentKeyId);
     expect(revokedChildren).toHaveLength(1);
     expect(revokedChildren[0]?.revokedAt).toBeInstanceOf(Date);
+    // The issued label is `hint + random` capped at 12 chars — never the
+    // parent's full label plus a suffix, and always set even with no hint.
+    expect(revokedChildren[0]?.label.length).toBeLessThanOrEqual(12);
+    expect(revokedChildren[0]?.label.length).toBeGreaterThan(0);
     expect(await shares.hasActiveSharedKeyForIp(clientIpKey)).toBe(false);
 
     const remainingIndex = issued.parentKeyId === parentIds[0] ? 1 : 0;

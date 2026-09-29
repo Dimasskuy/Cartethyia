@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 
 // Share-link persistence and atomic child-key issuance. The hash is the lookup
 // key; the bearer token is retained encrypted so the console can re-display a
@@ -95,6 +95,8 @@ export interface SharedApiKeyMaterial {
   readonly keyPrefix: string;
   readonly clientIp: string;
   readonly clientIpKey: string;
+  /** Recipient-supplied name hint; the store composes the final label from it. */
+  readonly nameHint?: string;
 }
 
 export type SharedApiKeyIssueResult =
@@ -408,7 +410,14 @@ export class DrizzleShareLinkStore implements ShareLinkStore {
           .for("update");
         if (!activeLink) return { kind: "link_unavailable" };
 
-        const label = `${parent.label} shared key`;
+        // The label is `hint + random`, capped at 12 chars — never the
+        // parent's full label plus a suffix, which grew past every table
+        // column it rendered in. Built here (not imported from the console
+        // domain) because persistence never imports console code.
+        const hint = (material.nameHint ?? "").trim().slice(0, 7);
+        const suffix = randomInt(1000, 10_000).toString();
+        const label =
+          hint.length === 0 ? `key-${suffix}` : `${hint}-${suffix}`.slice(0, 12);
         const [child] = await tx
           .insert(apiKeys)
           .values({

@@ -235,6 +235,19 @@ export async function resolveApiKeyAuthorization(
   const store = new DrizzleApiKeyStore(db);
   const row = await store.findActiveByHash(hash);
   if (!row) return undefined;
+  // A child (shared) key consumes against its parent's quota, not just its
+  // own: the parent's budget is the operator's global cap across all
+  // recipients. Without this the parent's lifetime budget never moves no
+  // matter how much its children spend, so the limit silently never fires.
+  // One extra SELECT on the auth path, only for keys that have a parent.
+  const parent =
+    row.parentKeyId !== null ? await store.findActiveById(row.parentKeyId) : undefined;
+  const budget = parent ?? row;
+  const consumed =
+    (budget.id === row.id
+      ? (row.lifetimeTokensConsumed ?? 0)
+      : (budget.lifetimeTokensConsumed ?? 0)) +
+    (await store.sumChildrenConsumed(budget.id));
   const scopes = Array.isArray(row.scopes) ? (row.scopes as AccessScope[]) : [];
   const snapshot = createAuthorizationSnapshot({
     api_key_id: row.id,
@@ -247,8 +260,8 @@ export async function resolveApiKeyAuthorization(
     ...(row.requestsPerMinute != null ? { rpm: row.requestsPerMinute } : {}),
     ...(row.dailyTokenLimit != null ? { daily_tokens: row.dailyTokenLimit } : {}),
     ...(row.monthlyTokenLimit != null ? { monthly_tokens: row.monthlyTokenLimit } : {}),
-    ...(row.lifetimeTokenBudget != null ? { lifetime_token_budget: row.lifetimeTokenBudget } : {}),
-    lifetime_tokens_consumed: row.lifetimeTokensConsumed ?? 0,
+    ...(budget.lifetimeTokenBudget != null ? { lifetime_token_budget: budget.lifetimeTokenBudget } : {}),
+    lifetime_tokens_consumed: consumed,
     ...(row.maxConcurrentRequests != null ? { max_concurrent: row.maxConcurrentRequests } : {}),
     scopes,
   });

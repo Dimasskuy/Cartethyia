@@ -26,6 +26,9 @@ export function tokenFromPathname(pathname: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
+/** Hint the recipient types: capped at 20 chars, only ~7 survive the label. */
+const NAME_HINT_MAX_LENGTH = 20;
+
 export function SharePage(): ReactElement {
   const path = typeof window === "undefined" ? "/share" : window.location.pathname.replace(/\/$/, "");
   const dataPath = `${path}/data`;
@@ -39,6 +42,10 @@ export function SharePage(): ReactElement {
   const state = useShareData<ShareLinkData>(dataPath);
   const [secret, setSecret] = useState<IssueResult | null>(null);
   const [restoredSecret, setRestoredSecret] = useState<StoredShareKey | null>(null);
+  // The recipient's display-name hint for the issued key. The backend keeps
+  // only the first ~7 chars and appends its own random suffix, so a short
+  // hint survives verbatim and a long one is trimmed, never rejected.
+  const [nameHint, setNameHint] = useState("");
   const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const [issueBusy, setIssueBusy] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
@@ -94,7 +101,7 @@ export function SharePage(): ReactElement {
     setIssueError(null);
     setStorageWarning(null);
     try {
-      const response = await fetch(issuePath, { method: "POST", credentials: "same-origin", cache: "no-store", referrerPolicy: "no-referrer", headers: { "content-type": "application/json" }, body: "{}" });
+      const response = await fetch(issuePath, { method: "POST", credentials: "same-origin", cache: "no-store", referrerPolicy: "no-referrer", headers: { "content-type": "application/json" }, body: JSON.stringify(nameHint.trim() ? { nameHint: nameHint.trim().slice(0, NAME_HINT_MAX_LENGTH) } : {}) });
       const payload = await response.json() as IssueResult | ApiError;
       if (!response.ok) {
         if (response.status === 409) setIssueConflict(true);
@@ -299,15 +306,31 @@ export function SharePage(): ReactElement {
                         : "No key is available in this browser."}
                     </p>
                     {canIssue ? (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        loading={issueBusy}
-                        disabled={issueBusy}
-                        onClick={() => void issue()}
-                      >
-                        {issueBusy ? "Generating…" : "Generate API Key"}
-                      </Button>
+                      <>
+                        <label className="share-name-field">
+                          <span>Your name</span>
+                          <input
+                            type="text"
+                            value={nameHint}
+                            maxLength={NAME_HINT_MAX_LENGTH}
+                            placeholder="e.g. budi"
+                            autoComplete="off"
+                            onChange={(event) => setNameHint(event.target.value)}
+                          />
+                          <span className="share-name-hint">
+                            Shown on your key (best kept to ~5 letters) — the gateway appends its own code.
+                          </span>
+                        </label>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          loading={issueBusy}
+                          disabled={issueBusy}
+                          onClick={() => void issue()}
+                        >
+                          {issueBusy ? "Generating…" : "Generate API Key"}
+                        </Button>
+                      </>
                     ) : null}
                   </>
                 )}
