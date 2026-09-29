@@ -31,8 +31,8 @@
 ## Docs
 
 <!-- Required when the change adds a layer, route group, provider capability,
-     env var, or DB table. See AGENTS.md §13 "Documentation and configuration
-     currency" for the co-change rules and the never-record list. -->
+     env var, or DB table. See AGENTS.md "Docs are part of the change" for the
+     co-change rules and the never-record list. -->
 
 - [ ] No doc update needed (why: <!-- ... -->)
 - [ ] Updated: <!-- e.g. src/transport/TRANSPORT.md, .env.example -->

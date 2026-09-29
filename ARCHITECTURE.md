@@ -12,18 +12,8 @@ below — each layer doc sits beside the code it describes, named for its layer.
 
 ## How to read the docs
 
-- Start here for orientation, then open the doc for the top-level folder you
-  need. Each opens the same way — purpose, layout, and key behaviors with
-  concrete file/function names — and closes with the section that fits the
-  layer: a "How to extend" checklist in console, network, protocol, providers,
-  and security, or a rules/invariants list in observability, persistence,
-  runtime, transport, and workers.
-- One doc per top-level `src/` folder, covering its whole subtree, named for its
-  layer in caps (`src/providers/PROVIDERS.md`, `src/transport/TRANSPORT.md`) so
-  no two docs share a basename. Subfolders carry no doc of their own — the
-  parent absorbs them, so `src/providers/PROVIDERS.md` also covers
-  `integrations/`, `operations/`, `authentication/`, `quota/`, and
-  `discovery/`, and likewise for the other big subtrees.
+- Start here, then open the doc for the top-level folder you need. Each opens the same way — purpose, layout, key behaviors with concrete file/function names — and closes with the fitting section: a "How to extend" checklist (console, network, protocol, providers, security) or rules/invariants (observability, persistence, runtime, transport, workers).
+- One doc per top-level `src/` folder, covering its whole subtree, named for its layer in caps (`src/providers/PROVIDERS.md`) — no two docs share a basename, subfolders carry no doc of their own.
 - Product usage and runtime configuration stay in `README.md` and
   `.env.example`. Agent-only repo rules stay in `AGENTS.md`.
 
@@ -41,27 +31,12 @@ Two planes share one process (`src/main.ts` → `bootstrap()` in
   `/share/:token` enrollment surface: per-tenant operator mutations and
   metadata-only child-key telemetry with trusted-IP enrollment limits.
 
-`src/app.ts` exposes a single builder, `createGatewayApp(deps)`, whose `mode`
-discriminant selects how much of the process mounts:
+`src/app.ts` exposes one builder, `createGatewayApp(deps)`, whose `mode` selects how much mounts:
 
-- `{ mode: "production", … }` — the full process, both planes above.
-- `createGatewayShell(options)` — route-only: dashboard, `/health`, and
-  `/metrics`, with no transport pipeline and no console router. Two consumers
-  depend on it, so it is not a spare path: `bun run build:aot` captures the
-  Elysia manifest by running `src/main.ts` with `Manifest.isCapturing()` true,
-  where `bootstrap()` is skipped and no database exists, and the routing /
-  static-serving tests need the console router to be absent.
+- `{ mode: "production", … }` — full process, both planes.
+- `createGatewayShell(options)` — route-only: dashboard, `/health`, `/metrics`; no transport pipeline, no console router. Not a spare path — two consumers depend on it: `bun run build:aot` captures the Elysia manifest with `bootstrap()` skipped and no database, and routing/static-serving tests need the console router absent.
 
-One request, end to end: ordered pipeline (dependency readiness → ingress policy,
-the single body read → client identity → API-key auth → canonical parse → route
-prepare) → `RoutingEngine.plan()` (alias → combo → ambiguity → eligibility
-→ capability filter → provider-routing reorder) → leases (admission →
-pool slot → reservation) → provider adapter dispatch (stream primed before
-the 200 commits) → `completeAttempt()` (usage, health, capture, exactly one
-telemetry row); the persistence batch transaction also updates durable account
-and API-key usage totals. The per-IP abuse check is not a stage in that array:
-it mounts at the composition root on the `request` hook so it counts a request
-that matches no route, which puts it ahead of readiness and client identity.
+One request: ordered pipeline (readiness → ingress policy → single body read → client identity → API-key auth → canonical parse → route prepare) → `RoutingEngine.plan()` (alias → combo → ambiguity → eligibility → capability filter → provider-routing reorder) → leases (admission → pool slot → reservation) → adapter dispatch (stream primed before the 200 commits) → `completeAttempt()` (usage, health, capture, exactly one telemetry row); the persistence batch also updates durable account and API-key usage totals. The per-IP abuse check isn't a pipeline stage: it mounts at the composition root on the `request` hook so it counts routeless requests, ahead of readiness and client identity.
 
 ## Doc map
 
@@ -103,11 +78,7 @@ that matches no route, which puts it ahead of readiness and client identity.
   such as `config.test.ts` and `config-env-drift.test.ts` cover cross-cutting
   config contracts.
 - `scripts/` — flat operational scripts (`ops-*`, `build-*`, `ci-*`).
-- `migrations/` — tracked `0000_baseline.sql` is the complete schema applied
-  automatically on first boot and recorded in `cartethyia_schema_migrations`;
-  later `NNNN_*.sql` files are forward migrations for databases that already
-  recorded an earlier one. A schema change edits the baseline and adds the next
-  numbered file.
+- `migrations/` — `0000_baseline.sql` is the complete schema, applied automatically on first boot and recorded in `cartethyia_schema_migrations`; later `NNNN_*.sql` files are forward migrations for databases that already recorded an earlier one. A schema change edits the baseline and adds the next numbered file.
 - Committed protobuf output lives under the provider integrations that
   consume it (`src/providers/integrations/*/generated/`).
 

@@ -1,242 +1,159 @@
 
 # Cartethyia Guards
 
-This is the single guard skill for repository-wide invariants. Choose the
-relevant sections before editing; multiple sections may apply. These checks are
-about preventing silent drift, duplicate authorities, dead compatibility paths,
-suppressed symptoms, verification loops, and unsafe cleanup.
+Single guard reference for repo-wide invariants. Pick the sections your change touches; several may apply. Goal: no silent drift, no duplicate authorities, no dead compatibility paths, no suppressed symptoms, no verification loops, no unsafe cleanup.
 
-Two guards apply to almost every change, not only to removals:
+Two guards apply to almost every change:
 
-- **K7b — No suppression, no workaround:** state the cause as a mechanism and
-  classify your change as fix vs suppression vs intended design.
-- **K7c — Goal-first testing:** predict the failure, run once, change the
-  observation instead of re-running.
+- **K7b — No suppression, no workaround:** state the cause as a mechanism; classify the change as fix vs suppression vs intended design.
+- **K7c — Goal-first testing:** predict the failure, run once, change the observation instead of re-running.
 
-Apply the guard your change implicates; a one-line typecheck fix does not need a
-full K1 report.
+Apply the guard the change implicates. A one-line typecheck fix needs no K1 report.
 
 ## K1 — No compatibility aliases
 
-Use for removals, renames, and contract cutovers.
+Removals, renames, contract cutovers.
 
-1. Search runtime, tests, scripts, dashboard, and active docs for every old
-   symbol/path.
-2. Migrate every caller and remove the obsolete export in the same change.
-3. Reject aliases, deprecated re-exports, migration facades, and silent
-   fallback branches unless an explicit external compatibility boundary
-   requires one.
-4. If retained, document the consumer and removal condition.
+1. Search runtime, tests, scripts, dashboard, active docs for every old symbol/path.
+2. Migrate every caller; remove the obsolete export in the same change.
+3. Reject aliases, deprecated re-exports, migration facades, silent fallback branches — unless an explicit external compatibility boundary requires one.
+4. If retained, document the consumer and the removal condition.
 
-Evidence: report the old-name search result and replacement call path. A clean
-cutover requires zero runtime references to the old name.
+Evidence: old-name search result + replacement call path. Clean cutover = zero runtime references to the old name.
 
 ## K2 — Single source of truth
 
-Use when a value or contract is mirrored across backend, dashboard, tests,
-generated output, or docs.
+A value/contract mirrored across backend, dashboard, tests, generated output, or docs.
 
 1. Name the authority before editing.
-2. Trace all consumers and distinguish generated/mirrored copies from a second
-   source of truth.
+2. Trace all consumers; separate generated/mirrored copies from a second source of truth.
 3. Move shared logic to the authority or generate the mirror.
-4. Remove stale duplicate definitions.
+4. Remove stale duplicates.
 
-Evidence: report authority, consumers, and the command/inspection proving no
-competing source remains.
+Evidence: authority, consumers, and the command/inspection proving no competing source remains.
 
 ## K3 — Provider registry authority
 
-Use for provider identity, capability, alias, addition, removal, rename, or
-count changes.
+Provider identity, capability, alias, addition, removal, rename, count changes.
 
-- `src/providers/provider-metadata.ts` owns provider identity.
-- `src/providers/default-registry.ts` owns capability and lazy-loader entries.
-- Dashboard names, tests, docs, and catalogs are synchronized consumers.
-- Every bundled identity needs exactly one capability entry; custom/BYOK paths
-  remain separate.
+- `src/providers/provider-metadata.ts` owns identity.
+- `src/providers/default-registry.ts` owns capability + lazy-loader entries.
+- Dashboard names, tests, docs, catalogs are synchronized consumers.
+- Every bundled identity needs exactly one capability entry; custom/BYOK paths stay separate.
 
-Evidence: report registry keys checked, mirrored consumers updated, stale aliases
-removed, and intentionally custom paths retained.
+Evidence: registry keys checked, mirrors updated, stale aliases removed, intentionally custom paths retained.
 
 ## K4 — Wire bytes
 
-Use for parser, codec, endpoint, header, query, or provider adapter changes.
+Parser, codec, endpoint, header, query, adapter changes.
 
-1. Identify the surface codec and provider adapter that own the bytes.
+1. Name the surface codec + provider adapter that own the bytes.
 2. Separate structural cleanup from intentional protocol changes.
-3. Preserve exact endpoint paths, prefixes, content types, headers, query
-   parameters, and serialized shapes unless the upstream contract changes.
+3. Preserve exact paths, prefixes, content types, headers, query params, serialized shapes — unless the upstream contract changed.
 4. Verify with a focused fixture or captured request/response shape.
 
-Evidence: report before/after wire contract and focused proof. Never replace a
-wire requirement with a generic helper merely because it looks redundant.
+Evidence: before/after wire contract + focused proof. Never swap a wire requirement for a generic helper because it looks redundant.
 
 ## K5 — Naming and location
 
-Use for file moves, splits, merges, and role-oriented module layout changes.
+File moves, splits, merges, role-oriented layout changes.
 
-1. Confirm the canonical path from `AGENTS.md`, `ARCHITECTURE.md`, and
-   neighboring modules.
-2. Trace imports, dynamic imports, scripts, tests, Docker/build readers, and
-   active docs before moving.
-3. Perform a clean cutover: update callers, remove old path, update naming tests
-   and maps.
-4. Do not add barrels or compatibility files to preserve the old location.
+1. Confirm the canonical path from `AGENTS.md`, `ARCHITECTURE.md`, neighboring modules.
+2. Trace imports, dynamic imports, scripts, tests, Docker/build readers, active docs before moving.
+3. Clean cutover: update callers, remove old path, update naming tests and maps.
+4. No barrels or compatibility files to preserve the old location.
 
-Evidence: report old-path search, new path, and synchronized architecture/docs/
-test references.
+Evidence: old-path search, new path, synchronized architecture/docs/test references.
 
 ## K6 — Envelope and version boundary
 
-Use for quota, telemetry, cache, API, database, or persisted envelope changes.
+Quota, telemetry, cache, API, database, persisted envelope changes.
 
-1. Define canonical shape and version discriminator.
-2. Decide whether reads tolerate prior data and state the release boundary for
-   removing that branch.
+1. Define canonical shape + version discriminator.
+2. Decide whether reads tolerate prior data; state the release boundary for removing that branch.
 3. Write the new envelope consistently at every producer.
-4. Preserve bounded retention, validation, and failure behavior while migrating
-   callers and docs.
+4. Preserve bounded retention, validation, failure behavior while migrating callers and docs.
 
-Evidence: report producer/consumer coverage, old-data handling, and exact
-migration/removal condition.
+Evidence: producer/consumer coverage, old-data handling, exact migration/removal condition.
 
 ## K7 — Dead keys and branches
 
-Use for env vars, settings fields, feature flags, fallback constants, and dead
-branches.
+Env vars, settings fields, feature flags, fallback constants, dead branches.
 
-1. Search literal readers and semantic consumers across source, tests, scripts,
-   dashboard, Docker, and active docs.
-2. Distinguish live kill-switches/safety fallbacks from obsolete keys.
-3. Remove dead key, parser/schema field, docs, and tests together.
+1. Search literal readers + semantic consumers across source, tests, scripts, dashboard, Docker, active docs.
+2. Separate live kill-switches/safety fallbacks from obsolete keys.
+3. Remove dead key, parser/schema field, docs, tests together.
 4. Re-run a zero-reference search; note intentional historical changelog hits.
 
-Evidence: report reader inventory and why each retained key is live or each
-removed key is unreachable.
+Evidence: reader inventory + why each retained key is live or each removed key unreachable.
 
 ## K7b — No suppression, no workaround
 
-Use for every bug fix, especially one that touches validation, error handling,
-timeouts, retries, or a capability check.
+Every bug fix, especially validation, error handling, timeouts, retries, capability checks.
 
-1. State the cause as a mechanism before changing anything: "X reads Y, which is
-   `undefined`/wrong when Z". If you cannot, you are not fixing yet — you are
-   guessing, and a guess encoded in production outlives the symptom.
-2. Classify the change. **Suppression** removes the report: deleting or widening
-   a throw, loosening a validator, catching an exception, raising a timeout,
-   adding a fallback, special-casing one input, pinning a fixture. **Fix**
-   removes the cause. A suppression is acceptable only as a named release
-   boundary with a removal condition.
-3. Distinguish intended design from suppression. Capability degradation, an
-   operator-configured fallback, and a documented compatibility path are product
-   behavior — keep them, name them in a comment and in the layer doc, and never
-   let one be described as a bug fix.
-4. For a guard or probe, ask what the *other* arm does before deleting it.
-   `typeof x === "function"`, a capability check, or a fallback branch can be
-   load-bearing for a partially-implemented dependency that production happens
-   never to hit.
+1. State the cause as a mechanism first: "X reads Y, which is undefined/wrong when Z". Can't state it → still guessing, and a guess encoded in production outlives the symptom.
+2. Classify the change. **Suppression** removes the report: deleting/widening a throw, loosening a validator, catching an exception, raising a timeout, adding a fallback, special-casing an input, pinning a fixture. **Fix** removes the cause. Suppression is acceptable only as a named release boundary with a removal condition.
+3. Separate intended design from suppression. Capability degradation, operator-configured fallback, documented compatibility path = product behavior. Keep, name in a comment + layer doc, never describe as a bug fix.
+4. For a guard/probe, ask what the *other* arm does before deleting. A check load-bearing for a partially-implemented dependency looks like defensive noise until that dependency runs.
 
-Evidence: the stated mechanism, the classification (fix vs suppression vs
-intended design), and the reproduction that fails before and passes after.
-"A timeout increase / retry / schema relaxation without a reproduction removes
-evidence rather than a cause."
+Evidence: stated mechanism, classification (fix / suppression / intended design), reproduction that fails before and passes after. A timeout increase / retry / schema relaxation without a reproduction removes evidence, not a cause.
 
 ## K7c — Goal-first testing, no search loops
 
-Use whenever a test is added or a diagnosis stalls.
+Adding a test or stalled diagnosis.
 
-1. A test asserts one **observable** behavior — a result, boundary, error,
-   transition, security invariant, or persistence contract. Never "does not
-   throw", never an implementation detail, never "the function was called".
-2. Predict the failure *before* running it. A test written before the cause is
-   known encodes the buggy behavior and passes after the wrong fix.
-3. Run once, read the result. An unpredicted failure is information — correct
-   the model, then act. Re-running the same test while nudging the code is a
-   search, and each iteration costs more than one well-chosen probe.
-4. If the failure stays unexplained, change **what** you observe — raw bytes vs
-   parsed, request vs response, one provider vs one surface, stub vs pipeline —
-   not how many times you look. Never add the same log or assertion twice.
-5. Prove the teeth: break the fix, confirm the test fails on the intended
-   assertion, restore, confirm it passes. A test that passes both ways proves
-   nothing.
+1. A test asserts one **observable** behavior: result, boundary, error, transition, security invariant, persistence contract. Never "does not throw", never an implementation detail, never "the function was called".
+2. Predict the failure *before* running. A test written before the cause is known encodes the buggy behavior and passes after the wrong fix.
+3. Run once, read the result. Unpredicted failure = information: correct the model, then act. Re-running while nudging code is a search; each iteration costs more than one good probe.
+4. Unexplained failure → change **what** you observe (raw vs parsed, request vs response, one provider vs one surface, stub vs pipeline). Never add the same log or assertion twice.
+5. Prove teeth: break the fix → test fails on the intended assertion → restore → passes. A test that passes both ways proves nothing.
 
-Evidence: the goal sentence, the predicted failure, the single run's result, and
-the mutation-test outcome.
+Evidence: goal sentence, predicted failure, single run result, mutation-test outcome.
 
 ## K8 — Documentation synchronization
 
-Use for every behavior, setting, route, provider, schema, worker, or file-layout
-change.
+Every behavior, setting, route, provider, schema, worker, file-layout change.
 
-1. Identify code authority and every active doc describing it.
-2. Update the smallest authoritative docs in the same change; do not copy
-   implementation detail into `AGENTS.md`.
-3. Remove dead links, stale counts, obsolete names, and contradicted claims.
-4. Anchor citations to symbols and paths, never line numbers: the repository
-   forbids line numbers in committed docs because they drift on every edit, and
-   a stale number sends the reader to unrelated code. Keep line numbers for
-   throwaway reports only.
-5. Keep historical changelog entries historical while correcting active docs and
-   environment templates.
+1. Name the code authority + every active doc describing it.
+2. Update the smallest authoritative docs in the same change; never copy implementation detail into `AGENTS.md`.
+3. Remove dead links, stale counts, obsolete names, contradicted claims.
+4. Cite symbols and paths, never line numbers — committed docs forbid line numbers (they drift on every edit). Line numbers are for throwaway reports only.
+5. Keep historical changelog entries historical; correct active docs and env templates.
 
-Evidence: report docs updated, links/counts checked, and unresolved evidence
-instead of guessing.
+Evidence: docs updated, links/counts checked, unresolved evidence stated instead of guessed.
 
 ## K9 — Bundled-provider coverage
 
-Use when bundled providers are added, removed, renamed, or de-aliased.
+Bundled providers added, removed, renamed, de-aliased.
 
-1. Enumerate canonical identities from `RAW_BUNDLED_PROVIDER_METADATA`
-   (`src/providers/provider-metadata.ts`) — not dashboard labels or aliases.
-2. Keep every mirror in step: `BUNDLED_PROVIDER_IDS` and the registered modules
-   (`src/providers/provider-registry.ts`), `PROVIDER_CAPABILITIES` and
-   `BUNDLED_PROVIDER_MODULES` (`src/providers/default-registry.ts`), and the
-   dashboard hand copies (display name, icon asset, section/free-tier sets).
+1. Enumerate canonical identities from `RAW_BUNDLED_PROVIDER_METADATA` — not dashboard labels or aliases.
+2. Keep every mirror in step: `BUNDLED_PROVIDER_IDS` + registered modules, `PROVIDER_CAPABILITIES` + `BUNDLED_PROVIDER_MODULES`, dashboard hand copies (display name, icon asset, section/free-tier sets).
 3. Exclude BYOK/custom providers and removed aliases.
-4. No file pins a provider *number*: the contract is set equality. Prove
-   coverage with `test/providers/default-registry.test.ts` and
-   `dashboard/test/provider-display-names-parity.test.ts` /
-   `dashboard/test/provider-lists-parity.test.ts`, and confirm no stale id
-   remains in any mirror.
+4. No file pins a provider *number*: the contract is set equality. Prove coverage with `test/providers/default-registry.test.ts` + `dashboard/test/provider-display-names-parity.test.ts` / `provider-lists-parity.test.ts`; confirm no stale id remains in any mirror.
 
-Evidence: report the identity source, the mirrors checked, the coverage test
-result, and any intentionally custom path retained.
+Evidence: identity source, mirrors checked, coverage test result, intentionally custom paths retained.
 
 ## K10 — Skill self-improvement
 
-Use after a cleanup review, rejected change, or newly discovered drift class.
+After a cleanup review, rejected change, or newly discovered drift class.
 
-1. Confirm the lesson is procedural/reusable, not a one-off implementation note.
-2. Search both consolidated skills before adding content; extend the closest
-   owner instead of creating another skill.
-3. State trigger, required check, failure mode, and expected evidence.
-4. Keep examples tied to current repository authorities and update `AGENTS.md`
-   only when the guard is a required repository rule.
+1. Lesson must be procedural/reusable, not a one-off implementation note.
+2. Search both consolidated skills before adding; extend the closest owner instead of creating another skill.
+3. State trigger, required check, failure mode, expected evidence.
+4. Keep examples tied to current repo authorities; update `AGENTS.md` only when the guard is a required repo rule.
 
-Evidence: report repeated failure/drift class, owning section, and why no
-competing skill exists.
+Evidence: repeated failure/drift class, owning section, why no competing skill exists.
 
 ## K11 — Proved deadness
 
-Use for every deletion, and for every guard or fallback branch proposed as
-redundant.
+Every deletion; every guard/fallback branch proposed as redundant.
 
-1. A symbol is not dead because grep finds only its declaration. Rule out
-   interface dispatch, callback fields, re-exports, dynamic imports, test
-   doubles, use inside its own declaring file, and dashboard copies.
-2. For a guard or probe, ask what the *other* arm does before calling it
-   defensive noise. A skipped transaction or advisory lock can be load-bearing
-   for a partially-implemented dependency.
-3. Prefer the experiment: delete, run `typecheck` and the directly affected
-   suites, and read the failure. Green output is evidence; a confident reading
-   is not.
-4. When a removal turns out to be wrong, restore it **with a comment stating why
-   it stays**. A silently restored guard invites the next agent to delete it
-   again.
+1. A symbol is not dead because grep finds only its declaration. Rule out interface dispatch, callback fields, re-exports, dynamic imports, test doubles, own-file use, dashboard copies.
+2. For a guard/probe, ask what the *other* arm does first. A skipped transaction or advisory lock can be load-bearing for a partially-implemented dependency.
+3. Prefer the experiment: delete, run `typecheck` + directly affected suites, read the failure. Green output is evidence; confident reading is not.
+4. Wrong removal → restore **with a comment stating why it stays**. A silent restore invites the next agent to delete it again.
 
-Evidence: report the call chain traced, the paths ruled out, and the
-typecheck/test output. A deletion claim without a traced chain is not evidence.
+Evidence: traced call chain, paths ruled out, typecheck/test output. A deletion claim without a traced chain is not evidence.
 
 ## Shared evidence format
 
@@ -252,7 +169,4 @@ Exceptions: <intentional compatibility/history, or none>
 
 ## Verification
 
-Run only checks relevant to the changed boundary first, then the repository
-baseline from the engineering skill. Never call a guard satisfied from prose
-alone; the evidence must come from current source, search results, generated
-artifacts, or executed checks.
+Run only the checks for the changed boundary first, then the repo baseline from the engineering skill. Never call a guard satisfied from prose alone — evidence comes from current source, search results, generated artifacts, or executed checks.

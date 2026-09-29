@@ -1,9 +1,6 @@
 # Contributing to Cartethyia
 
-Setup, workflow, and the checks your pull request must pass. This is the
-human-facing companion to `AGENTS.md` (agent repo rules) and `ARCHITECTURE.md`
-(code map) — those stay authoritative for their topics and are linked, not
-duplicated, below.
+Setup, workflow, and PR checks. Human-facing companion to `AGENTS.md` (agent rules) and `ARCHITECTURE.md` (code map) — authoritative for their topics, linked not duplicated.
 
 ## Prerequisites
 
@@ -34,24 +31,12 @@ Useful endpoints once running (`http://localhost:12800` by default):
 ```
 
 `bun run dev:backend` and `bun run dashboard:dev` run each half separately.
-`bun run dev` runs both side by side under `concurrently`: the backend is
-`bun run --hot src/main.ts` on `PORT` (default 12800) and the dashboard is the
-Vite dev server on port 5173. There is no supervisor and no in-place restart —
-a client that reaches the backend while it is restarting sees a refused
-connection. **CTRL+C** stops both processes.
-`VITE_BACKEND_URL` (see `.env.example`) points the Vite dev server at the
-backend. Production serving is covered in `README.md` (Docker Compose).
+`bun run dev` runs both under `concurrently`: backend `bun run --hot src/main.ts` on `PORT` (default 12800), dashboard Vite dev server on 5173. No supervisor, no in-place restart — a client hitting the backend mid-restart sees a refused connection. **CTRL+C** stops both.
+`VITE_BACKEND_URL` (see `.env.example`) points Vite at the backend. Production serving: `README.md` (Docker Compose).
 
 ## Running tests
 
-DB-dependent suites gate on `CARTETHYIA_TEST_DATABASE_URL` pointing at an
-**isolated** Postgres database (`test/helpers/db-gate.ts`): with the variable
-set they run, without it they skip with a `[db-gate] skipped` note. The same
-helper also routes the process at that database, because `getDb()` resolves
-`DATABASE_URL` — the gate overwrites it before any pool is opened. A DB suite
-therefore never touches your working database, and you do not need to align
-`DATABASE_URL` with the test URL by hand. Skips are expected locally — report
-them separately from failures in your PR.
+DB suites gate on `CARTETHYIA_TEST_DATABASE_URL` at an **isolated** Postgres DB (`test/helpers/db-gate.ts`): set → they run; unset → they skip with `[db-gate] skipped`. The same helper repoints the process at that database (`getDb()` resolves `DATABASE_URL`, the gate overwrites it before any pool opens) — a DB suite never touches your working database, no manual URL alignment needed. Skips are expected locally; report them separately from failures.
 
 ```bash
 bun run test                 # full backend suite (DB suites skip without the URL)
@@ -65,9 +50,9 @@ bun run scripts/ops-run-tests.ts test/providers/integrations/codex
 bun run dashboard:test        # dashboard suite (bun test inside dashboard/)
 ```
 
-## Verification gate (required before every PR)
+## Verification gate (before every PR)
 
-From `AGENTS.md` §12 — for a backend change:
+Backend change (from `AGENTS.md`):
 
 ```bash
 bun run typecheck
@@ -89,48 +74,26 @@ require Buf, vendor protobuf sources, or network access.
 
 ## Code conventions (short version)
 
-Full rules live in `AGENTS.md`. The points that most often bite new
-contributors:
+Full rules in `AGENTS.md`. What bites new contributors most:
 
-- `src/` is production code only — no `*.test.ts` there; tests live in
-  `test/` mirroring `src/`.
-- No `index.ts` barrels; import concrete files. `import type` for type-only
-  imports. Strict TypeScript: no `any`, no suppression directives, no
-  needless assertions; prefer `unknown` + narrowing at boundaries.
-- Entity directories use role filenames: `contracts.ts` (types + validation
-  + operations + routes), `routes.ts`, `store.ts`, `service.ts`, `errors.ts`.
-- `scripts/` is flat with role prefixes (`ops-*`, `build-*`, `ci-*`).
-- Comments explain policy, security, or non-obvious tradeoffs — not what the
-  next line does.
-- Tests assert observable behavior, boundaries, errors, transitions, or
-  security invariants — never implementation details or source text (unless
-  the contract is about a layout/config rule, like `test/architecture/`).
-- Never delete a test just because it is old or moved; replace lost contract
-  coverage when you remove one.
+- `src/` production only — no `*.test.ts`; tests in `test/` mirroring `src/`.
+- No `index.ts` barrels; concrete files. `import type` for types. Strict TS: no `any`, no suppressions, no needless assertions; `unknown` + narrowing at boundaries.
+- Entity dirs use role filenames: `contracts.ts` (types + validation + operations + routes), `routes.ts`, `store.ts`, `service.ts`, `errors.ts`.
+- `scripts/` flat, `ops-*` / `build-*` / `ci-*` prefixes.
+- Comments explain policy, security, non-obvious tradeoffs — not the next line.
+- Tests assert observable behavior, boundaries, errors, transitions, security invariants — never implementation details or source text (except layout/config contracts like `test/architecture/`).
+- Never delete a test for being old or moved; replace lost contract coverage when you remove one.
 
-- Each top-level `src/` folder documents its whole subtree in one layer doc
-  beside it, named for the layer (`src/transport/TRANSPORT.md`) — subfolders do
-  not carry their own; `ARCHITECTURE.md` is only the map linking to them. If your change adds a layer, route group, provider
-  capability, env var, or DB table, update the corresponding top-level doc
-  (and `.env.example` for env vars, `migrations/` + `src/persistence/schema.ts`
-  for tables). Adding or renaming a top-level folder doc also updates the
-  `ARCHITECTURE.md` table.
-- `README.md` + `.env.example` are product/runtime docs; `AGENTS.md` is
-  agent-only rules; `CHANGELOG.md` entries under `Unreleased` stay historical
-  once written. Keep all four synchronized with the source you change.
-- Anti-drift rules (what must change together, what must never be recorded
-  in docs, and what to do when doc and code disagree) live in `AGENTS.md` §13
-  "Documentation and configuration currency" — read that section before touching
-  any doc. Update the docs your change made wrong; do not rewrite a layer doc
-  you were not working in.
+- One layer doc per top-level `src/` folder beside it, named for the layer (`src/transport/TRANSPORT.md`) — subfolders carry none; `ARCHITECTURE.md` is only the map. A new layer, route group, provider capability, env var, or DB table updates the matching top-level doc (plus `.env.example` for env vars, `migrations/` + `schema.ts` for tables). Adding/renaming a top-level folder doc also updates the `ARCHITECTURE.md` table.
+- `README.md` + `.env.example` product/runtime; `AGENTS.md` agent rules; `CHANGELOG.md` entries under `Unreleased` stay historical once written. Keep all four in sync with the source you change.
+- Doc-drift rules (what changes together, what never goes in docs, code-vs-docs conflicts) live in `AGENTS.md` "Docs are part of the change" — read it before touching any doc. Update docs your change made wrong; don't rewrite a layer doc you weren't working in.
 
 ## Pull requests
 
 - Branch from `main`, keep the change focused, remove callers in the same
-  change (no compatibility shims — see `AGENTS.md` §6 "Clean cutover").
-- Fill in `.github/pull_request_template.md`: what changed, which gates you
-  ran, DB-gated skips vs failures, and which docs you updated.
-- Every privileged console mutation must end with audit + route-snapshot
+  change (no compat shims — see `AGENTS.md` "Clean cutover, no aliases").
+- Fill in `.github/pull_request_template.md`: what changed, gates run, DB-gated skips vs failures, docs updated.
+- Every privileged console mutation ends with audit + route-snapshot
   invalidation; every security layer stays fail-closed; telemetry stays
-  metadata-only and best-effort. The layer docs (`ARCHITECTURE.md` map)
-  explain each invariant where it applies.
+  metadata-only and best-effort. Layer docs (via the `ARCHITECTURE.md` map)
+  state each invariant where it applies.
