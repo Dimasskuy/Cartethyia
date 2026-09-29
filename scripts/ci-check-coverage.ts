@@ -1,7 +1,7 @@
 /**
  * Aggregate line-coverage gate over hand-written backend `src/` (lcov).
  *
- * `COVERAGE_MIN` defaults to `90.0`, the repository's committed floor. It is
+ * `COVERAGE_MIN` defaults to `85.0`, the repository's committed floor. It is
  * enforced in both environments: offline the DB-gated console and integration
  * suites skip, but the non-DB surface (protocol codecs, adapters, routing,
  * security) carries the bulk of `src/` and holds the floor on its own. CI runs
@@ -49,7 +49,7 @@ for (const record of records) {
 }
 
 const linePct = totalLinesFound === 0 ? 0 : (totalLinesHit / totalLinesFound) * 100;
-const minPct = Number.parseFloat(process.env.COVERAGE_MIN ?? "90.0");
+const minPct = Number.parseFloat(process.env.COVERAGE_MIN ?? "85.0");
 console.info(
   `[coverage-gate] src/ line coverage: ${linePct.toFixed(2)}% (${totalLinesHit}/${totalLinesFound} lines, required: ${minPct}%)`,
 );

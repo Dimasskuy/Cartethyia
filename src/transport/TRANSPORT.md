@@ -268,7 +268,7 @@ cannot fix, degrade the rest in a fixed least-impact order.
   string, a Chat `{image_url:{url}}` object, or an Anthropic `{source:{type:"base64"}}` object. Each wire builder therefore
   must **re-encode** the part into its own vocabulary rather than forward the payload. Forwarding it is what produced two
   classes of hard failure, both now pinned by
-  `test/protocol/provider-fidelity.test.ts` ("cross-protocol media survives every origin shape"):
+  `test/transport/surface/` adapters + `test/contracts/surface-parity.contract.test.ts`:
   a builder putting a foreign discriminator on the wire (an Anthropic block carrying `source.type: "input_image"`, which the
   provider rejects), and a builder putting a non-string where the wire requires one (an object as `image_url`, which the
   provider rejects with "expected an image URL, but got an object instead"). The single resolver is
@@ -616,7 +616,7 @@ payloads or stream envelopes interchangeable.
   the canonical part to the Responses part lifecycle.
 - **Modality re-encoding.** A canonical content part is an opaque origin payload and every builder
   re-encodes it through `resolveImageSource` / `splitDataUrl`. Cross-protocol coverage is pinned by
-  `test/protocol/provider-fidelity.test.ts`. Unsupported Messages audio cannot vanish silently: the
+  `test/transport/surface/messages.test.ts`. Unsupported Messages audio cannot vanish silently: the
   Messages schema defines no audio block, so `routeCapabilitiesFor` narrows audio to
   `AUDIO_CAPABLE_WIRE_FAMILIES` and the part degrades to a `[audio]` placeholder.
 

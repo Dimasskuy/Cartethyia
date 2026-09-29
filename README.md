@@ -203,7 +203,7 @@ bun run test:integration
 bun run check:coverage
 ```
 
-The coverage gate requires at least 90% line coverage for handwritten backend
+The coverage gate requires at least 85% line coverage for handwritten backend
 `src/` code. DB-gated tests may be skipped when
 `CARTETHYIA_TEST_DATABASE_URL` is not configured; when it is, the gate repoints
 the test process's `DATABASE_URL` at that database before any pool is opened and

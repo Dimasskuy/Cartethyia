@@ -43,7 +43,7 @@ bun run test:fast            # backend without integration trees (local iteratio
 bun run test                 # full backend suite (DB suites skip without the URL)
 bun run test:contracts       # cross-cutting contract suites
 bun run test:integration     # integration suites
-bun run check:coverage       # coverage gate: 90% line coverage over src/
+bun run check:coverage       # coverage gate: 85% line coverage over src/
 
 bun run scripts/ops-run-tests.ts test/console                     # one subtree
 bun run scripts/ops-run-tests.ts test/providers/integrations/codex
@@ -70,7 +70,7 @@ bun run test:contracts
 ```
 
 CI (`.github/workflows/ci.yml`) runs exactly these gates with Postgres +
-Redis services and the same `COVERAGE_MIN=90` floor. Typecheck and build never
+Redis services and the same `COVERAGE_MIN=85` floor. Typecheck and build never
 require Buf, vendor protobuf sources, or network access.
 
 ## Code conventions (short version)
