@@ -742,6 +742,7 @@ export class DrizzleProviderCatalogStore implements ProviderCatalogStore {
             credentialKind: request.credentialKind,
             maxInflight: null,
             status: "active",
+            ...(request.authState === undefined ? {} : { authState: request.authState }),
           })
           .returning();
         const row = rows[0];

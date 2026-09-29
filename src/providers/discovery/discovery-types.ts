@@ -20,6 +20,12 @@ interface ModelDiscoveryContext {
   readonly baseUrl: string;
   readonly credential: string;
   readonly fetcher?: typeof fetch;
+  /**
+   * Non-secret per-account auth configuration of the account whose credential
+   * is being used. A provider whose model catalog is region- or profile-scoped
+   * needs it to build the request; most ignore it.
+   */
+  readonly authState?: Readonly<Record<string, unknown>> | undefined;
 }
 
 /** Provider-owned model discovery boundary. */

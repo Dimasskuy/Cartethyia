@@ -15,6 +15,7 @@ import { fetchProviderQuota } from "../../providers/quota/quota-support";
 import type { FetchLike, ProviderQuotaResult } from "../../providers/quota/quota-contracts";
 import type { ProviderId, ProviderRegistry } from "../../providers/provider-registry";
 import { GLOBAL_QUOTA_LENS, setCachedQuota } from "./cache";
+import { record } from "../../providers/authentication/oauth-flow-store";
 
 /** Why an account quota refresh failed; `null` means the fetch succeeded. */
 export type QuotaRefreshFailureCode = "missing_credential" | "quota_fetch_failed";
@@ -130,6 +131,11 @@ export interface QuotaRefreshTarget {
    * lines can name the account instead of dumping a uuid.
    */
   readonly label?: string | null;
+  /**
+   * Non-secret per-account auth configuration. A collector whose billing
+   * surface is region- or profile-scoped needs it; most ignore it.
+   */
+  readonly authState?: unknown;
 }
 
 /** Cache lens an account's quota belongs under. */
@@ -142,6 +148,7 @@ const TARGET_COLUMNS = {
   tenantId: providerAccounts.tenantId,
   credentialKind: providerAccounts.credentialKind,
   label: providerAccounts.label,
+  authState: providerAccounts.authState,
 };
 
 /**
@@ -255,7 +262,13 @@ async function runQuotaRefresh(
         ? (deps.markApiKeyCredential?.(target.providerId, credential) ?? credential)
         : credential;
     try {
-      quota = await fetchProviderQuota(deps.providerRegistry, target.providerId, marked, fetcher);
+      const authState = record(target.authState);
+      quota = await fetchProviderQuota(deps.providerRegistry, target.providerId, marked, fetcher, {
+        ...(authState === undefined ? {} : { auth_state: authState }),
+        ...(target.credentialKind === null || target.credentialKind === undefined
+          ? {}
+          : { credential_kind: target.credentialKind }),
+      });
     } catch (error) {
       quota = {
         source: target.providerId,

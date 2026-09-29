@@ -115,6 +115,13 @@ export interface ResolvedCredential {
   readonly secret?: Uint8Array | undefined;
   /** Operator-configured outbound headers, filtered by the owning adapter. */
   readonly custom_headers?: Readonly<Record<string, string>> | undefined;
+  /**
+   * Per-account upstream auth configuration that is not a secret — auth method,
+   * region, profile ARN, OAuth client id, token endpoint. Carried beside the
+   * secret because the request an adapter builds depends on it and a single
+   * opaque credential string cannot express both. Never holds secrets.
+   */
+  readonly auth_state?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export function readCredentialSecret(credential: ResolvedCredential, errorMessage?: string): string {
@@ -135,12 +142,28 @@ export type ValidatedOutboundFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+/** Provider WebSocket session over validated WSS egress. */
+export interface ProviderWebSocketSession {
+  send(message: string): void;
+  receive(signal: AbortSignal): Promise<string>;
+  close(code?: number, reason?: string): void;
+}
+
+/** WSS connector bound to the request's selected network-pool slot. */
+export type ValidatedOutboundWebSocket = (
+  url: URL,
+  headers: Readonly<Record<string, string>>,
+  signal: AbortSignal,
+) => Promise<ProviderWebSocketSession>;
+
 /** Context passed from routing to a provider adapter. */
 export interface ProviderDispatchContext {
   readonly credential: ResolvedCredential;
   readonly deadline: number;
   readonly abort_signal: AbortSignal;
   readonly outbound_fetch?: ValidatedOutboundFetch | undefined;
+  /** Validated WSS egress bound to the same selected network pool as HTTP. */
+  readonly outbound_websocket?: ValidatedOutboundWebSocket | undefined;
   /** Built-in API-key route-selected fallback User-Agent; custom providers leave this unset. */
   readonly user_agent?: string | undefined;
   /** Original inbound headers needed only for provider-specific negotiation. */
@@ -531,6 +554,8 @@ export interface CredentialAlternative {
   readonly token_envelope?: TokenEnvelope | undefined;
   /** Health/expiry/quota result from the account control plane. */
   readonly usable?: boolean | undefined;
+  /** Non-secret per-account upstream auth configuration; see `ResolvedCredential`. */
+  readonly auth_state?: Readonly<Record<string, unknown>> | undefined;
 }
 
 /** Result of ordered credential selection, with no client-auth fields. */
@@ -561,6 +586,7 @@ export class CredentialResolver {
             provider_id: providerId,
             ...(alternative.account_id === undefined ? {} : { account_id: alternative.account_id }),
             credential_kind: "none",
+            ...(alternative.auth_state === undefined ? {} : { auth_state: alternative.auth_state }),
           },
           alternative_index: alternativeIndex,
         };
@@ -573,6 +599,7 @@ export class CredentialResolver {
           ...(alternative.account_id === undefined ? {} : { account_id: alternative.account_id }),
           credential_kind: alternative.credential_kind,
           secret,
+          ...(alternative.auth_state === undefined ? {} : { auth_state: alternative.auth_state }),
         },
         alternative_index: alternativeIndex,
       };

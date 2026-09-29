@@ -330,6 +330,12 @@ export interface CreateProviderAccountRequest {
   label?: string;
   credentialKind: CredentialKind;
   secret: string;
+  /**
+   * Non-secret upstream auth configuration for this account — auth method,
+   * region, the upstream profile it is bound to. Optional: most providers
+   * dispatch with the secret alone.
+   */
+  authState?: Readonly<Record<string, unknown>>;
 }
 /** Patch accepted when editing or revoking an existing account. */
 export interface UpdateProviderAccountRequest {
@@ -377,10 +383,10 @@ export interface ProviderAccountResponse {
   createdAt: string;
 }
 /**
- * Plaintext export of one account, including the decrypted credential.
+ * Plaintext export of one account's decrypted provider tokens.
  *
- * Deliberately distinct from `ProviderAccountResponse` (which never carries a
- * secret): only the export endpoint returns this shape, and the dashboard
+ * Deliberately distinct from `ProviderAccountResponse` (which never carries
+ * credentials): only the export endpoint returns this shape, and the dashboard
  * downloads it as a JSON file rather than rendering it.
  */
 export interface ProviderAccountExport {
@@ -389,8 +395,10 @@ export interface ProviderAccountExport {
   label: string;
   credentialKind: CredentialKind;
   status: string;
-  /** Decrypted credential; `""` when the account has none or resolution failed. */
-  secret: string;
+  /** Decrypted provider access credential; empty only when resolution failed. */
+  accessToken: string;
+  /** Decrypted OAuth refresh token, omitted when the account has none. */
+  refreshToken?: string;
   createdAt: string;
   /** Live routing admission count at export time; absent when unavailable. */
   inflight?: number;
@@ -409,6 +417,23 @@ export interface UpdateProviderRequest {
   baseUrl?: string;
   compatibilityProfile?: CompatibilityProfile;
 }
+/**
+ * One operator-supplied value a login needs.
+ *
+ * Mirrors the registry's own field descriptor rather than importing it: this is
+ * the browser-facing contract, and the dashboard must not depend on the
+ * provider layer to render a form.
+ */
+export interface ProviderLoginField {
+  readonly key: string;
+  readonly label: string;
+  readonly placeholder?: string;
+  readonly secret?: boolean;
+  readonly required?: boolean;
+  readonly options?: readonly { readonly value: string; readonly label: string }[];
+  readonly defaultValue?: string;
+}
+
 export interface ProviderResponse {
   providerId: string;
   label?: string;
@@ -431,7 +456,21 @@ export interface ProviderResponse {
   createdAt?: string;
   updatedAt?: string;
   /** Populated from the registered OAuth login clients — undefined means no live OAuth client. */
-  oauthFlows?: { readonly browser: boolean; readonly device: boolean };
+  oauthFlows?: {
+    readonly browser: boolean;
+    readonly device: boolean;
+    /**
+     * The client can complete a login from pasted credential material, so the
+     * console offers an import path alongside the redirect and device flows.
+     */
+    readonly import: boolean;
+    /** Fields the browser flow must collect before it starts. */
+    readonly browserLoginFields: readonly ProviderLoginField[];
+    /** Fields the device flow must collect before it starts. */
+    readonly deviceLoginFields: readonly ProviderLoginField[];
+    /** Fields the import flow needs. */
+    readonly importFields: readonly ProviderLoginField[];
+  };
   /** Whether the provider supports dynamic model discovery. Custom providers always support it. */
   supportsModelDiscovery: boolean;
   /** Default wire family for this provider's models — the family the operator

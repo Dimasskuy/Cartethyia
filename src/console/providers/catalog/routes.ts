@@ -69,6 +69,7 @@ const createAccountBody = t.Object({
   label: t.Optional(t.String()),
   credentialKind: literalUnion(CREDENTIAL_KINDS),
   secret: t.String(),
+  authState: t.Optional(t.Record(t.String(), t.Unknown())),
 });
 const updateAccountBody = t.Object({
   label: t.Optional(t.String()),

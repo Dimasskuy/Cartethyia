@@ -19,6 +19,8 @@ export interface QuotaWindow {
   readonly resetsAt: string | null;
   readonly used?: number | null;
   readonly limit?: number | null;
+  /** Absolute remaining credits/value when the source does not report a percentage. */
+  readonly remaining?: number | null;
   readonly recurring?: boolean;
 }
 

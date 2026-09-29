@@ -8,6 +8,8 @@ export interface ProviderQuotaWindow {
   readonly resetsAt: string | null;
   readonly used?: number | null;
   readonly limit?: number | null;
+  /** Absolute remaining credits/value when the upstream reports it. */
+  readonly remaining?: number | null;
   /** False means the timestamp is a hard expiry rather than a recurring reset. */
   readonly recurring?: boolean;
 }

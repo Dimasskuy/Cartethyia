@@ -484,9 +484,10 @@ export class ProviderProbingService {
       const resolver = await this.providerRegistry.resolveModelDiscovery(providerId);
       if (resolver) {
         const requiresCredential = this.providerRegistry.modelDiscoveryRequiresCredential(providerId);
-        const secret = requiresCredential
-          ? await this.usableAccountSecret(tenantId, providerId)
-          : "";
+        const account = requiresCredential
+          ? await this.usableAccount(tenantId, providerId)
+          : undefined;
+        const secret = account?.secret;
         if (requiresCredential && secret === undefined) {
           throw new GatewayError(
             "invalid_request",
@@ -502,6 +503,7 @@ export class ProviderProbingService {
             baseUrl: effectiveBaseUrl,
             credential: secret ?? "",
             ...(discoveryFetch ? { fetcher: discoveryFetch } : {}),
+            ...(account?.authState === undefined ? {} : { authState: account.authState }),
           });
         } catch (error) {
           throw new GatewayError(
@@ -728,6 +730,18 @@ export class ProviderProbingService {
     tenantId: string,
     providerId: string,
   ): Promise<string | undefined> {
+    return (await this.usableAccount(tenantId, providerId))?.secret;
+  }
+
+  /**
+   * The account a credential-scoped discovery will use, with its non-secret
+   * auth configuration. Selection is unchanged — first usable row, preferring a
+   * tenant-owned one — so discovery and dispatch agree on which account answered.
+   */
+  private async usableAccount(
+    tenantId: string,
+    providerId: string,
+  ): Promise<{ readonly secret: string; readonly authState?: Readonly<Record<string, unknown>> } | undefined> {
     const rows = await this.db
       .select()
       .from(providerAccounts)
@@ -746,7 +760,11 @@ export class ProviderProbingService {
       )
       .sort((left, right) => Number(right.tenantId !== null) - Number(left.tenantId !== null))[0];
     if (!usable?.credentialCiphertext) return undefined;
-    return decryptCredentialToString(usable.credentialCiphertext);
+    const authState = isRecord(usable.authState) ? usable.authState as Readonly<Record<string, unknown>> : undefined;
+    return {
+      secret: decryptCredentialToString(usable.credentialCiphertext),
+      ...(authState === undefined ? {} : { authState }),
+    };
   }
 
   /**

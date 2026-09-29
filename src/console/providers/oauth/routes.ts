@@ -58,6 +58,8 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
     );
     const credentialCiphertext = encryptCredential(input.access);
     const refreshCiphertext = encryptCredential(input.refresh);
+    const clientSecretCiphertext =
+      input.client_secret === undefined ? undefined : encryptCredential(input.client_secret);
     try {
       return await this.db.transaction(async (tx) => {
         const existing = await tx
@@ -87,11 +89,18 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
               lastErrorCategory: null,
               lastErrorAt: null,
               lastRecoveredAt: null,
+              // Only what this login reported: a flow that learned no profile or
+              // region leaves the stored configuration alone rather than blanking it.
+              ...(input.auth_state === undefined ? {} : { authState: input.auth_state }),
             })
             .where(eq(providerAccounts.id, existingId));
           await tx
             .update(providerOauthStates)
-            .set({ refreshCiphertext, expiresAt: input.expiresAt })
+            .set({
+              refreshCiphertext,
+              expiresAt: input.expiresAt,
+              ...(clientSecretCiphertext === undefined ? {} : { clientSecretCiphertext }),
+            })
             .where(eq(providerOauthStates.providerAccountId, existingId));
           return { accountId: existingId };
         }
@@ -105,6 +114,7 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
             credentialCiphertext,
             credentialFingerprint,
             status: "active",
+            ...(input.auth_state === undefined ? {} : { authState: input.auth_state }),
           })
           .returning({ id: providerAccounts.id });
         const row = rows[0];
@@ -113,6 +123,7 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
           providerAccountId: row.id,
           refreshCiphertext,
           expiresAt: input.expiresAt,
+          ...(clientSecretCiphertext === undefined ? {} : { clientSecretCiphertext }),
         });
         return { accountId: row.id };
       });
@@ -334,6 +345,7 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
         access: AccessDecision | undefined,
         providerId: string,
         accountLabel: string,
+        parameters?: Readonly<Record<string, string>>,
       ): Promise<{ authorizeUrl: string; state: string }> {
         const a = requireScope(access, "dashboard:write");
         const client = await requireClient(config.providerRegistry, providerId);
@@ -375,6 +387,7 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
           accountLabel,
           tenantId: a.tenantId,
           redirectUri,
+          ...(parameters === undefined ? {} : { parameters }),
         });
         // Bind the redirect's loopback port before handing the URL out. The
         // advertised URI names the operator's own machine, so a login that only
@@ -382,7 +395,15 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
         // in the address bar. Registering here is what makes the redirect
         // deliver itself; a non-loopback redirect (a custom scheme, a remote
         // host) returns false and keeps the manual path.
-        return { authorizeUrl: client.buildAuthorizeUrl({ state, codeChallenge, redirectUri }), state };
+        return {
+          authorizeUrl: client.buildAuthorizeUrl({
+            state,
+            codeChallenge,
+            redirectUri,
+            ...(parameters === undefined ? {} : { parameters }),
+          }),
+          state,
+        };
       },
     async handleCallback(
         providerId: string,
@@ -410,6 +431,7 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
         access: AccessDecision | undefined,
         providerId: string,
         accountLabel: string,
+        parameters?: Readonly<Record<string, string>>,
       ): Promise<{
         verificationUri: string;
         userCode: string;
@@ -430,6 +452,7 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
           providerId,
           tenantId: a.tenantId,
           accountLabel,
+          ...(parameters === undefined ? {} : { parameters }),
         });
         const { providerState, ...publicStarted } = started;
         await config.oauthFlowStore.saveDevice(started.deviceAuthId, {
@@ -437,6 +460,7 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
           accountLabel,
           tenantId: a.tenantId,
           ...(providerState === undefined ? {} : { providerState }),
+          ...(parameters === undefined ? {} : { parameters }),
         });
         return publicStarted;
       },
@@ -469,6 +493,7 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
           ...(correlation.providerState === undefined
             ? {}
             : { providerState: correlation.providerState }),
+          ...(correlation.parameters === undefined ? {} : { parameters: correlation.parameters }),
         });
         if (polled.status === "pending")
           return {
@@ -518,6 +543,45 @@ export function createOAuthLoginOperations(config: OAuthLoginConfig) {
         await config.snapshotInvalidator?.invalidate();
         return { status: "complete", accountId: persisted.accountId };
       },
+    async importCredential(
+        access: AccessDecision | undefined,
+        providerId: string,
+        accountLabel: string,
+        credential: string,
+        fields: Readonly<Record<string, string>>,
+      ): Promise<{ accountId: string }> {
+        const a = requireScope(access, "dashboard:write");
+        const client = await requireClient(config.providerRegistry, providerId);
+        if (typeof client.importCredential !== "function") {
+          throw new ConsoleDomainError(
+            "import_not_supported",
+            409,
+            `Provider ${providerId} does not accept an imported credential`,
+            { providerId },
+          );
+        }
+        // The client validates the material against the upstream before this
+        // returns, so nothing that never worked reaches the account table.
+        const result = await client.importCredential({ credential, fields });
+        const tokenCheck = await validateIssuedAccessToken(
+          result.access,
+          providerJwtVerification(providerId),
+        );
+        if (!tokenCheck.valid) {
+          throw new ConsoleDomainError(
+            "oauth_token_invalid",
+            400,
+            `Provider ${providerId} returned an access token that failed validation (${tokenCheck.reason})`,
+            { providerId },
+          );
+        }
+        const persisted = await config.accountStore.persistAccount(a.tenantId, providerId, {
+          label: result.accountLabel ?? accountLabel,
+          ...result,
+        });
+        await config.snapshotInvalidator?.invalidate();
+        return { accountId: persisted.accountId };
+      },
   };
   return operations;
 }
@@ -528,15 +592,32 @@ function oauthErrorResponse(error: unknown, set: { status?: number | string }) {
   });
 }
 
-const accountLabelBody = t.Optional(t.Object({ accountLabel: t.Optional(t.String()) }));
+const startBody = t.Optional(
+  t.Object({
+    accountLabel: t.Optional(t.String()),
+    /**
+     * Provider-specific start inputs the dashboard collected, such as the
+     * organization URL or region for a device flow. Providers that need none
+     * ignore the field.
+     */
+    parameters: t.Optional(t.Record(t.String(), t.String())),
+  }),
+);
 const devicePollBody = t.Object({ deviceAuthId: t.String() });
+const importBody = t.Object({
+  /** The pasted credential material: a token, a key, or an exported auth blob. */
+  credential: t.String(),
+  /** Values for the fields the provider declared under `oauthFlows.importFields`. */
+  fields: t.Optional(t.Record(t.String(), t.String())),
+  accountLabel: t.Optional(t.String()),
+});
 
 export function createOAuthLoginRoutes(config: OAuthLoginConfig): Elysia {
   const factory = createOAuthLoginOperations(config);
   return new Elysia({ prefix: "/providers" })
     .post(
       "/:providerId/oauth/authorize",
-      { body: accountLabelBody },
+      { body: startBody },
       async ({ request, params, body, set }) => {
         try {
           set.status = 201;
@@ -544,6 +625,7 @@ export function createOAuthLoginRoutes(config: OAuthLoginConfig): Elysia {
             config.accessResolver(request),
             params.providerId,
             body?.accountLabel ?? params.providerId,
+            body?.parameters,
           );
         } catch (e) {
           return oauthErrorResponse(e, set);
@@ -565,7 +647,7 @@ export function createOAuthLoginRoutes(config: OAuthLoginConfig): Elysia {
     })
     .post(
       "/:providerId/oauth/device/start",
-      { body: accountLabelBody },
+      { body: startBody },
       async ({ request, params, body, set }) => {
         try {
           set.status = 201;
@@ -573,6 +655,7 @@ export function createOAuthLoginRoutes(config: OAuthLoginConfig): Elysia {
             config.accessResolver(request),
             params.providerId,
             body?.accountLabel ?? params.providerId,
+            body?.parameters,
           );
         } catch (e) {
           return oauthErrorResponse(e, set);
@@ -588,6 +671,24 @@ export function createOAuthLoginRoutes(config: OAuthLoginConfig): Elysia {
             config.accessResolver(request),
             params.providerId,
             body.deviceAuthId,
+          );
+        } catch (e) {
+          return oauthErrorResponse(e, set);
+        }
+      },
+    )
+    .post(
+      "/:providerId/oauth/import",
+      { body: importBody },
+      async ({ request, params, body, set }) => {
+        try {
+          set.status = 201;
+          return await factory.importCredential(
+            config.accessResolver(request),
+            params.providerId,
+            body.accountLabel ?? params.providerId,
+            body.credential,
+            body.fields ?? {},
           );
         } catch (e) {
           return oauthErrorResponse(e, set);

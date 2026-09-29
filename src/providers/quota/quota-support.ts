@@ -40,10 +40,26 @@ export async function probeApiKeyConnectivity(
   return { source, plan: null, windows: [], error: null };
 }
 
+/**
+ * What a quota collector is told about the account whose quota it reads.
+ *
+ * Most collectors need only the credential. A provider whose billing surface is
+ * region-scoped or profile-scoped needs the account's own configuration too,
+ * and threading it as a second string would be indistinguishable from the
+ * credential — so it is passed as structured context instead.
+ */
+export interface QuotaCollectionContext {
+  /** Non-secret per-account auth configuration, as stored on the account. */
+  readonly auth_state?: Readonly<Record<string, unknown>> | undefined;
+  /** Stored credential kind, for surfaces that differ per auth family. */
+  readonly credential_kind?: "api_key" | "oauth" | "none" | undefined;
+}
+
 /** Provider quota callback supplied by the canonical provider registry. */
 export type QuotaFetcher = (
   credential: string,
   fetcher: FetchLike,
+  context?: QuotaCollectionContext,
 ) => Promise<ProviderQuotaResult>;
 
 /** Dispatches quota collection through the provider's canonical definition. */
@@ -52,12 +68,13 @@ export async function fetchProviderQuota(
   providerId: string,
   credential: string,
   fetcher: FetchLike = fetch,
+  context?: QuotaCollectionContext,
 ): Promise<ProviderQuotaResult> {
   try {
     const canonicalId = resolveProviderId(providerId);
     const handler = await registry.resolveQuotaCollector(canonicalId);
     if (handler === undefined) return unsupportedQuota(providerId);
-    return await handler(credential, fetcher);
+    return await handler(credential, fetcher, context);
   } catch (error) {
     return { source: providerId, plan: null, windows: [], error: cleanError(error) };
   }
