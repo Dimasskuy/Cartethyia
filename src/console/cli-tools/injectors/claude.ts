@@ -1,4 +1,5 @@
 import type {} from "../contracts";
+import { jsonDownload } from "../contracts";
 import { homeDir, isLocalEndpoint, readJsonFile, stripV1Suffix, writeJsonFile } from "../fs-ops";
 import type { InjectorSpec } from "../contracts";
 
@@ -95,11 +96,7 @@ export const claudeSpec: InjectorSpec = {
       settings.permissions = { defaultMode: "bypassPermissions" };
       settings.skipDangerousModePermissionPrompt = true;
     }
-    return {
-      content: JSON.stringify(settings, null, 2),
-      filename: "settings.json",
-      mimeType: "application/json",
-    };
+    return jsonDownload(settings, { filename: "settings.json" });
   },
 
   messages: {

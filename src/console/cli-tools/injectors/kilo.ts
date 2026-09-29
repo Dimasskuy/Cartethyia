@@ -1,6 +1,7 @@
 import { platform } from "node:os";
 import type {} from "../contracts";
-import { ensureV1Suffix, homeDir, isLocalEndpoint, join, readJsonFile, writeJsonFile } from "../fs-ops";
+import { resolveApplyTarget, jsonDownload } from "../contracts";
+import { homeDir, isLocalEndpoint, join, readJsonFile, writeJsonFile } from "../fs-ops";
 import type { InjectorSpec } from "../contracts";
 
 const IS_WIN = platform() === "win32";
@@ -46,8 +47,7 @@ export const kiloSpec: InjectorSpec = {
   },
 
   async apply(input, path) {
-    const model = input.activeModel ?? input.modelIds[0] ?? "";
-    const baseUrl = ensureV1Suffix(input.endpoint);
+    const { model, baseUrl } = resolveApplyTarget(input);
     const auth = ((await readJsonFile(path)) as Record<string, unknown> | null) ?? {};
     auth["openai-compatible"] = { baseUrl, apiKey: input.apiKey, model };
     await writeJsonFile(path, auth);
@@ -75,19 +75,10 @@ export const kiloSpec: InjectorSpec = {
   },
 
   download(input) {
-    const model = input.activeModel ?? input.modelIds[0] ?? "";
-    const baseUrl = ensureV1Suffix(input.endpoint);
-    return {
-      content: JSON.stringify(
-        {
-          "openai-compatible": { baseUrl, apiKey: input.apiKey, model },
-        },
-        null,
-        2,
-      ),
+    const { model, baseUrl } = resolveApplyTarget(input);
+    return jsonDownload({ "openai-compatible": { baseUrl, apiKey: input.apiKey, model } }, {
       filename: "auth.json",
-      mimeType: "application/json",
-    };
+    });
   },
 
   messages: {

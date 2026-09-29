@@ -1,5 +1,6 @@
 import { platform } from "node:os";
 import type {} from "../contracts";
+import { jsonDownload } from "../contracts";
 import { fileExists, homeDir, join, readJsonFile, writeJsonFile } from "../fs-ops";
 import type { InjectorSpec } from "../contracts";
 
@@ -52,11 +53,7 @@ export const coworkSpec: InjectorSpec = {
 
   download(input) {
     void input;
-    return {
-      content: JSON.stringify({ managedServers: {} }, null, 2),
-      filename: "_meta.json",
-      mimeType: "application/json",
-    };
+    return jsonDownload({ managedServers: {} }, { filename: "_meta.json" });
   },
 
   messages: {

@@ -1,4 +1,5 @@
 import type {} from "../contracts";
+import { resolveApplyTarget } from "../contracts";
 import { ensureV1Suffix, homeDir, isLocalEndpoint, readTextFile, textGet, textHas, textRemove, textUpsert, writeTextFile } from "../fs-ops";
 import type { InjectorSpec } from "../contracts";
 
@@ -54,8 +55,7 @@ export const deepseekTuiSpec: InjectorSpec = {
   },
 
   download(input) {
-    const model = input.activeModel ?? input.modelIds[0] ?? "";
-    const baseUrl = ensureV1Suffix(input.endpoint);
+    const { model, baseUrl } = resolveApplyTarget(input);
     const content = [
       `provider = "openai"`,
       "",

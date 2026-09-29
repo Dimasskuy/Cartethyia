@@ -1,4 +1,5 @@
 import type {} from "../contracts";
+import { jsonDownload } from "../contracts";
 import { ensureV1Suffix, homeDir, readJsonFile, writeJsonFile } from "../fs-ops";
 import type { InjectorSpec } from "../contracts";
 
@@ -84,11 +85,7 @@ export const droidSpec: InjectorSpec = {
       apiKey,
       provider: "openai",
     }));
-    return {
-      content: JSON.stringify({ customModels }, null, 2),
-      filename: "settings.json",
-      mimeType: "application/json",
-    };
+    return jsonDownload({ customModels }, { filename: "settings.json" });
   },
 
   messages: {

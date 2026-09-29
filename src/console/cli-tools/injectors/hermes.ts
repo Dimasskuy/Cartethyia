@@ -1,5 +1,6 @@
 import type {} from "../contracts";
-import { ensureV1Suffix, homeDir, isLocalEndpoint, readTextFile, textGet, textRemove, textUpsert, writeTextFile } from "../fs-ops";
+import { resolveApplyTarget, textDownload } from "../contracts";
+import { homeDir, isLocalEndpoint, readTextFile, textGet, textRemove, textUpsert, writeTextFile } from "../fs-ops";
 import type { InjectorSpec } from "../contracts";
 
 
@@ -49,8 +50,7 @@ export const hermesSpec: InjectorSpec = {
   },
 
   async apply(input, path) {
-    const model = input.activeModel ?? input.modelIds[0] ?? "";
-    const baseUrl = ensureV1Suffix(input.endpoint);
+    const { model, baseUrl } = resolveApplyTarget(input);
     const block = `model:\n  default: "${model}"\n  provider: "custom"\n  base_url: "${baseUrl}"\n`;
 
     let yaml = (await readTextFile(path)) ?? "";
@@ -85,15 +85,12 @@ export const hermesSpec: InjectorSpec = {
   },
 
   download(input) {
-    const model = input.activeModel ?? input.modelIds[0] ?? "";
-    const baseUrl = ensureV1Suffix(input.endpoint);
+    const { model, baseUrl } = resolveApplyTarget(input);
     const yaml = `model:\n  default: "${model}"\n  provider: "custom"\n  base_url: "${baseUrl}"\n`;
     const envFile = `OPENAI_API_KEY=${input.apiKey}\n`;
-    return {
-      content: `# ~/.hermes/config.yaml\n${yaml}\n# ~/.hermes/.env\n${envFile}`,
+    return textDownload(`# ~/.hermes/config.yaml\n${yaml}\n# ~/.hermes/.env\n${envFile}`, {
       filename: "hermes-config.txt",
-      mimeType: "text/plain",
-    };
+    });
   },
 
   messages: {

@@ -344,6 +344,18 @@ synthesizes `getStatus()` on top of `readStatus`. Optional members the existing 
 `resolveDir`, and `messages`. The `InjectorSpec`, `ToolStatus`, and `ApplyInput` shapes are declared
 in `cli-tools/contracts.ts`; read them there rather than a second copy.
 
+Three helpers cover what every spec used to write by hand, so a new tool declares only what is
+actually specific to it:
+
+- `resolveApplyTarget(input)` — the active model plus the `/v1`-suffixed endpoint. Nearly every
+  `apply` and `download` opened with those two lines, which is how one tool could drift from
+  another on which model wins.
+- `jsonDownload(value, { filename })` / `textDownload(content, { filename, mimeType })` — the
+  `{ content, filename, mimeType }` triple most `download()` implementations returned.
+
+A spec that needs a different model choice (Codex reads `modelSlots.session` first) resolves it
+explicitly; the helpers are the default, not a straitjacket.
+
 `fs-ops.ts` is the injector's only filesystem surface, and it exports exactly:
 `homeDir`, `join`, `fileExists`, `readJsonFile`, `writeJsonFile`, `readTextFile`, `writeTextFile`,
 `ensureDir`, `removeFile`, `checkBinaryInstalled`, `ensureV1Suffix`, `stripV1Suffix`,

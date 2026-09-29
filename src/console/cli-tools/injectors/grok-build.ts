@@ -1,5 +1,6 @@
 import type {} from "../contracts";
-import { checkBinaryInstalled, ensureV1Suffix, homeDir, readTextFile, textGet, textHas, textRemove, textUpsert, writeTextFile } from "../fs-ops";
+import { resolveApplyTarget, textDownload } from "../contracts";
+import { checkBinaryInstalled, homeDir, readTextFile, textGet, textHas, textRemove, textUpsert, writeTextFile } from "../fs-ops";
 import type { InjectorSpec } from "../contracts";
 
 
@@ -37,8 +38,7 @@ export const grokBuildSpec: InjectorSpec = {
   },
 
   async apply(input, path) {
-    const model = input.activeModel ?? input.modelIds[0] ?? "";
-    const baseUrl = ensureV1Suffix(input.endpoint);
+    const { model, baseUrl } = resolveApplyTarget(input);
     let text = (await readTextFile(path)) ?? "";
     text = textUpsert(
       text,
@@ -56,14 +56,9 @@ export const grokBuildSpec: InjectorSpec = {
   },
 
   download(input) {
-    const model = input.activeModel ?? input.modelIds[0] ?? "";
-    const baseUrl = ensureV1Suffix(input.endpoint);
+    const { model, baseUrl } = resolveApplyTarget(input);
     const body = grokModelSectionBody(model, baseUrl, input.apiKey);
-    return {
-      content: `[model]\n${body}\n`,
-      filename: "grok-config.toml",
-      mimeType: "text/plain",
-    };
+    return textDownload(`[model]\n${body}\n`, { filename: "grok-config.toml" });
   },
 
   messages: {
