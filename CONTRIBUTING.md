@@ -39,6 +39,7 @@ Useful endpoints once running (`http://localhost:12800` by default):
 DB suites gate on `CARTETHYIA_TEST_DATABASE_URL` at an **isolated** Postgres DB (`test/helpers/db-gate.ts`): set → they run; unset → they skip with `[db-gate] skipped`. The same helper repoints the process at that database (`getDb()` resolves `DATABASE_URL`, the gate overwrites it before any pool opens) — a DB suite never touches your working database, no manual URL alignment needed. Skips are expected locally; report them separately from failures.
 
 ```bash
+bun run test:fast            # backend without integration trees (local iteration)
 bun run test                 # full backend suite (DB suites skip without the URL)
 bun run test:contracts       # cross-cutting contract suites
 bun run test:integration     # integration suites
@@ -47,7 +48,7 @@ bun run check:coverage       # coverage gate: 90% line coverage over src/
 bun run scripts/ops-run-tests.ts test/console                     # one subtree
 bun run scripts/ops-run-tests.ts test/providers/integrations/codex
 
-bun run dashboard:test        # dashboard suite (bun test inside dashboard/)
+bun run dashboard:test        # generate usage-periods once, then dashboard suite
 ```
 
 ## Verification gate (before every PR)

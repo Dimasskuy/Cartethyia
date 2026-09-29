@@ -17,24 +17,39 @@ import { resolve } from "node:path";
  * fixtures scope their cleanup by id or `tenant_id`. Callers that pass their
  * own `--parallel`/`--no-parallel` argument override the default.
  *
+ * `--fast` skips integration trees via `--path-ignore-patterns`.
+ *
  * Direct invocation: `bun test …` (identical behavior minus the test key env).
  */
 
 const projectRoot = resolve(import.meta.dir, "..");
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const fast = rawArgs.includes("--fast");
+const args = fast ? rawArgs.filter((arg) => arg !== "--fast") : rawArgs;
 const parallelArgs = args.some((arg) => arg.startsWith("--parallel") || arg === "--no-parallel")
   ? []
   : ["--parallel"];
+const fastIgnoreArgs = fast
+  ? [
+      "--path-ignore-patterns",
+      "test/integration/**",
+      "--path-ignore-patterns",
+      "**/*.integration.test.ts",
+    ]
+  : [];
 
-const proc = Bun.spawn(["bun", "test", "--timeout", "60000", ...parallelArgs, ...args], {
-  cwd: projectRoot,
-  env: {
-    ...process.env,
-    CARTETHYIA_ENCRYPTION_KEY:
-      process.env.CARTETHYIA_ENCRYPTION_KEY ??
-      "0000000000000000000000000000000000000000000000000000000000000000",
+const proc = Bun.spawn(
+  ["bun", "test", "--timeout", "60000", ...parallelArgs, ...fastIgnoreArgs, ...args],
+  {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      CARTETHYIA_ENCRYPTION_KEY:
+        process.env.CARTETHYIA_ENCRYPTION_KEY ??
+        "0000000000000000000000000000000000000000000000000000000000000000",
+    },
+    stdio: ["inherit", "inherit", "inherit"],
   },
-  stdio: ["inherit", "inherit", "inherit"],
-});
+);
 
 process.exitCode = await proc.exited;
