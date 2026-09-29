@@ -8,6 +8,7 @@
 import {
   createClientVersionResolver,
   isSemverish,
+  type ClientVersionFetcher,
   type ClientVersionResolver,
 } from "./client-version-resolver";
 
@@ -51,11 +52,72 @@ async function workbuddyDesktopVersion(response: Response): Promise<string | nul
   }
 }
 
+async function kiroVersion(response: Response): Promise<string | null> {
+  const body = await response.text();
+  const version =
+    /currentVersion["\\]*\s*:\s*["\\]*([\d.]+)/.exec(body)?.[1] ??
+    /\bIDE\s+([\d.]+)[^<]*Latest/.exec(body)?.[1];
+  return isSemverish(version) ? version : null;
+}
+
+/**
+ * Runtime SDK version stamped into the Kiro data-plane User-Agent.
+ *
+ * Pinned rather than discovered: the generation surface is served by the client
+ * the IDE ships, not by a release we can track, so the shipped build is the
+ * only source of truth. The agent compiles its generation client from
+ * `@aws/codewhisperer-streaming-client`, and that package's own version is the
+ * value the client stamps.
+ *
+ * How to rediscover it — take it from the shipped build, never from guesswork:
+ *   1. The IDE installer lives on the vendor's download feed, under a path that
+ *      repeats the version:
+ *      `https://prod.download.desktop.kiro.dev/releases/stable/win32-x64/signed/<v>/kiro-ide-<v>-stable-win32-x64.exe`
+ *   2. Unpack it. The exe's payload is an LZMA stream behind a 4-byte tag:
+ *      `7z x` the exe, drop the 4-byte tag from the extracted `[0]`, then
+ *      `7z x` that as LZMA.
+ *   3. In the unpacked payload, locate the agent bundle — the region defining
+ *      `getCodeWhispererStreamingClient` — and read the aliased package
+ *      metadata inside it: `"@aws/codewhisperer-streaming-client" … version:"x.y.z"`.
+ *      Use that one. One installer also embeds other bundles carrying older
+ *      copies of the same package, so a bare version match is not evidence.
+ *
+ * The discovery source below only supplies the *IDE* version that follows the
+ * `KiroIDE` device marker.
+ */
+const KIRO_RUNTIME_SDK_VERSION = "1.0.39";
+
+/**
+ * AWS SSO OIDC SDK version stamped into login and token-refresh User-Agents.
+ *
+ * Distinct from the runtime SDK above because the upstream sees them as two
+ * different AWS SDK clients: `oidc.{region}.amazonaws.com` is served by
+ * `aws-sdk-js` sso-oidc, while the generation surface reports the
+ * `codewhispererstreaming` client.
+ */
+const KIRO_SSO_SDK_VERSION = "3.980.0";
+
+/**
+ * Runtime segments the observed Kiro client reports.
+ *
+ * `win32#<build>` is the host Windows release, so it varies by machine and this
+ * is the shape a Windows 11 client produces.
+ *
+ * The `md/nodejs#` segment is the runtime the client executes under, not the
+ * host's Node: the IDE is an Electron app, so it is Electron's bundled Node.
+ * Rediscover both from the same unpacked payload — the app's `package.json`
+ * pins `"electron": "<version>"`, and that Electron release's metadata gives
+ * the Node version to stamp here.
+ */
+const KIRO_SYSTEM_VERSION = "win32#10.0.22631";
+/** Node version the observed Kiro client reports (Electron's bundled Node). */
+const KIRO_NODE_VERSION = "24.18.0";
+
 /** Ordered upstream sources and pinned fallbacks for every client version. */
 export const VERSION_SOURCES = {
   qoder: {
     key: "qoder",
-    fallback: "1.1.62",
+    fallback: "1.1.64",
     sources: [
       {
         url: "https://registry.npmjs.org/@qoder-ai/qodercli/latest",
@@ -65,12 +127,12 @@ export const VERSION_SOURCES = {
   },
   opencode: {
     key: "opencode",
-    fallback: "1.18.32",
+    fallback: "1.18.33",
     sources: [{ url: "https://registry.npmjs.org/opencode-ai/latest" }],
   },
   commandcode: {
     key: "commandcode",
-    fallback: "1.64.0",
+    fallback: "1.66.0",
     sources: [{ url: "https://registry.npmjs.org/command-code/latest" }],
   },
   grok: {
@@ -83,8 +145,8 @@ export const VERSION_SOURCES = {
   },
   clineClient: {
     key: "cline-client",
-    fallback: "4.1.20",
-    minVersion: "4.1.20",
+    fallback: "4.1.21",
+    minVersion: "4.1.21",
     sources: [
       {
         url: "https://raw.githubusercontent.com/cline/cline/main/apps/vscode/package.json",
@@ -94,12 +156,12 @@ export const VERSION_SOURCES = {
   },
   clineSdk: {
     key: "cline-sdk",
-    fallback: "0.0.85",
+    fallback: "0.0.86",
     sources: [{ url: "https://registry.npmjs.org/@cline/sdk/latest", extract: clineSdkVersion }],
   },
   codex: {
     key: "codex",
-    fallback: "0.156.1",
+    fallback: "0.158.0",
     sources: [{ url: "https://registry.npmjs.org/@openai/codex/latest" }],
   },
   workbuddyClient: {
@@ -118,7 +180,7 @@ export const VERSION_SOURCES = {
   },
   workbuddyCli: {
     key: "workbuddy",
-    fallback: "2.157.0",
+    fallback: "2.159.0",
     sources: [
       { url: "https://registry.npmjs.org/@tencent-ai/codebuddy-code/latest" },
       { url: "https://registry.npmmirror.com/@tencent-ai/codebuddy-code/latest" },
@@ -129,9 +191,14 @@ export const VERSION_SOURCES = {
     fallback: "1.52.0",
     sources: [{ url: "https://pypi.org/pypi/kimi-cli/json", extract: kimiVersion }],
   },
+  kiro: {
+    key: "kiro",
+    fallback: "1.1.70",
+    sources: [{ url: "https://kiro.dev/downloads/", extract: kiroVersion }],
+  },
   codebuddy: {
     key: "codebuddy",
-    fallback: "2.157.0",
+    fallback: "2.159.0",
     sources: [
       { url: "https://registry.npmjs.org/@tencent-ai/codebuddy-code/latest" },
       { url: "https://registry.npmmirror.com/@tencent-ai/codebuddy-code/latest" },
@@ -142,7 +209,7 @@ export const VERSION_SOURCES = {
     // Current `@anthropic-ai/claude-code` release, so the billing
     // `cc_version=` suffix and the `claude-cli/` User-Agent stay on what
     // upstream ships.
-    fallback: "2.1.280",
+    fallback: "2.1.283",
     sources: [{ url: "https://registry.npmjs.org/@anthropic-ai/claude-code/latest" }],
   },
   claudeSdk: {
@@ -172,6 +239,7 @@ const resolvers = {
   codebuddy: createClientVersionResolver(VERSION_SOURCES.codebuddy),
   claudeCli: createClientVersionResolver(VERSION_SOURCES.claudeCli),
   claudeSdk: createClientVersionResolver(VERSION_SOURCES.claudeSdk),
+  kiro: createClientVersionResolver(VERSION_SOURCES.kiro),
 } satisfies Record<keyof typeof VERSION_SOURCES, ClientVersionResolver>;
 
 export function getQoderVersion(): string {
@@ -375,4 +443,98 @@ export async function resolveClaudeSdkVersion(fetcher?: typeof fetch, signal?: A
 export function _resetClaudeVersionCache(version: string | null = null): void {
   resolvers.claudeCli.reset(version);
   resolvers.claudeSdk.reset(version);
+}
+
+export function getKiroVersion(): string {
+  return resolvers.kiro.get();
+}
+
+export async function resolveKiroVersion(fetcher?: ClientVersionFetcher, signal?: AbortSignal): Promise<string> {
+  await resolvers.kiro.ensure(fetcher, signal);
+  return getKiroVersion();
+}
+
+export function _resetKiroVersion(version: string | null = null): void {
+  resolvers.kiro.reset(version);
+}
+
+/**
+ * Builds the `x-amz-user-agent` companion header for the generation surface.
+ *
+ * The upstream pairs this with `user-agent` on every generation request; the
+ * short form carries the SDK identity and the `KiroIDE-{version}-{machineId}`
+ * device marker and nothing else.
+ */
+export function buildKiroAmzUserAgent(version = getKiroVersion(), machineId = ""): string {
+  return `aws-sdk-js/${KIRO_RUNTIME_SDK_VERSION} KiroIDE-${version}-${machineId}`;
+}
+
+/**
+ * Builds the full data-plane `user-agent`.
+ *
+ * Shape: SDK version, `ua/2.1`, the OS and node segments, the API and module
+ * markers, and the `KiroIDE-{version}-{machineId}` device marker. The device
+ * marker is the part the upstream correlates on, so it is never omitted — a
+ * blank machine id advertises the account as a device with no identity, which
+ * is a shape no real client produces.
+ */
+export function buildKiroUserAgent(version = getKiroVersion(), machineId = ""): string {
+  return (
+    `aws-sdk-js/${KIRO_RUNTIME_SDK_VERSION} ua/2.1 ` +
+    `os/${KIRO_SYSTEM_VERSION} lang/js md/nodejs#${KIRO_NODE_VERSION} ` +
+    `api/codewhispererstreaming#${KIRO_RUNTIME_SDK_VERSION} m/E ` +
+    `KiroIDE-${version}-${machineId}`
+  );
+}
+
+/**
+ * Builds the `x-amz-user-agent` companion for an AWS SSO OIDC request.
+ *
+ * The login and token-refresh surfaces are served by a different AWS SDK
+ * client, so they carry that client's version and no device marker — the
+ * observed client does not send one there.
+ */
+export function buildKiroSsoAmzUserAgent(): string {
+  return `aws-sdk-js/${KIRO_SSO_SDK_VERSION} KiroIDE`;
+}
+
+/** Builds the full `user-agent` for an AWS SSO OIDC request. */
+export function buildKiroSsoUserAgent(): string {
+  return (
+    `aws-sdk-js/${KIRO_SSO_SDK_VERSION} ua/2.1 ` +
+    `os/${KIRO_SYSTEM_VERSION} lang/js md/nodejs#${KIRO_NODE_VERSION} ` +
+    `api/sso-oidc#${KIRO_SSO_SDK_VERSION} m/E KiroIDE`
+  );
+}
+
+/**
+ * Builds the browser-shaped `user-agent` the vendor portal expects.
+ *
+ * The portal's approval endpoints are same-origin XHRs issued by the SSO start
+ * page, so they are only ever reached by a browser.
+ */
+export function buildKiroBrowserUserAgent(): string {
+  const platform = KIRO_SYSTEM_VERSION.split("#")[0];
+  const os =
+    platform === "darwin"
+      ? "Macintosh; Intel Mac OS X 10_15_7"
+      : platform === "linux"
+        ? "X11; Linux x86_64"
+        : "Windows NT 10.0; Win64; x64";
+  return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`;
+}
+
+/**
+ * Builds the `user-agent` the model-catalog and usage surfaces expect.
+ *
+ * Their observed client identifies as `codewhispererruntime` rather than
+ * `codewhispererstreaming`, and carries the `m/N,E` module marker.
+ */
+export function buildKiroRuntimeUserAgent(version = getKiroVersion(), machineId = ""): string {
+  return (
+    `aws-sdk-js/${KIRO_RUNTIME_SDK_VERSION} ua/2.1 ` +
+    `os/${KIRO_SYSTEM_VERSION} lang/js md/nodejs#${KIRO_NODE_VERSION} ` +
+    `api/codewhispererruntime#${KIRO_RUNTIME_SDK_VERSION} m/N,E ` +
+    `KiroIDE-${version}-${machineId}`
+  );
 }

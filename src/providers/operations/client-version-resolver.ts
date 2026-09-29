@@ -17,6 +17,12 @@ import { getCachedVersion, resetVersionCacheForTesting } from "./provider-versio
 import { log } from "../../observability/logger";
 import { metrics } from "../../observability/metrics";
 
+/** Structural fetch contract for providers that inject lightweight transports. */
+export type ClientVersionFetcher = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 /** One ordered upstream probe. Earlier entries win. */
 export interface ClientVersionSource {
   readonly url: string;
@@ -55,9 +61,9 @@ export interface ClientVersionResolver {
   /** Current version: discovered → pinned fallback. Sync, never fetches. */
   get(): string;
   /** Resolve from upstream (cached, deduped, never throws). */
-  ensure(fetcher?: typeof fetch, signal?: AbortSignal): Promise<void>;
+  ensure(fetcher?: ClientVersionFetcher, signal?: AbortSignal): Promise<void>;
   /** Fire-and-forget refresh for sync call sites (header builders). */
-  refresh(fetcher?: typeof fetch): void;
+  refresh(fetcher?: ClientVersionFetcher): void;
   /**
    * Test-only: seed a version and stop discovery entirely, or `null` to
    * restore normal discovery behaviour. Keeps suites deterministic without
@@ -125,7 +131,7 @@ export function createClientVersionResolver(
     return compareVersions(version, min) >= 0;
   }
 
-  async function probe(source: ClientVersionSource, fetcher: typeof fetch, signal?: AbortSignal): Promise<string | null> {
+  async function probe(source: ClientVersionSource, fetcher: ClientVersionFetcher, signal?: AbortSignal): Promise<string | null> {
     const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
     const response = await fetcher(source.url, {
       headers: { accept: "application/json, text/plain, */*" },
@@ -135,7 +141,7 @@ export function createClientVersionResolver(
     return (source.extract ?? defaultExtract)(response);
   }
 
-  async function ensure(fetcher: typeof fetch = globalThis.fetch, signal?: AbortSignal): Promise<void> {
+  async function ensure(fetcher: ClientVersionFetcher = globalThis.fetch, signal?: AbortSignal): Promise<void> {
     if (seeded) return;
     const resolved = await getCachedVersion(
       options.key,
@@ -166,7 +172,7 @@ export function createClientVersionResolver(
       return discovered ?? options.fallback;
     },
     ensure,
-    refresh(fetcher: typeof fetch = globalThis.fetch): void {
+    refresh(fetcher: ClientVersionFetcher = globalThis.fetch): void {
       void ensure(fetcher).catch((error: unknown) => {
         metrics.version_discovery_failed.inc(1, { provider: options.key });
         log.warn("client version discovery failed", {

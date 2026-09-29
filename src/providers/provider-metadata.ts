@@ -94,6 +94,17 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     credentialHint: "Signed in with a Google account through the Antigravity login flow.",
   },
   { id: "muse", displayName: "Muse Code", baseUrl: "https://api.meta.ai" },
+  {
+    // Kiro frames its own conversation ledger over an AWS EventStream wire and
+    // has no chat-shaped endpoint to route through.
+    id: "kiro",
+    displayName: "Kiro",
+    baseUrl: "https://q.us-east-1.amazonaws.com",
+    bespokeWire: true,
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://kiro.dev",
+    credentialHint: "Sign in with AWS Builder ID, an Identity Center organization, Google/GitHub, or paste a Kiro API key.",
+  },
   { id: "kimi", displayName: "Kimi Code", baseUrl: "https://api.kimi.com/coding", credentialUrl: "https://platform.moonshot.ai/console/api-keys" },
   { id: "opencodeft", displayName: "OpenCode Free", baseUrl: "https://opencode.ai", requiresAccount: false, hasAdapterUserAgent: true },
   { id: "opencodezen", displayName: "OpenCode Zen", baseUrl: "https://opencode.ai", hasAdapterUserAgent: true, credentialUrl: "https://opencode.ai/auth" },

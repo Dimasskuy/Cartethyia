@@ -629,9 +629,39 @@ both pair the shared spec with an `openAIModelDiscovery` loader for exactly that
 factory's reach, each carrying a `Factory-blocked` or `Bespoke by wire protocol` header comment naming the
 reason: `anthropic.ts` (Messages envelope + `x-api-key`), `gemini.ts` (per-model `:generateContent` RPC +
 `x-goog-api-key`), `claude-code/claude.ts` (the assistant CLI fingerprint: Stainless identity headers, beta negotiation, CCH billing, and a persisted per-install `device_id` in `metadata.user_id`), `codex/codex.ts`
-(Responses envelope + session headers; `protocol/request/codex.ts` emits tool results from both Chat `tool` and Messages `user` turns as `function_call_output` with the matching `call_id`), `cursor/` and `devin/` (Connect+protobuf), `qoder.ts` (COSY AES/RSA
+(Responses envelope + session headers; `protocol/request/codex.ts` emits tool results from both Chat `tool` and Messages `user` turns as `function_call_output` with the matching `call_id`), `cursor/` and `devin/` (Connect+protobuf), `kiro/` (a `conversationState` ledger over an AWS EventStream binary wire, below), `qoder.ts` (COSY AES/RSA
 signing + enveloped SSE), `commandcode.ts` (NDJSON thread/config envelope), `agentrouter.ts`, `kimi/kimi.ts`
 (Messages envelope reusing the shared Claude pipeline).
+
+**Kiro's wire is not chat-shaped, and its auth is not one flow.** `kiro/kiro.ts` posts a
+`conversationState` ledger (`kiro-request.ts`) to a CodeWhisperer `generateAssistantResponse` operation and
+reads back an AWS EventStream binary frame sequence (`aws-event-stream.ts` verifies both CRCs; `kiro-stream.ts`
+interprets the event types). Three things there are load-bearing:
+
+- **The conversation must be expressible before it is sent.** The upstream answers an unreconcilable ledger
+  with a terminal `400`, which is not retried and cools the account, so `buildKiroWireRequest` refuses
+  locally and the adapter raises the error without spending a request. It repairs what it can (merging
+  adjacent same-role turns, pairing tool results with their calls, sanitizing tool names/ids to the wire
+  limits) and reports only what it cannot.
+- **Endpoint choice follows the auth family.** Amazon's `q.*`/`codewhisperer.*` surfaces are tried first and
+  the vendor gateway last, because the vendor gateway rejects the token families this gateway issues with a
+  terminal `400` while Amazon answers a foreign token with `401`/`403` that rotate.
+- **The profile ARN comes from the account, or from its sign-in family's public default.** Every
+  profile-scoped surface — generation, usage, and the model catalog — refuses a request that omits
+  `profileArn` (`400 profileArn is required for this request.` / `400 Invalid profileArn.`), and no surface
+  enumerates an account's profiles: `ListAvailableProfiles` refuses a Builder ID outright
+  (`403 AWS Builder ID is not supported for this operation.`). An account's own resolved profile therefore
+  wins, and one that resolved none is served by the public default for its family — builder for
+  Builder ID/Identity Center/imported, social for Google/GitHub, because the builder default under a social
+  token is answered `403 Invalid token`. An API key and an enterprise IdP export are scoped by the credential
+  itself and never receive a default. `resolveKiroProfileArn` in `kiro-profile.ts` is the single place this is
+  decided, shared by dispatch, quota, and discovery.
+
+`kiro-oauth.ts` covers all seven sign-in paths (AWS Builder ID, Identity Center, Google/GitHub, imported
+refresh token, enterprise identity provider, API key), which differ in endpoint, refresh mechanics, and which
+surface accepts the result. Two details are specific to it: AWS SSO OIDC answers camelCase JSON rather than
+the snake_case form encoding the rest of the kit speaks, and its device flow mints a client secret that must
+be replayed at every later refresh — carried as `client_secret` beside the tokens, never in `auth_state`.
 
 **Cursor's native integration is not its Editor BYOK path.** The bundled `cursor` adapter uses
 Cursor's OAuth credential and Connect/protobuf `AgentService/Run` wire; it rejects API-key
@@ -795,31 +825,65 @@ table records only *where they were read from*.
 | `workbuddyClient` | `workbuddy.ai/v2/update?platform=workbuddy-win32-x64-user` | `productVersion` (four-segment build) |
 | `workbuddyCli`, `codebuddy` | `registry.npmjs.org/@tencent-ai/codebuddy-code/latest` | `version` |
 | `kimiCli` | `pypi.org/pypi/kimi-cli/json` | `info.version` |
+| `kiro` | `kiro.dev/downloads/` | `currentVersion` in the official IDE download metadata |
 | `claudeCli` | `registry.npmjs.org/@anthropic-ai/claude-code/latest` | `version` |
 | `claudeSdk` | **no source** — see below | — |
 | Antigravity (`antigravity-protocol.ts`) | `antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/latest-arm64-mac.yml` | `version:` line of the electron-builder manifest |
 | Devin IDE + extension (`devin.ts`) | `docs.devin.ai/desktop/releases` and the VS Code Marketplace entry `Codeium.codeium` | release list, and the extension's `version` |
 
+Kiro's versioned inference and API-key-validation User-Agents share the latest
+IDE release. The legacy CodeWhisperer discovery and quota routes keep their
+separate `KiroIDE` fingerprint because those endpoints validate a different
+User-Agent shape; their AWS SDK/service version tokens are not the IDE release version.
+
+Kiro's data-plane User-Agent is the one client identity that cannot be
+discovered at runtime: the generation surface is served by the AWS SDK client
+the IDE ships (`@aws/codewhisperer-streaming-client`), so its version is pinned
+in `client-versions.ts` from the shipped build. To refresh it, take the value
+from the installer — never from a guess:
+
+1. Download the Windows IDE build from the vendor feed, whose path repeats the
+   release version:
+   `https://prod.download.desktop.kiro.dev/releases/stable/win32-x64/signed/<v>/kiro-ide-<v>-stable-win32-x64.exe`
+2. Unpack it. The exe payload is an LZMA stream behind a 4-byte tag: `7z x` the
+   exe, strip the 4-byte tag from the extracted `[0]`, then `7z x` that as LZMA.
+3. In the unpacked payload, find the agent bundle — the region that defines
+   `getCodeWhispererStreamingClient` — and read the aliased package metadata
+   inside it: `"@aws/codewhisperer-streaming-client" … version:"x.y.z"`. One
+   installer also embeds other bundles holding older copies of the same
+   package, so a bare version match anywhere in the payload is not evidence;
+   read it from the region the agent actually imports.
+
+The `md/nodejs#` segment is the runtime the client executes under — the IDE is
+an Electron app, so it is Electron's bundled Node, not the host's. The app's
+`package.json` pins `"electron": "<version>"`; that release's metadata supplies
+the Node version. The `os/win32#<build>` segment is the host Windows release and
+therefore varies per machine.
+
+The Kimi version source is the archived legacy `kimi-cli` package: the OAuth
+adapter deliberately keeps its `kimi_cli` request identity. The replacement
+`kimi-code` CLI reports `kimi_code_cli`, which the coding API rejected in favor
+of `kimi_cli` in the verified [Kimi Code issue](https://github.com/MoonshotAI/kimi-code/issues/636);
+do not substitute the new package version or identity without upstream allowlist support.
+
 The Marketplace entry is queried over its public API — no key needed:
 
-```bash
 curl -s https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery \
   -X POST -H "Accept: application/json;api-version=7.2-preview.1" -H "Content-Type: application/json" \
   -d '{"filters":[{"criteria":[{"filterType":7,"value":"Codeium.codeium"}],"pageSize":1}],"flags":914}'
 ```
 
-Two pins cannot be fetched, and both are deliberate:
+Two client versions remain manual pins because there is no reliable runtime
+version source:
 
 - **`claudeSdk`** is the `@anthropic-ai/sdk` version *bundled inside* the Claude Code release. The npm package
-  is now an ~184 KB installer wrapper (7 files) and the platform packages ship a compiled binary, so no
-  metadata states it. Read it from the binary: `ne="<version>"` is the value interpolated into
-  `anthropic-sdk-typescript/${ne} userOAuthProvider`. `client-versions.ts` has no `sources` for this entry by
-  design — a discovery source would have to parse a ~226 MB executable at runtime.
-- **Devin IDE / extension versions** have no manifest: the Windsurf/Devin update endpoints answer 401 or render
-  client-side, and the npm packages named `windsurf` / `devin-cli` are `0.0.1` placeholders. The extension
-  version comes from the Marketplace query API for `Codeium.codeium` (display name "Windsurf Plugin"); the IDE
-  version from the Devin Desktop release notes above, which is the page the download site links to as "View all
-  releases". Bump the IDE and extension pins together — they ship as a pair.
+  is an installer wrapper and its platform packages ship a compiled binary; the standalone npm SDK is a
+  different release line. The bundled version must be read from the binary's
+  `anthropic-sdk-typescript/{version} userOAuthProvider` string.
+- **Devin IDE / extension versions** are fetched manually from the official Desktop release page and
+  Marketplace API when refreshing the pins. The update endpoint has no usable manifest, and the npm
+  packages named `windsurf` / `devin-cli` are placeholders. Their request fingerprint versions remain
+  static constants in `integrations/devin/devin.ts`.
 
 Rules: `base_url` comes from `BUNDLED_PROVIDER_METADATA` via `providerBaseUrl()` — adapters that need to
 override it (Cline, Grok Build, Muse Code, CodeBuddy, WorkBuddy) set it explicitly, usually to the same

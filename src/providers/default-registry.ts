@@ -171,6 +171,24 @@ export const PROVIDER_CAPABILITIES = {
     loadAuthentication: oauthCapability(() => import("./integrations/muse/muse-oauth"), "museCodeOAuthClient", { withRefresher: true }),
     loadQuotaCollector: quotaCapability(() => import("./integrations/muse/muse-quota"), "fetchMuseQuota"),
   },
+  kiro: {
+    loadAdapter: async () => (await import("./integrations/kiro/kiro")).kiroAdapter,
+    loadModels: async () => (await import("./integrations/kiro/catalog")).KIRO_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/kiro/kiro-oauth"), "kiroOAuthClient", {
+      withRefresher: true,
+    }),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/kiro/kiro-quota"), "fetchKiroQuota"),
+    // Kiro's model list is per-account: which models a credential reaches
+    // depends on the plan it is bound to, so discovery needs the credential and
+    // the account's region.
+    loadModelDiscovery: async () => async ({ credential, fetcher, authState }) =>
+      (await import("./integrations/kiro/kiro-discovery")).fetchKiroModels({
+        credential,
+        ...(fetcher === undefined ? {} : { fetcher }),
+        ...(authState === undefined ? {} : { authState }),
+      }),
+    modelDiscoveryRequiresCredential: true,
+  },
   kimi: {
     loadAdapter: async () => (await import("./integrations/kimi/kimi")).kimiCodeAdapter,
     loadModels: async () => (await import("./integrations/kimi/kimi")).KIMI_CODE_MODELS,

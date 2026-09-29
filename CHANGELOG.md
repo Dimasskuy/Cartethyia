@@ -5,6 +5,54 @@
 > All changes below are pre-release. Cartethyia has not been tagged or
 > released; this document reflects the current production codebase architecture and capabilities.
 
+### Correct OpenCode MiMo Flash context limit
+
+`opencodeft` and `opencodezen` both expose `mimo-v2.6-flash-free` with a 1,000,000-token context limit.
+
+### Kiro (AWS CodeWhisperer) is a bundled provider
+
+Kiro joins the bundled providers as a bespoke adapter, because its wire is not chat-shaped: a request is a
+`conversationState` ledger posted to a `generateAssistantResponse` operation, and the answer is an AWS
+EventStream binary frame sequence rather than SSE. `kiro/aws-event-stream.ts` owns the framing and verifies
+both CRCs, so a truncated or interleaved message is a corrupt stream instead of plausible JSON; the events
+are emitted as they arrive rather than buffered, so time-to-first-token is preserved.
+
+A conversation the upstream cannot reconcile earns a terminal `400` that cools the account, so
+`buildKiroWireRequest` repairs what it can — merging adjacent same-role turns, pairing tool results with
+their calls, sanitizing tool names and ids to the wire's lengths — and refuses locally, without spending a
+request, on what it cannot. The system prompt travels as a prefix on the opening user turn rather than a
+field of its own, because a top-level `systemPrompt` is itself one of the shapes that earns the `400`.
+
+Endpoint choice follows the auth family: the Amazon surfaces are tried first and the vendor gateway last,
+since the vendor gateway answers a modern body with a terminal `400` while Amazon answers a foreign token
+with a rotatable `401`/`403`. An account-bound credential (API key, Identity Center, enterprise) is never
+sent the shared placeholder profile ARN — it belongs to the vendor's own account and earns a `403` — so it
+sends only what the account resolved, an empty value meaning "use the token's own default".
+
+All seven sign-in paths are supported: AWS Builder ID and Identity Center device flows (with the client
+registration AWS SSO OIDC requires, and the client secret replayed at every later refresh), Google/GitHub
+social sign-in, imported refresh tokens, enterprise Microsoft identity-provider JSON, and API keys validated
+against the model catalog the key will actually be used on. Quota (`getUsageLimits`) and per-account model
+discovery (`ListAvailableModels`) are wired, each with the client identity its own surface expects.
+
+### Per-account auth configuration persists beside the credential
+
+A credential string cannot express an account whose requests depend on where it was minted and which
+upstream profile it is bound to. `provider_accounts.auth_state` now carries that non-secret configuration
+(auth method, region, profile ARN, OAuth client id, token endpoint), populated by the login flow and read by
+the adapter, by token refresh, and by the quota and discovery surfaces. A companion secret a login mints —
+an OIDC client secret — is encrypted separately in `provider_oauth_states.client_secret_ciphertext`.
+
+`OAuthTokenRefresher.refresh` gains an optional third argument (`OAuthRefreshContext`) carrying the account
+id, that configuration, and the decrypted companion secret, so a provider client reaches the right endpoint
+with the right client without reading the database itself. All fields are optional and additive: providers
+that need none are unaffected, and a refresh that reports no state leaves the stored one alone.
+
+Provider-specific login inputs (which identity provider, which organization URL, which region) now travel
+through `OAuthDeviceFlowContext.parameters` and `OAuthAuthorizeRequest.parameters` from the console's start
+request to the client, and are persisted with the flow correlation so a later poll rebuilds the same
+context. One start route therefore serves providers whose logins differ.
+
 ### Reasoning and encrypted reasoning are no longer redacted
 
 `redactTelemetryValue` now passes `reasoning_content`, `reasoning`, `thinking`, `encrypted_content`,
