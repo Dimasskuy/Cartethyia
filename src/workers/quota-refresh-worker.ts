@@ -35,6 +35,8 @@ export interface QuotaRefreshSweepDeps extends QuotaRefreshDeps {
   readonly listTargets?: () => Promise<readonly QuotaRefreshTarget[]>;
   /** Maximum accounts in one completed wave. Defaults to 5. */
   readonly maxConcurrency?: number;
+  /** Per-account credential cache, keyed by account id. Defaults to a shared module cache (W3). */
+  readonly credentialCache?: Map<string, string>;
   /** Skip accounts whose cached value is younger than this. Defaults to 4 min. */
   readonly minAgeMs?: number;
   /** Cap on accounts attempted per pass, so one pass cannot run unbounded. Defaults to 40. */
@@ -62,8 +64,26 @@ const DEFAULT_MAX_CHECKINS_PER_PASS = 10;
  * accounts, and most outcomes ("quota ok, daily already claimed") repeat
  * verbatim every pass — printing them all buries the one line that matters.
  * An account is re-announced only when its outcome actually changes.
+ *
+ * Module scope, not per-call: suppression must survive across passes, and one
+ * `quotaRefreshSweep` call is one pass. Tests reset it via
+ * `resetSweepLogMemory`.
  */
 const lastSweepLine = new Map<string, string>();
+
+/**
+ * Shared per-account credential cache, keyed by account id (W3).
+ *
+ * Module scope, like `lastSweepLine` above: the point is reuse *across*
+ * passes. The sweep resolves the same accounts every 60s and credentials
+ * rotate rarely, so without this the quota leg re-decrypts every credential
+ * once per pass while the check-in leg inside the same pass resolves it
+ * again for the same account. A pass that touched a credential change still
+ * sees it, because the credential resolver carries its own freshness
+ * (OAuth refresh is proactive through `OAuthRefreshService`) and a process
+ * restart starts from an empty cache anyway.
+ */
+const sharedCredentialCache = new Map<string, string>();
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -200,6 +220,20 @@ export async function quotaRefreshSweep(deps: QuotaRefreshSweepDeps): Promise<vo
   const now = deps.now ?? Date.now;
   const minAgeMs = deps.minAgeMs ?? DEFAULT_MIN_AGE_MS;
   const maxPerPass = Math.max(1, deps.maxPerPass ?? DEFAULT_MAX_PER_PASS);
+  // One cache for the whole pass: the quota leg resolves the credential and
+  // the check-in ride-along reuses it for the same account instead of
+  // fetching it twice (W3).
+  const credentialCache = deps.credentialCache ?? sharedCredentialCache;
+  const resolveCredentialCached = async (
+    providerId: ProviderId,
+    accountId: string,
+  ): Promise<string> => {
+    const cached = credentialCache.get(accountId);
+    if (cached !== undefined) return cached;
+    const secret = await deps.resolveCredential(providerId, accountId);
+    credentialCache.set(accountId, secret);
+    return secret;
+  };
 
   let failed = 0;
   let claimed = 0;
@@ -282,7 +316,10 @@ export async function quotaRefreshSweep(deps: QuotaRefreshSweepDeps): Promise<vo
     run: async (entry) => {
       attemptedTargets.push(entry.target);
       const outcome = await refreshAccountQuota(
-        deps,
+        // The sweep already resolved this account's credential for the
+        // check-in leg; hand the quota leg the same cached resolver so one
+        // account costs one resolution per pass, not two (W3).
+        { ...deps, resolveCredential: resolveCredentialCached },
         entry.target,
         signalFetch(AbortSignal.timeout(QUOTA_REFRESH_TIMEOUT_MS)),
       );
@@ -304,7 +341,7 @@ export async function quotaRefreshSweep(deps: QuotaRefreshSweepDeps): Promise<vo
           redis: deps.redis,
           providerId: entry.target.providerId as ProviderId,
           accountId: entry.target.accountId,
-          resolveCredential: deps.resolveCredential,
+          resolveCredential: resolveCredentialCached,
           ...(deps.checkinFetcher ? { fetcher: deps.checkinFetcher } : {}),
         });
         if (pass !== null) {

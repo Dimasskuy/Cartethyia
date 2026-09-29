@@ -368,6 +368,40 @@ describe("quota refresh sweep", () => {
     expect(line).not.toContain("daily");
   });
 
+  test("the check-in ride-along reuses the quota leg's credential, resolving once per account", async () => {
+    // One account costs one credential resolution per pass: the quota leg
+    // resolves it and the check-in leg reuses the cached value.
+    const redis = fakeRedis();
+    const ok: ProviderQuotaResult = { source: "test", plan: null, windows: [], error: null };
+    const checkinFetcher = (async () =>
+      new Response(JSON.stringify({ code: 0, data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const resolutions: string[] = [];
+
+    await quotaRefreshSweep({
+      db: {} as never,
+      redis,
+      providerRegistry: stubRegistry(ok, { calls: 0 }),
+      resolveCredential: async (_providerId, accountId) => {
+        resolutions.push(accountId);
+        return "secret";
+      },
+      listTargets: async () => [
+        { accountId: "acct-wb", providerId: "workbuddy", tenantId: "t", label: "wb@example.com" },
+      ],
+      checkinFetcher,
+    });
+
+    // The stub's quota collector never calls `resolveCredential`, so this one
+    // resolution came from the check-in leg alone. Without the shared cache
+    // the quota leg and the check-in leg each resolve once per account: break
+    // the `resolveCredentialCached` wiring and this becomes
+    // ["acct-wb", "acct-wb"], which this assertion catches.
+    expect(resolutions).toEqual(["acct-wb"]);
+  });
+
   test("a claimed check-in reports the credit and streak compactly", async () => {
     clearConsoleLogs();
     const redis = fakeRedis();

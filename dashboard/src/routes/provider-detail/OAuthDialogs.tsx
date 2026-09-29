@@ -364,10 +364,17 @@ export function DeviceCodeDialog({
     const expiresInMs = Math.max(1, session.expiresInSeconds) * 1000;
     let pollInFlight = false;
     let intervalMs = Math.max(1, session.intervalSeconds) * 1000;
+    // `clearTimer` covers both phases: before the first poll fires `timer` is
+    // a timeout, after that it is an interval. `clearInterval` alone would
+    // leak the pending first poll when the dialog closes early.
     let timer = 0;
+    const clearTimer = () => {
+      window.clearTimeout(timer);
+      window.clearInterval(timer);
+    };
     const poll = () => {
       if (Date.now() - startedAt > expiresInMs) {
-        window.clearInterval(timer);
+        clearTimer();
         toast.error("Device login expired", "Please try again.");
         onClose();
         return;
@@ -380,20 +387,20 @@ export function DeviceCodeDialog({
           onSuccess: (result) => {
             pollInFlight = false;
             if (result.status === "complete") {
-              window.clearInterval(timer);
+              clearTimer();
               const open = verificationPopupRef.current;
               if (open && !open.closed) open.close();
               toast.success("OAuth account connected", "Device authorization complete");
               onClose();
             } else if (result.status === "failed") {
-              window.clearInterval(timer);
+              clearTimer();
               toast.error("Device login failed", result.reason);
               onClose();
             } else if (result.status === "pending" && result.retryAfterSeconds !== undefined) {
               // The server echoed the provider's requested cadence: adopt it
               // so the next poll does not fire early and draw a rate limit.
               intervalMs = Math.max(1, result.retryAfterSeconds) * 1000;
-              window.clearInterval(timer);
+              clearTimer();
               timer = window.setInterval(poll, intervalMs);
             } else if (result.status === "slow_down") {
               // The provider (GitHub especially) enforces its own minimum
@@ -405,7 +412,7 @@ export function DeviceCodeDialog({
                   ? Math.max(1, result.retryAfterSeconds) * 1000
                   : intervalMs + 5000;
               intervalMs = nextMs;
-              window.clearInterval(timer);
+              clearTimer();
               timer = window.setInterval(poll, intervalMs);
             }
           },
@@ -415,9 +422,17 @@ export function DeviceCodeDialog({
         },
       );
     };
-    poll();
-    timer = window.setInterval(poll, intervalMs);
-    return () => window.clearInterval(timer);
+    // The first poll fires only after one full interval, never immediately:
+    // the user needs those seconds to approve on the provider page, and a
+    // poll that lands before any approval is possible only spends a request
+    // toward the provider's rate limit (429s on an impatient first poll).
+    timer = window.setTimeout(() => {
+      // The timeout has served its purpose; from here the cadence is the
+      // interval's. `clearTimer` still covers both handles elsewhere.
+      timer = window.setInterval(poll, intervalMs);
+      poll();
+    }, intervalMs);
+    return () => clearTimer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
