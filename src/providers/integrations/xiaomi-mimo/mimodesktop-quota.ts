@@ -1,53 +1,16 @@
-import type { FetchLike, ProviderQuotaResult, ProviderQuotaWindow } from "../../quota/quota-contracts";
-import { percentWindow, record, number } from "../../quota/quota-contracts";
+import type { FetchLike, ProviderQuotaResult } from "../../quota/quota-contracts";
+import { parseMimoUsageWindows } from "./mimo-quota-shared";
 import { acquireMimoServiceSession, MIMO_API_UA } from "./mimodesktop-sso";
 import { parseMimoCredential } from "./mimodesktop-oauth";
 import { MIMODESKTOP_BASE_URL } from "./mimodesktop";
 
 export const MIMODESKTOP_USAGE_ENDPOINT = `${MIMODESKTOP_BASE_URL}/api/user/usage` as const;
 
+const MIMODESKTOP_PLAN = "Xiaomi MiMo Desktop";
+
+/** Parses Xiaomi MiMo Desktop usage into its weekly window. */
 export function parseMimoDesktopQuota(payload: unknown): ProviderQuotaResult {
-  const root = record(payload);
-  const data = record(root?.["data"]);
-  if (!data) {
-    return {
-      source: "mimodesktop",
-      plan: "Xiaomi MiMo Desktop",
-      windows: [],
-      error: "Unexpected response format from MiMo usage endpoint",
-    };
-  }
-
-  // Upstream returns remaining percent, e.g. 99.9% remaining.
-  const rawRemaining = number(data["percent"]);
-  const usedPercent = rawRemaining !== null ? Math.max(0, Math.min(100, 100 - rawRemaining)) : null;
-
-  const rawResetAt = number(data["resetAt"]);
-  const resetIso =
-    rawResetAt !== null && Number.isFinite(rawResetAt)
-      ? new Date(rawResetAt * 1000).toISOString()
-      : typeof data["resetDate"] === "string"
-        ? new Date(data["resetDate"]).toISOString()
-        : null;
-
-  const windows: ProviderQuotaWindow[] = [];
-  if (usedPercent !== null || resetIso !== null) {
-    windows.push(
-      percentWindow(
-        "weekly",
-        "Weekly Quota",
-        usedPercent !== null ? Math.round(usedPercent * 10) / 10 : null,
-        resetIso,
-      ),
-    );
-  }
-
-  return {
-    source: "mimodesktop",
-    plan: "Xiaomi MiMo Desktop",
-    windows,
-    error: null,
-  };
+  return parseMimoUsageWindows(payload, { source: "mimodesktop", plan: MIMODESKTOP_PLAN });
 }
 
 export async function fetchMimoDesktopQuota(
@@ -58,7 +21,7 @@ export async function fetchMimoDesktopQuota(
   if (!parsed.passToken) {
     return {
       source: "mimodesktop",
-      plan: "Xiaomi MiMo Desktop",
+      plan: MIMODESKTOP_PLAN,
       windows: [],
       error: "MiMo Desktop passToken is missing",
     };
@@ -87,7 +50,7 @@ export async function fetchMimoDesktopQuota(
     if (!res.ok) {
       return {
         source: "mimodesktop",
-        plan: "Xiaomi MiMo Desktop",
+        plan: MIMODESKTOP_PLAN,
         windows: [],
         error: `Usage API returned HTTP ${res.status}`,
       };
@@ -98,7 +61,7 @@ export async function fetchMimoDesktopQuota(
   } catch (error) {
     return {
       source: "mimodesktop",
-      plan: "Xiaomi MiMo Desktop",
+      plan: MIMODESKTOP_PLAN,
       windows: [],
       error: error instanceof Error ? error.message : "Failed to fetch MiMo quota",
     };

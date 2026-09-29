@@ -328,6 +328,13 @@ for key-only providers. Provider specifics (endpoint URLs, field names, plan der
   used/limit, plus `valueMultiplier` (e.g. 100 for 0–1 ratios), `derivePercent`, `emitWithoutPercent` for
   countdown-only windows, and plan overrides. Only simple percentage-tree responses use it — Tencent billing
   envelopes, WorkOS usage arrays, and duration-derived labels keep bespoke parsers.
+- **Shared limit-array reader.** Providers that answer usage as an array of limit objects (Claude's
+  per-model `limits[]`, Cline's window-typed `limits[]`) read it through `parseLimitWindows`
+  (`quota/quota-limit-windows.ts`) with a `LimitWindowShape` naming which fields carry kind, percent,
+  reset, and the absolute values — plus an optional `labelFor` and `deriveUsed` for the providers whose
+  label or absolute used value is computed rather than reported. The array walk and the "an entry with
+  neither a percent nor a reset has nothing to say" guard therefore exist once: an entry the upstream left
+  blank is dropped, never rendered as 0% used.
 - **Key-only connectivity probe.** `probeApiKeyConnectivity` hits the provider's `/models` (via
   `providerBaseUrl`) with the key: 401/403 means definitively invalid-or-revoked, 2xx means valid, anything
   else is an inconclusive transport/wire error surfaced as-is, never a credential verdict. It throws on

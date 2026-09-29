@@ -1,5 +1,5 @@
-import type { FetchLike, ProviderQuotaResult, ProviderQuotaWindow } from "../../quota/quota-contracts";
-import { percentWindow, record, number } from "../../quota/quota-contracts";
+import type { FetchLike, ProviderQuotaResult } from "../../quota/quota-contracts";
+import { parseMimoUsageWindows } from "./mimo-quota-shared";
 import {
   buildMimoStudioCookieHeader,
   parseMimoStudioCredential,
@@ -8,47 +8,11 @@ import {
 
 export const MIMO_STUDIO_USAGE_URL = "https://aistudio.xiaomimimo.com/open-apis/v1/user/usage" as const;
 
+const MIMOSTUDIO_PLAN = "MiMo Studio";
+
+/** Parses MiMo Studio usage into its weekly window. */
 export function parseMimoStudioQuota(payload: unknown): ProviderQuotaResult {
-  const root = record(payload);
-  const data = record(root?.["data"]);
-  if (!data) {
-    return {
-      source: "mimostudio",
-      plan: "MiMo Studio",
-      windows: [],
-      error: "Unexpected response format from MiMo Studio usage endpoint",
-    };
-  }
-
-  const rawRemaining = number(data["percent"]);
-  const usedPercent = rawRemaining !== null ? Math.max(0, Math.min(100, 100 - rawRemaining)) : null;
-
-  const rawResetAt = number(data["resetAt"]);
-  const resetIso =
-    rawResetAt !== null && Number.isFinite(rawResetAt)
-      ? new Date(rawResetAt * 1000).toISOString()
-      : typeof data["resetDate"] === "string"
-        ? new Date(data["resetDate"]).toISOString()
-        : null;
-
-  const windows: ProviderQuotaWindow[] = [];
-  if (usedPercent !== null || resetIso !== null) {
-    windows.push(
-      percentWindow(
-        "weekly",
-        "Weekly Quota",
-        usedPercent !== null ? Math.round(usedPercent * 10) / 10 : null,
-        resetIso,
-      ),
-    );
-  }
-
-  return {
-    source: "mimostudio",
-    plan: "MiMo Studio",
-    windows,
-    error: null,
-  };
+  return parseMimoUsageWindows(payload, { source: "mimostudio", plan: MIMOSTUDIO_PLAN });
 }
 
 export async function fetchMimoStudioQuota(
@@ -72,7 +36,7 @@ export async function fetchMimoStudioQuota(
     if (!res.ok) {
       return {
         source: "mimostudio",
-        plan: "MiMo Studio",
+        plan: MIMOSTUDIO_PLAN,
         windows: [],
         error: `MiMo Studio usage returned HTTP ${res.status}`,
       };
@@ -83,7 +47,7 @@ export async function fetchMimoStudioQuota(
   } catch (error) {
     return {
       source: "mimostudio",
-      plan: "MiMo Studio",
+      plan: MIMOSTUDIO_PLAN,
       windows: [],
       error: error instanceof Error ? error.message : "Failed to fetch MiMo Studio quota",
     };

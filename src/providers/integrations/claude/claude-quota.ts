@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { TtlCache } from "../../../runtime/ttl-cache";
 import type { FetchLike, ProviderQuotaResult, ProviderQuotaWindow } from "../../quota/quota-contracts";
-import { authCredential, getJson, percentWindow, record, text, number, isoDate } from "../../quota/quota-contracts";
+import { authCredential, getJson, percentWindow, record, text, number } from "../../quota/quota-contracts";
 import { parseQuotaWindows } from "../../quota/quota-window-parser";
+import { parseLimitWindows } from "../../quota/quota-limit-windows";
 import { CLAUDE_CODE_USER_AGENT } from "./claude-fingerprint";
 
 export const claudeCodeOAuthBetas = [
@@ -38,27 +39,22 @@ const LIMIT_SCOPE_LABELS: Readonly<Record<string, string>> = {
 
 /** Parses the dynamic `limits` array (per-model weekly windows). */
 function limitsWindows(payload: unknown): readonly ProviderQuotaWindow[] {
-  const limits = record(payload)?.limits;
-  if (!Array.isArray(limits)) return [];
-  const windows: ProviderQuotaWindow[] = [];
-  for (const rawLimit of limits) {
-    const limit = record(rawLimit);
-    const kind = text(limit?.kind);
-    if (!limit || !kind) continue;
-    const displayName = text(record(record(limit.scope)?.model)?.display_name);
-    const scoped = LIMIT_SCOPE_LABELS[kind];
-    const label =
-      scoped !== undefined
-        ? displayName
-          ? `${scoped} (${displayName})`
-          : scoped
-        : displayName
-          ? `7 Day (${displayName})`
-          : kind.replace(/_/g, " ");
-    const utilization = number(limit.percent) ?? number(limit.utilization);
-    if (utilization === null && isoDate(limit.resets_at) === null) continue;
-    windows.push(percentWindow(kind, label, utilization, isoDate(limit.resets_at)));
-  }
+  const windows: ProviderQuotaWindow[] = [
+    ...parseLimitWindows(payload, {
+      kindPaths: ["kind"],
+      percentPaths: ["percent", "utilization"],
+      resetPaths: ["resets_at"],
+      labelFor: (kind, limit) => {
+        const displayName = text(record(record(limit.scope)?.model)?.display_name);
+        const scoped = LIMIT_SCOPE_LABELS[kind];
+        if (scoped === undefined) {
+          return displayName ? `7 Day (${displayName})` : null;
+        }
+        return displayName ? `${scoped} (${displayName})` : scoped;
+      },
+      fallbackLabel: (kind) => kind.replace(/_/g, " "),
+    }),
+  ];
   // Usage spend in absolute dollars, when the API reports it alongside (or
   // instead of) percentage windows.
   const spend = number(record(payload)?.spend) ?? number(record(payload)?.extra_usage);

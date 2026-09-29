@@ -1,5 +1,6 @@
 import type { FetchLike, ProviderQuotaResult, ProviderQuotaWindow } from "../../quota/quota-contracts";
-import { authCredential, getJson, percentWindow, record, text, number, isoDate } from "../../quota/quota-contracts";
+import { authCredential, getJson, record, text } from "../../quota/quota-contracts";
+import { parseLimitWindows } from "../../quota/quota-limit-windows";
 import { probeApiKeyConnectivity } from "../../quota/quota-support";
 import { getClineClientVersion, refreshClineClientVersion } from "../../operations/client-versions";
 
@@ -20,32 +21,29 @@ function clineQuotaHeaders(): Record<string, string> {
   };
 }
 
-function usageWindows(value: unknown): ProviderQuotaWindow[] {
-  const payload = record(value);
-  const limits = Array.isArray(payload?.limits) ? payload.limits : [];
-  return limits.flatMap((raw, index) => {
-    const limit = record(raw);
-    if (!limit) return [];
-    const kind = text(limit.type) ?? `window-${index + 1}`;
-    const label =
-      kind === "five_hour"
-        ? "5 Hour"
-        : kind === "weekly"
-          ? "7 Day"
-          : kind === "monthly"
-            ? "30 Day"
-            : kind;
-    const used = number(limit.percentUsed);
-    const limitValue = number(limit.limit) ?? number(limit.entitlement) ?? number(limit.total);
-    const usedValue =
-      number(limit.used) ??
-      number(limit.usedCredits) ??
-      (used !== null && limitValue !== null ? (limitValue * used) / 100 : null);
-    const resetsAt = isoDate(limit.resetsAt);
-    return used === null && resetsAt === null
-      ? []
-      : [percentWindow(kind, label, used, resetsAt, usedValue, limitValue)];
-  });
+const CLINE_WINDOW_LABELS: Readonly<Record<string, string>> = {
+  five_hour: "5 Hour",
+  weekly: "7 Day",
+  monthly: "30 Day",
+};
+
+/** Reads Cline's `limits[]` array — one entry per billing window. */
+function usageWindows(value: unknown): readonly ProviderQuotaWindow[] {
+  return [
+    ...parseLimitWindows(value, {
+      kindPaths: ["type"],
+      percentPaths: ["percentUsed"],
+      resetPaths: ["resetsAt"],
+      limitPaths: ["limit", "entitlement", "total"],
+      usedPaths: ["used", "usedCredits"],
+      // Cline reports a percentage and a ceiling but no absolute used value,
+      // so the absolute is derived rather than left null.
+      deriveUsed: (_entry, usedPercent, limit) =>
+        usedPercent !== null && limit !== null ? (limit * usedPercent) / 100 : null,
+      labelFor: (kind) => CLINE_WINDOW_LABELS[kind] ?? null,
+      fallbackLabel: (kind) => kind,
+    }),
+  ];
 }
 
 function isMissingPlanHistory(reason: unknown): boolean {
