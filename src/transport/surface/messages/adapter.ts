@@ -14,7 +14,7 @@ import {
   systemBlocks,
   applyMessagesToolLedger,
 } from "./parse";
-import { CANONICAL_REASONING_EFFORTS, parseToolChoice } from "../dialects";
+import { CANONICAL_REASONING_EFFORTS, parseReasoningIntent, parseToolChoice } from "../dialects";
 import { groupedBlocks, startModel, stopData } from "./encode";
 import { finiteNumber, stringValue } from "../../../protocol/primitives";
 import { usageToMessagesWire } from "../../../providers/usage";
@@ -90,6 +90,19 @@ export class MessagesAdapter implements SurfaceAdapter {
         reasoningIntent.effort = effort as NonNullable<ReasoningIntent["effort"]>;
       const taskBudget = outputConfig["task_budget"];
       if (finiteNumber(taskBudget)) reasoningIntent.task_budget = taskBudget;
+    }
+    // The Messages wire is also a client surface for OpenAI-shaped callers, which
+    // state effort as a top-level `reasoning_effort` rather than Anthropic's
+    // `thinking`/`output_config`. Read the shared parser so a caller's effort is
+    // not dropped here when Chat and Responses honor the same field. Anthropic's
+    // own spelling still wins when both are present, because it is the more
+    // specific one for this wire.
+    if (reasoningIntent?.effort === undefined) {
+      const shared = parseReasoningIntent(body);
+      if (shared?.effort !== undefined) {
+        reasoningIntent ??= {};
+        reasoningIntent.effort = shared.effort;
+      }
     }
     const cache = cacheHint(body, system);
     const tools = parseTools(body.tools);

@@ -5,6 +5,22 @@
 > All changes below are pre-release. Cartethyia has not been tagged or
 > released; this document reflects the current production codebase architecture and capabilities.
 
+### Reasoning effort is recorded on every surface, and the Usage table names a provider
+
+The Messages surface read effort only from Anthropic's own `thinking` and
+`output_config` fields, so an OpenAI-shaped caller stating a top-level
+`reasoning_effort` had it dropped and the request ran at the model default. Chat,
+Responses, and Completion already honored that field. Messages now reads it through
+the same shared parser, with Anthropic's spelling still winning when both are
+present, so all four surfaces record the requested effort and the Usage table shows
+it beside the model without opening the detail page.
+
+The Usage table's Provider/model column also names a provider for a request that
+failed before a candidate was leased. `provider_id` stays NULL there — it means the
+provider that served the request, and no provider did — but the caller's qualified
+`provider/model` ref still names one, so the column resolves from that instead of
+rendering a bare dash.
+
 ### WorkBuddy quota reads the reference billing filter
 
 Tencent billing queries now send the reference filter envelope (`ProductCode: p_tcaca`, statuses `[0, 3]`, and the 101-year package window) plus `X-User-Id` when the access token carries a UID. An empty `{}` could answer success with zero credit packages for an account that has them, which surfaced as “No credit package found”.

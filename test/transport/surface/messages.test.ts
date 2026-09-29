@@ -294,6 +294,31 @@ describe("MessagesAdapter.parse", () => {
     ).toThrow();
   });
 
+  /**
+   * The Messages wire also serves OpenAI-shaped callers, which state effort as a
+   * top-level `reasoning_effort`. Chat and Responses honor that field; Messages
+   * read only Anthropic's `thinking`/`output_config`, so a caller's effort was
+   * dropped here and the request ran at the model default.
+   */
+  test("reads a top-level reasoning_effort, and Anthropic's own spelling wins", () => {
+    expect(adapter.parse(request({ reasoning_effort: "high" })).reasoning).toEqual({
+      effort: "high",
+    });
+    // `output_config` is the more specific spelling for this wire.
+    expect(
+      adapter.parse(request({ reasoning_effort: "high", output_config: { effort: "low" } }))
+        .reasoning,
+    ).toEqual({ effort: "low" });
+    // A budget-derived effort is not overridden by the shared fallback.
+    expect(
+      adapter.parse(
+        request({ thinking: { type: "enabled", budget_tokens: 2000 }, reasoning_effort: "high" }),
+      ).reasoning,
+    ).toMatchObject({ thinking_type: "enabled", budget_tokens: 2000 });
+    // No reasoning signal at all still yields no intent.
+    expect(adapter.parse(request({})).reasoning).toBeUndefined();
+  });
+
   test("rejects missing required fields and preserves unknown blocks as extensions", () => {
     expect(() => adapter.parse({ model: "m", messages: [] })).toThrow(/max_tokens/);
     const parsed = adapter.parse(

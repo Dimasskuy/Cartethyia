@@ -63,3 +63,23 @@ export function providerDisplayName(providerId: string, label?: string): string 
   if (label) return label;
   return BUILT_IN_PROVIDER_DISPLAY_NAMES[providerId.toLowerCase()] ?? providerId;
 }
+
+/**
+ * The provider a request names, for display.
+ *
+ * `providerId` is the provider that actually served the request, so it is absent
+ * on a request that failed before a candidate was leased — `model_not_found` and
+ * `accounts_unavailable` both fail with no provider, and that absence is
+ * deliberate. The caller's `model` still carries the qualified `provider/model`
+ * ref it asked for, so a row can name a provider either way.
+ *
+ * Returns `undefined` for a bare model id, which names no provider.
+ */
+export function requestProviderId(
+  providerId: string | undefined,
+  model: string | undefined,
+): string | undefined {
+  if (providerId) return providerId;
+  const slash = model === undefined ? -1 : model.indexOf("/");
+  return slash > 0 ? model?.slice(0, slash) : undefined;
+}

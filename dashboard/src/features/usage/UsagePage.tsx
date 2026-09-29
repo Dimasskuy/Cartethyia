@@ -44,7 +44,7 @@ import {
   useUsageRequests,
   useUsageSummary,
 } from "../../hooks/system";
-import { providerDisplayName } from "../../shared/provider-names";
+import { providerDisplayName, requestProviderId } from "../../shared/provider-names";
 
 import { useProviderAccounts } from "../../hooks/providers";
 import { useInFlight } from "../../hooks/live";
@@ -1484,11 +1484,10 @@ export default function Usage(): ReactNode {
               />
             </div>
           ) : (
-            <div
-              onScroll={handleTableScroll}
-              style={{ maxHeight: "445px", overflow: "auto", borderRadius: "10px", border: "1px solid var(--inner-border)" }}
-            >
+            <div style={{ borderRadius: "10px", border: "1px solid var(--inner-border)" }}>
               <DataTable
+                maxHeight={445}
+                onScroll={handleTableScroll}
                 headers={[
                   { key: "startedAt", label: "Time", sortable: true },
                   { key: "model", label: "Provider/model", sortable: true },
@@ -1506,6 +1505,10 @@ export default function Usage(): ReactNode {
                 {requestItems.map((row) => {
                   const isNew = newRowIds.has(row.requestId);
                   const costText = row.estimatedCost === undefined ? "—" : formatUsd(row.estimatedCost);
+                  // A request that failed before a candidate was leased has no
+                  // serving provider, but the caller's qualified model ref still
+                  // names one, so the column stays populated either way.
+                  const rowProviderId = requestProviderId(row.providerId, row.model);
                   return (
                     <tr
                       key={row.requestId}
@@ -1524,10 +1527,10 @@ export default function Usage(): ReactNode {
                       <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
                         <span
                           className="truncate"
-                          title={row.providerId ?? "—"}
+                          title={rowProviderId ?? "—"}
                           style={{ fontSize: "12px", fontWeight: 600 }}
                         >
-                          {hideProviderName ? "Mysterious" : row.providerId ? providerDisplayName(row.providerId) : "—"}
+                          {hideProviderName ? "Mysterious" : rowProviderId ? providerDisplayName(rowProviderId) : "—"}
                         </span>
                       </div>
                       <div
