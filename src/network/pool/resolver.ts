@@ -15,10 +15,14 @@ import { createValidatedFetch, type ValidatedFetch } from "../outbound-fetch";
 import { GatewayError } from "../../transport/gateway-error";
 import type { SsrfPolicy } from "../../config";
 import { log } from "../../observability/logger";
-import type { TransportKind } from "./agent";
+import type { TransportKind, PoolAgent } from "./agent";
 import { isIP } from "node:net";
-import { createHttpProxyAgent, createSocks5Agent, isProxyAgentPair, PoolBindingError, type PoolAgent } from "./agent";
+import * as tls from "node:tls";
+import WebSocket, { type ClientOptions, type RawData } from "ws";
+import { isProxyAgentPair, createHttpProxyAgent, createSocks5Agent, PoolBindingError } from "./agent";
+import { Agent as HttpsAgent } from "node:https";
 import { parseAgentConfig, ProxyConfigError, type AgentConfig } from "../types";
+import type { ProviderWebSocketSession, ValidatedOutboundWebSocket } from "../../providers/provider-registry";
 
 /** Idle time after which an unused pool agent is destroyed. */
 const POOL_AGENT_IDLE_MS = 10 * 60_000;
@@ -234,6 +238,9 @@ export class PoolAgentResolver {
       }
     }
   }
+  async resolveWebSocketAgent(poolId: string, tenantId: string): Promise<PoolAgent> {
+    return this.resolveAgent(poolId, tenantId);
+  }
 
   private async buildAgent(poolId: string, tenantId: string): Promise<PoolAgent> {
     const row = await this.loader.load(poolId);
@@ -275,6 +282,165 @@ export class PoolAgentResolver {
 
 }
 /** Resolves upstream names and supplies the enforced outbound fetch capability. */
+function connectValidatedWebSocket(
+  url: URL,
+  headers: Readonly<Record<string, string>>,
+  signal: AbortSignal,
+  destination: ValidatedDestination,
+  agent?: PoolAgent,
+): Promise<ProviderWebSocketSession> {
+  const targetUrl = new URL(url.toString());
+  targetUrl.protocol = "wss:";
+  targetUrl.port = "";
+  targetUrl.hash = "";
+  const connectionOptions: ClientOptions = {
+    handshakeTimeout: 15_000,
+    perMessageDeflate: false,
+    followRedirects: false,
+    headers: { ...headers },
+    ...(agent === undefined ? {} : { agent: agentForWebSocket(agent) }),
+    ...(agent === undefined
+      ? {
+          createConnection: () => {
+            const socket = tls.connect({
+              host: destination.resolvedAddress,
+              port: 443,
+              servername: destination.hostname,
+              rejectUnauthorized: true,
+              ALPNProtocols: ["http/1.1"],
+            });
+            const onAbort = (): void => {
+              socket.destroy(new Error("connection aborted"));
+            };
+            signal.addEventListener("abort", onAbort, { once: true });
+            socket.once("secureConnect", () => signal.removeEventListener("abort", onAbort));
+            return socket;
+          },
+        }
+      : {}),
+  };
+  return new Promise<ProviderWebSocketSession>((resolve, reject) => {
+    const socket = new WebSocket(targetUrl, connectionOptions);
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      socket.terminate();
+      reject(new GatewayError("transport_unavailable", 502, "WebSocket handshake timed out"));
+    }, 15_000);
+    const abort = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.terminate();
+      reject(new GatewayError("transport_closed", 499, "WebSocket connection was cancelled"));
+    };
+    const onError = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+      reject(new GatewayError("transport_unavailable", 502, "WebSocket connection failed"));
+    };
+    socket.once("open", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+      resolve(new WsSession(socket, signal));
+    });
+    socket.once("error", onError);
+    socket.once("unexpected-response", onError);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+
+
+function agentForWebSocket(agent: PoolAgent): import("http").Agent | import("https").Agent {
+  if (isProxyAgentPair(agent)) return agent.https;
+  if (agent instanceof HttpsAgent) return agent;
+  throw new GatewayError("proxy_pool_unhealthy", 503, "configured WebSocket proxy pool does not support WSS");
+}
+
+class WsSession implements ProviderWebSocketSession {
+  readonly #socket: WebSocket;
+  readonly #signal: AbortSignal;
+  readonly #messages: string[] = [];
+  readonly #waiters: Array<{
+    resolve(value: string): void;
+    reject(reason: Error): void;
+    cleanup(): void;
+  }> = [];
+  #closed: Error | undefined;
+
+  constructor(socket: WebSocket, signal: AbortSignal) {
+    this.#socket = socket;
+    this.#signal = signal;
+    socket.on("message", (data: RawData, isBinary: boolean) => {
+      if (isBinary) {
+        this.#fail(new GatewayError("transport_unavailable", 502, "unexpected binary WebSocket frame"));
+        return;
+      }
+      const message = data.toString();
+      const waiter = this.#waiters.shift();
+      if (waiter) {
+        waiter.cleanup();
+        waiter.resolve(message);
+      } else {
+        this.#messages.push(message);
+      }
+    });
+    socket.on("close", () => this.#fail(new GatewayError("transport_closed", 502, "WebSocket connection closed")));
+    socket.on("error", () => this.#fail(new GatewayError("transport_unavailable", 502, "WebSocket connection failed")));
+  }
+
+  send(message: string): void {
+    if (this.#closed) throw this.#closed;
+    if (this.#socket.readyState !== WebSocket.OPEN) {
+      throw new GatewayError("transport_closed", 499, "WebSocket connection is not open");
+    }
+    this.#socket.send(message, { binary: false });
+  }
+
+  receive(signal: AbortSignal): Promise<string> {
+    const queued = this.#messages.shift();
+    if (queued !== undefined) return Promise.resolve(queued);
+    if (this.#closed) return Promise.reject(this.#closed);
+    const combined = AbortSignal.any([this.#signal, signal]);
+    return new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new GatewayError("transport_unavailable", 504, "WebSocket receive timed out"));
+      }, 45_000);
+      const onAbort = (): void => {
+        cleanup();
+        reject(new GatewayError("transport_closed", 499, "WebSocket receive was cancelled"));
+      };
+      const cleanup = (): void => {
+        clearTimeout(timeout);
+        combined.removeEventListener("abort", onAbort);
+      };
+      combined.addEventListener("abort", onAbort, { once: true });
+      this.#waiters.push({ resolve, reject, cleanup });
+      if (combined.aborted) onAbort();
+    });
+  }
+
+  close(code?: number, reason?: string): void {
+    if (this.#socket.readyState === WebSocket.CLOSED) return;
+    this.#socket.close(code, reason);
+  }
+
+  #fail(error: Error): void {
+    if (this.#closed) return;
+    this.#closed = error;
+    for (const waiter of this.#waiters.splice(0)) {
+      waiter.cleanup();
+      waiter.reject(error);
+    }
+  }
+}
 export class ValidatedNetworkBindingFactory {
   private readonly directFetch: ValidatedFetch;
 
@@ -322,6 +488,37 @@ export class ValidatedNetworkBindingFactory {
         }
         throw error;
       }
+    };
+  }
+  webSocket(networkPoolId?: string, tenantId?: string): ValidatedOutboundWebSocket {
+    return async (url, headers, signal) => {
+      if (url.protocol !== "wss:") {
+        throw new GatewayError("invalid_request", 400, "validated WebSocket egress requires wss");
+      }
+      if (url.username || url.password || url.hash || (url.port !== "" && url.port !== "443")) {
+        throw new GatewayError("invalid_request", 400, "invalid validated WebSocket target");
+      }
+      const hostname = url.hostname;
+      if (!hostname) throw new GatewayError("invalid_request", 400, "WebSocket target hostname is required");
+      const destination = await this.resolve(hostname, signal, 443);
+      if (!isAddressAllowed(destination.resolvedAddress, this.policy)) {
+        throw new GatewayError("invalid_request", 400, "unsafe upstream address rejected");
+      }
+      let agent: PoolAgent | undefined;
+      if (networkPoolId || tenantId) {
+        if (!networkPoolId || !tenantId || !this.poolResolver) {
+          throw new GatewayError("proxy_pool_unhealthy", 503, "configured WebSocket proxy pool could not be established");
+        }
+        try {
+          agent = await this.poolResolver.resolveWebSocketAgent(networkPoolId, tenantId);
+        } catch (error) {
+          if (error instanceof PoolBindingError) {
+            throw new GatewayError("proxy_pool_unhealthy", 503, "configured WebSocket proxy pool could not be established");
+          }
+          throw error;
+        }
+      }
+      return connectValidatedWebSocket(url, headers, signal, destination, agent);
     };
   }
 }

@@ -279,4 +279,27 @@ describe("ValidatedNetworkBindingFactory", () => {
       /unsafe upstream address rejected/,
     );
   });
+
+
+  test("WebSocket binding rejects non-WSS URLs and targets outside allowed ranges", async () => {
+    const factory = new ValidatedNetworkBindingFactory({});
+    const connect = factory.webSocket();
+    await expect(connect(new URL("https://example.com/"), {}, AbortSignal.timeout(5000))).rejects.toMatchObject({
+      code: "invalid_request",
+    });
+    await expect(connect(new URL("wss://127.0.0.1/"), {}, AbortSignal.timeout(5000))).rejects.toThrow(
+      /unsafe upstream address rejected/,
+    );
+  });
+
+  test("WSS uses a configured pool and never retries through direct egress", async () => {
+    const factory = new ValidatedNetworkBindingFactory({}, undefined, resolverFor(new Map()));
+    await expect(
+      factory.webSocket("missing-pool", "tenant-a")(
+        new URL("wss://93.184.216.34/"),
+        {},
+        AbortSignal.timeout(5000),
+      ),
+    ).rejects.toMatchObject({ code: "proxy_pool_unhealthy", status: 503 });
+  });
 });
