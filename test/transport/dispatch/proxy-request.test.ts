@@ -251,6 +251,11 @@ describe("handleProviderProxyRequest — dispatch rewrite", () => {
           fetchCalls.push([poolId, tenantId]);
           return (async () => new Response("ok")) as never;
         },
+        // Bound to the same selected pool as `fetch`; unused by an HTTP-only
+        // adapter, but the dispatch always builds it.
+        webSocket: () => (async () => {
+          throw new Error("this adapter does not open a WebSocket");
+        }) as never,
       } as never,
       poolSelector: {
         tryAcquireAvailablePool: async (
@@ -365,6 +370,9 @@ describe("handleProviderProxyRequest — dispatch rewrite", () => {
           fetchCalls.push([poolId, tenantId]);
           return (async () => new Response("ok")) as never;
         },
+        webSocket: () => (async () => {
+          throw new Error("this adapter does not open a WebSocket");
+        }) as never,
       } as never,
       poolSelector: {
         // Every eligible pool is at capacity: the atomic acquire refuses the
@@ -1095,6 +1103,9 @@ describe("handleProviderProxyRequest — dispatch rewrite", () => {
       networkBindingFactory: {
         resolve: async () => ({ hostname: "api.anthropic.com", resolvedAddress: "1.2.3.4" }),
         fetch: () => (async () => new Response("ok")) as never,
+        webSocket: () => (async () => {
+          throw new Error("this adapter does not open a WebSocket");
+        }) as never,
       } as never,
       poolSelector: {
         tryAcquireAvailablePool: async (

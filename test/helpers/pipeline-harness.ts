@@ -201,6 +201,13 @@ export function buildPipelineHarness(options: PipelineHarnessOptions = {}): Pipe
     fetch() {
       return async () => new Response("{}", { headers: { "content-type": "application/json" } });
     },
+    // The dispatch always builds a WSS binding beside the HTTP one; a test
+    // adapter that never opens a socket never reaches it.
+    webSocket() {
+      return async () => {
+        throw new Error("this adapter does not open a WebSocket");
+      };
+    },
   } as unknown as ValidatedNetworkBindingFactory;
 
   const readiness =
