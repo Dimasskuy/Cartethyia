@@ -25,6 +25,7 @@ import { and, eq, isNull, lt, or } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
 import { providerAccounts, providerOauthStates } from "../../persistence/schema";
 import { decryptCredentialToString, encryptCredential } from "../../security/crypto";
+import { record } from "./oauth-flow-store";
 import {
   loadAccountWithFreshness,
   OAUTH_REFRESH_SKEW_MS,
@@ -84,11 +85,41 @@ export interface OAuthTokenRefreshResult {
   /** Omitted when the provider keeps the existing refresh token valid. */
   readonly refresh?: string;
   readonly expiresAt: Date;
+  /**
+   * Auth configuration the refresh corrected or discovered — most often the
+   * upstream profile the account resolves to, which some providers only report
+   * beside a fresh access token. Omitted means the stored state stands.
+   */
+  readonly auth_state?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * What a refresher is told about the account it is refreshing.
+ *
+ * A refresh is not authorized by the refresh token alone everywhere: one flow
+ * replays the client credentials its login registered, another posts to a
+ * per-account token endpoint. Both belong to the account rather than to the
+ * token, so they are handed in here instead of being re-read from storage
+ * inside every provider client.
+ */
+export interface OAuthRefreshContext {
+  readonly account_id: string;
+  readonly auth_state?: Readonly<Record<string, unknown>>;
+  /** Current access token for endpoints that authenticate refresh requests with both tokens. */
+  readonly access_token?: string;
+  /** Decrypted companion secret for flows whose login registered a client secret. */
+  readonly client_secret?: string;
 }
 
 /** Provider-specific token-endpoint client. Implemented per provider in later phases. */
 export interface OAuthTokenRefresher {
-  refresh(refreshToken: string, signal?: AbortSignal): Promise<OAuthTokenRefreshResult>;
+  /** Requests the current access token in refresh context only when required by the endpoint. */
+  readonly requiresAccessToken?: boolean;
+  refresh(
+    refreshToken: string,
+    signal?: AbortSignal,
+    context?: OAuthRefreshContext,
+  ): Promise<OAuthTokenRefreshResult>;
 }
 
 type AccountRow = AccountWithFreshnessRow;
@@ -161,10 +192,32 @@ async function persistRefreshed(
       .update(providerAccounts)
       .set({
         credentialCiphertext: encryptCredential(result.access),
+        // Only what the refresh reported: a refresher that learned nothing new
+        // leaves the stored configuration alone rather than blanking it.
+        ...(result.auth_state === undefined ? {} : { authState: result.auth_state }),
       })
       .where(eq(providerAccounts.id, accountId));
     return true;
   });
+}
+
+/**
+ * Packages the account-side facts a refresh needs but the refresh token does
+ * not carry. The companion secret is decrypted here, once, so provider clients
+ * never reach into the database.
+ */
+function buildRefreshContext(row: AccountRow, includeAccessToken: boolean): OAuthRefreshContext {
+  const authState = record(row.authState);
+  return {
+    account_id: row.id,
+    ...(authState === undefined ? {} : { auth_state: authState }),
+    ...(includeAccessToken && row.credentialCiphertext
+      ? { access_token: decryptCredentialToString(row.credentialCiphertext) }
+      : {}),
+    ...(row.clientSecretCiphertext
+      ? { client_secret: decryptCredentialToString(row.clientSecretCiphertext) }
+      : {}),
+  };
 }
 
 /** Marks an account permanently unusable after a definitive refresh failure, fenced on the lease. */
@@ -345,6 +398,7 @@ export class OAuthRefreshService {
       const result = await refresher.refresh(
         refreshToken,
         AbortSignal.timeout(REFRESH_HTTP_TIMEOUT_MS),
+        buildRefreshContext(row, refresher.requiresAccessToken === true),
       );
       const persisted = await persistRefreshed(this.#db, row.id, owner, result);
       pushStructuredConsoleLog(persisted ? "info" : "warn", persisted ? "OAuth token refresh completed" : "OAuth token refresh lost lease", {

@@ -36,12 +36,20 @@ src/persistence/
   `models_provider_model_route_uidx`; `tenant_disabled_models` (tenant
   suppression of global/builtin rows; tenant-owned and BYOK rows are toggled
   directly on `models.enabled` instead).
-- **Credentials / health:** `provider_accounts` (ciphertext + health machine:
-  `status`, `consecutive_failures`, last success/error/cooldown/recovered,
-  `model_cooldowns`, `max_inflight`); `provider_oauth_states` 1:0/1 split
-  (`refresh_ciphertext`, `expires_at`, `lease_owner`/`lease_expires_at` fenced
-  CAS); `network_pools` (kind, endpoint config, ciphertext, `max_inflight`,
-  weight, tenant + health machine + latency/health-check columns);
+- **Credentials / health:** `provider_accounts` (ciphertext + `auth_state` +
+  health machine: `status`, `consecutive_failures`, last
+  success/error/cooldown/recovered, `model_cooldowns`, `max_inflight`);
+  `provider_oauth_states` 1:0/1 split (`refresh_ciphertext`,
+  `client_secret_ciphertext`, `expires_at`, `lease_owner`/`lease_expires_at`
+  fenced CAS). `auth_state` holds only non-secret per-account upstream auth
+  configuration (auth method, region, profile ARN, OAuth client id, token
+  endpoint) — it is carried to the adapter and to token refresh because the
+  request depends on it and a single credential string cannot express both;
+  `client_secret_ciphertext` is the encrypted companion secret for flows whose
+  refresh replays the client credentials their login registered. Secrets never
+  live in `auth_state`. `network_pools` (kind, endpoint config, ciphertext,
+  `max_inflight`, weight, tenant + health machine + latency/health-check
+  columns);
   `health_events` (entity kind + exactly-one-FK CHECK, from/to status, reason,
   error category).
 - **Routing:** `model_aliases(tenant, alias, target_model)`;

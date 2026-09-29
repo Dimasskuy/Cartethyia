@@ -159,6 +159,15 @@ export const providerAccounts = pgTable("provider_accounts", {
    */
   credentialFingerprint: text("credential_fingerprint"),
   credentialKind: credentialKind("credential_kind").notNull(),
+  /**
+   * Per-account upstream auth configuration that is not a secret: auth method,
+   * region, profile ARN, OAuth client id, token endpoint, scopes. The adapter
+   * reads it where the credential is resolved (it selects the regional endpoint
+   * and the profile the upstream binds the request to) and token refresh reads
+   * it again to pick the right endpoint and client. Secrets never live here —
+   * see `credential_ciphertext` and `provider_oauth_states`.
+   */
+  authState: jsonb("auth_state"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 
   // Health state machine columns.
@@ -199,6 +208,13 @@ export const providerOauthStates = pgTable("provider_oauth_states", {
     .primaryKey()
     .references(() => providerAccounts.id, { onDelete: "cascade" }),
   refreshCiphertext: bytea("refresh_ciphertext").notNull(),
+  /**
+   * Encrypted companion secret for the minority of flows whose refresh is not
+   * authorized by the refresh token alone: a device-flow client registration
+   * mints a client secret that must be replayed beside the token. Nullable —
+   * most providers refresh with the refresh token by itself.
+   */
+  clientSecretCiphertext: bytea("client_secret_ciphertext"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   // OAuth refresh lease: fenced compare-and-swap coordination so only one
   // process refreshes a given account's OAuth token at a time, and a losing

@@ -47,6 +47,7 @@ CREATE TABLE "provider_accounts" (
   "credential_ciphertext" bytea,
   "credential_fingerprint" text,
   "credential_kind" "credential_kind" NOT NULL,
+  "auth_state" jsonb,
   "status" "health_status" DEFAULT 'active' NOT NULL,
   "consecutive_failures" integer DEFAULT 0 NOT NULL,
   "last_success_at" timestamptz,
@@ -65,6 +66,7 @@ CREATE TABLE "provider_accounts" (
 CREATE TABLE "provider_oauth_states" (
   "provider_account_id" uuid PRIMARY KEY NOT NULL,
   "refresh_ciphertext" bytea NOT NULL,
+  "client_secret_ciphertext" bytea,
   "expires_at" timestamptz NOT NULL,
   "lease_owner" text,
   "lease_expires_at" timestamptz,

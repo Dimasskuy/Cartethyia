@@ -11,6 +11,12 @@ export interface OAuthAuthorizeRequest {
   readonly state: string;
   readonly codeChallenge: string;
   readonly redirectUri: string;
+  /**
+   * Provider-specific inputs the operator chose before the login started, such
+   * as which identity provider to sign in with. Providers that need none ignore
+   * it; the console passes whatever the start request carried.
+   */
+  readonly parameters?: Readonly<Record<string, string>>;
 }
 
 export interface OAuthExchangeResult {
@@ -19,6 +25,19 @@ export interface OAuthExchangeResult {
   readonly expiresAt: Date;
   /** Resolved display label (account email/org name) when the provider exposes one. */
   readonly accountLabel?: string;
+  /**
+   * Non-secret auth configuration the flow learned on the way in — the upstream
+   * profile the account is bound to, the region it was minted in, which method
+   * produced it. Persisted beside the tokens because every dispatched request
+   * and every later refresh needs it, and the token does not carry it.
+   */
+  readonly auth_state?: Readonly<Record<string, unknown>>;
+  /**
+   * Client secret minted by this flow's own client registration and replayed at
+   * refresh next to the refresh token. Persisted encrypted, never in
+   * `auth_state`.
+   */
+  readonly client_secret?: string;
 }
 
 export interface OAuthDeviceStartResult {
@@ -40,6 +59,12 @@ export interface OAuthDeviceFlowContext {
   readonly accountLabel: string;
   /** Provider-private state persisted by the console route. */
   readonly providerState?: string | undefined;
+  /**
+   * Provider-specific inputs the operator supplied when starting the flow — an
+   * organization URL, a region, which sign-in family to use. A provider that
+   * needs none ignores it.
+   */
+  readonly parameters?: Readonly<Record<string, string>> | undefined;
 }
 
 export type OAuthDevicePollResult =
@@ -90,6 +115,55 @@ export interface OAuthLoginClient {
     deviceAuthId: string,
     context?: OAuthDeviceFlowContext,
   ): Promise<OAuthDevicePollResult>;
+  /**
+   * Fields the browser flow must collect from the operator before it starts.
+   *
+   * Declared by the client rather than by the console, so a provider states its
+   * own requirement next to the code that consumes it. A client that declares
+   * nothing starts with no operator input.
+   */
+  readonly browserLoginFields?: readonly OAuthLoginField[];
+  /** Fields the device flow must collect before it starts. */
+  readonly deviceLoginFields?: readonly OAuthLoginField[];
+  /** Fields the import flow needs; only meaningful alongside `importCredential`. */
+  readonly importFields?: readonly OAuthLoginField[];
+  /**
+   * Completes a login from operator-supplied credential material rather than
+   * from a redirect or a device code — a pasted refresh token, an exported auth
+   * blob, or a raw API key.
+   *
+   * The console exposes this as one entry point. The client decides which
+   * credential family the input describes and validates it against the upstream
+   * before it is persisted, so an import cannot store material that never
+   * worked. `fields` carries whatever `importFields` declared.
+   */
+  importCredential?(input: OAuthImportInput): Promise<OAuthExchangeResult>;
+}
+
+/** One operator-supplied value a login needs before it can start. */
+export interface OAuthLoginField {
+  /** Key the value is passed back under, in `OAuthDeviceFlowContext.parameters`. */
+  readonly key: string;
+  readonly label: string;
+  readonly placeholder?: string;
+  /** Renders as a secret input and is never echoed back to the browser. */
+  readonly secret?: boolean;
+  /** Rejects an empty value before the flow starts. */
+  readonly required?: boolean;
+  /** Allowed values; renders as a select rather than a free-text input. */
+  readonly options?: readonly { readonly value: string; readonly label: string }[];
+  /** Default applied when the operator supplies nothing. */
+  readonly defaultValue?: string;
+}
+
+/** Everything an import flow was given. */
+export interface OAuthImportInput {
+  /** The pasted credential material: a token, a key, or an exported auth blob. */
+  readonly credential: string;
+  /** Values for the fields `loginFields` declared. */
+  readonly fields: Readonly<Record<string, string>>;
+  /** Account label the operator chose, when they chose one. */
+  readonly accountLabel?: string;
 }
 
 /** Provider-agnostic device-authorization start, normalized across providers. */
@@ -409,6 +483,8 @@ export interface PendingOAuthFlow {
   readonly accountLabel: string;
   readonly tenantId: string | null;
   readonly redirectUri: string;
+  /** Provider-specific start inputs, kept so the callback can rebuild its request. */
+  readonly parameters?: Readonly<Record<string, string>>;
 }
 
 export interface DeviceFlowCorrelation {
@@ -417,6 +493,8 @@ export interface DeviceFlowCorrelation {
   readonly tenantId: string | null;
   /** Provider-private state that must survive browser/device polling. */
   readonly providerState?: string;
+  /** Provider-specific start inputs, kept so a poll can rebuild its context. */
+  readonly parameters?: Readonly<Record<string, string>>;
 }
 export class OAuthFlowStore {
   readonly #redis: RedisClient;

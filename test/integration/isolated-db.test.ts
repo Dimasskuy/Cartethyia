@@ -101,6 +101,7 @@ const expectedColumns: Record<string, readonly ExpectedColumn[]> = {
     column("credential_ciphertext", "bytea", "bytea", "YES"),
     column("credential_fingerprint", "text", "text", "YES"),
     column("credential_kind", "USER-DEFINED", "credential_kind", "NO"),
+    column("auth_state", "jsonb", "jsonb", "YES"),
     column("status", "USER-DEFINED", "health_status", "NO"),
     column("consecutive_failures", "integer", "int4", "NO"),
     column("last_success_at", "timestamp with time zone", "timestamptz", "YES"),
@@ -116,6 +117,7 @@ const expectedColumns: Record<string, readonly ExpectedColumn[]> = {
   provider_oauth_states: [
     column("provider_account_id", "uuid", "uuid", "NO"),
     column("refresh_ciphertext", "bytea", "bytea", "NO"),
+    column("client_secret_ciphertext", "bytea", "bytea", "YES"),
     column("expires_at", "timestamp with time zone", "timestamptz", "NO"),
     column("lease_owner", "text", "text", "YES"),
     column("lease_expires_at", "timestamp with time zone", "timestamptz", "YES"),
