@@ -25,6 +25,7 @@ import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
 import { providerAccounts, providerOauthStates } from "../../persistence/schema";
 import { decryptCredentialToString, encryptCredential } from "../../security/crypto";
+import { invalidateCredentialCache } from "../operations/provider-credential-service";
 import { record } from "./oauth-flow-store";
 import {
   loadAccountWithFreshness,
@@ -211,6 +212,7 @@ async function persistRefreshed(
         ...(result.auth_state === undefined ? {} : { authState: result.auth_state }),
       })
       .where(eq(providerAccounts.id, accountId));
+    invalidateCredentialCache(accountId);
     return true;
   });
 }
@@ -262,6 +264,7 @@ async function disableAccount(
         lastErrorAt: new Date(),
       })
       .where(eq(providerAccounts.id, accountId));
+    invalidateCredentialCache(accountId);
   });
 }
 

@@ -25,6 +25,9 @@ interface ReadinessMemoKey {
 let readinessMemo:
   | { key: ReadinessMemoKey; at: number; value: ReadinessCheckResult }
   | undefined;
+/** Shared in-flight promise so concurrent callers after TTL expiry share one probe. */
+let readinessInflight: Promise<ReadinessCheckResult> | undefined;
+let readinessInflightKey: ReadinessMemoKey | undefined;
 
 function sameMemoKey(left: ReadinessMemoKey, right: ReadinessMemoKey): boolean {
   return (
@@ -186,9 +189,22 @@ export async function checkReadiness(
   if (readinessMemo && sameMemoKey(readinessMemo.key, key) && now - readinessMemo.at < READINESS_MEMO_TTL_MS) {
     return readinessMemo.value;
   }
-  const value = await runReadinessChecks(db, redis, redisMode, timeoutMs);
-  readinessMemo = { key, at: Date.now(), value };
-  return value;
+  // Single-flight: concurrent callers after TTL expiry share one probe instead
+  // of N parallel Postgres/Redis round-trips.
+  if (readinessInflight && readinessInflightKey && sameMemoKey(readinessInflightKey, key)) {
+    return readinessInflight;
+  }
+  readinessInflightKey = key;
+  readinessInflight = runReadinessChecks(db, redis, redisMode, timeoutMs)
+    .then((value) => {
+      readinessMemo = { key, at: Date.now(), value };
+      return value;
+    })
+    .finally(() => {
+      readinessInflight = undefined;
+      readinessInflightKey = undefined;
+    });
+  return readinessInflight;
 }
 
 /**

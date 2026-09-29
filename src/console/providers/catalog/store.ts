@@ -7,6 +7,7 @@ import type { CartethyiaDatabase } from "../../../persistence/postgres";
 import { models, providerAccounts, providerOauthStates, providers, telemetryEvents, telemetryUsageTotals, tenantDisabledModels } from "../../../persistence/schema";
 import type { WireFamily } from "../../../transport/canonical-model";
 import { listAccountHealthEvents, recoverAccount, type AccountHealthEventRecord } from "../../../providers/operations/account-health-service";
+import { invalidateCredentialCache } from "../../../providers/operations/provider-credential-service";
 import { encryptCredential, hashSecret } from "../../../security/crypto";
 import type { TelemetryBatchBuffer } from "../../../observability/telemetry-buffer";
 import { gatewayErrorSql } from "../../../observability/telemetry-status";
@@ -809,6 +810,11 @@ export class DrizzleProviderCatalogStore implements ProviderCatalogStore {
           : await this.db.select().from(providerAccounts).where(where);
       const row = rows[0];
       if (!row) return undefined;
+      // Secret/status mutation: drop any cached credential so the next
+      // attempt decrypts the new ciphertext (or refuses a disabled account).
+      if (patch.secret !== undefined || patch.status !== undefined) {
+        invalidateCredentialCache(accountId);
+      }
       const [account] = await this.accountsWithUsage(tenantId, [row]);
       return account;
     } catch (error) {

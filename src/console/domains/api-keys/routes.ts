@@ -5,6 +5,7 @@
 import { Elysia, t } from "elysia";
 import { randomBytes, randomUUID } from "node:crypto";
 import { decryptCredentialToString, encryptCredential } from "../../../security/crypto";
+import { invalidateApiKeyCache } from "../../../security/api-key-auth";
 import { hashShareToken } from "../../../persistence/share-store";
 import type { AccessDecision } from "../../../security/access-control";
 import { ConsoleDomainError, errorResponse, requireTenantScope } from "../../shared/errors";
@@ -184,6 +185,7 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
           : { clientRouterDenylist: patchRequest.clientRouterDenylist }),
       });
       if (!updated) throw new ConsoleDomainError("key_not_found", 404, "Key not found");
+      invalidateApiKeyCache(keyId);
 
       if (modeChanged || secret !== undefined) {
         const children = await config.store.listChildren(authorized.tenantId, keyId);
@@ -204,6 +206,7 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
       const authorized = requireTenantScope(access, "dashboard:write");
       const revoked = await config.store.revoke(authorized.tenantId, keyId, new Date());
       if (!revoked) throw new ConsoleDomainError("key_not_found", 404, "Key not found");
+      invalidateApiKeyCache(keyId);
       const children = await config.store.listChildren(authorized.tenantId, keyId);
       await Promise.all([
         config.admissionService.purgeKey(keyId),
@@ -373,6 +376,7 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
         keyPrefix: generated.prefix,
       });
       if (!updated) throw new ConsoleDomainError("key_not_found", 404, "Key not found");
+      invalidateApiKeyCache(keyId);
       await config.admissionService.purgeKey(keyId);
       const shareStore = config.shareStore;
       let share: ShareKeyResponse | null = null;

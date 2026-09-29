@@ -246,13 +246,19 @@ function degradeMediaPart(
  * turn — the router filters candidates per variant, so the first variant
  * with a non-empty plan wins without ever consulting a blind pool.
  */
-function degradedRequestVariants(
+/**
+ * Yields successively degraded request variants lazily. The common case —
+ * first variant plans successfully — never builds the remaining clones.
+ */
+function* degradedRequestVariants(
   original: CanonicalRequest,
-): Array<{ request: CanonicalRequest; degraded: readonly RequiredCapability[]; required: readonly RequiredCapability[] }> {
+): Generator<{
+  request: CanonicalRequest;
+  degraded: readonly RequiredCapability[];
+  required: readonly RequiredCapability[];
+}> {
   const required = deriveRequiredCapabilities(original);
-  const variants: Array<{ request: CanonicalRequest; degraded: readonly RequiredCapability[]; required: readonly RequiredCapability[] }> = [
-    { request: original, degraded: [], required },
-  ];
+  yield { request: original, degraded: [], required };
   const priority: RequiredCapability[] = [
     ...required.filter((c) => c.startsWith("generation_control:") || c.startsWith("extension:")),
     "prompt_caching",
@@ -266,7 +272,6 @@ function degradedRequestVariants(
     "document",
     "audio",
   ] as RequiredCapability[];
-  // Only consider capabilities actually required.
   const ordered = priority.filter((c) => required.includes(c));
   let current: CanonicalRequest = original;
   const degraded: RequiredCapability[] = [];
@@ -275,9 +280,23 @@ function degradedRequestVariants(
     if (!next) continue;
     degraded.push(cap);
     current = next;
-    variants.push({ request: current, degraded: [...degraded], required: required.filter((c) => !degraded.includes(c)) });
+    yield {
+      request: current,
+      degraded: [...degraded],
+      required: required.filter((c) => !degraded.includes(c)),
+    };
   }
-  return variants;
+}
+
+/** True when the request carries tools or message parts that need repair/sanitize. */
+function requestNeedsToolRepair(request: CanonicalRequest): boolean {
+  if (request.tools !== undefined && request.tools.length > 0) return true;
+  for (const message of request.messages) {
+    for (const part of message.content) {
+      if (part.kind === "toolCall" || part.kind === "toolResult") return true;
+    }
+  }
+  return false;
 }
 
 export interface PreparedProxyRequest {
@@ -440,31 +459,29 @@ export class ProxyRequestPreparer {
     // rejects (`assistant[c1 c2] + tool[c1]` became a "complete" round with a
     // fabricated c2 result). Dropping first also removes the dangling results
     // that would otherwise be re-emitted as unpaired `role:"tool"` turns.
-    const winningProvider = eligible[0]?.provider_id;
-    const buddyFamily =
-      winningProvider !== undefined && BUDDY_PROVIDER_IDS.has(winningProvider);
-    const repairedMessages = buddyFamily
-      ? repairRequestToolCalls({
-          ...variantRequest,
-          messages: dropIncompleteToolRounds(variantRequest.messages),
-        })
-      : repairRequestToolCalls(variantRequest);
-    let effectiveRequest = repairedMessages;
-    // Anthropic-compatible tool ids are a structural requirement of the
-    // Messages wire, and a request may be routed to any candidate in the plan.
-    // Sanitizing after repair keeps synthesized results paired with their
-    // calls while removing ids strict upstreams reject.
-    effectiveRequest = sanitizeRequestToolIds(effectiveRequest);
+    // Fast path: chat/completions without tools skip the three full-message
+    // clones (repair → sanitize → project). Only run the heavy path when the
+    // request actually carries tools or tool-call/result parts.
+    let effectiveRequest = variantRequest;
+    if (requestNeedsToolRepair(variantRequest)) {
+      const winningProvider = eligible[0]?.provider_id;
+      const buddyFamily =
+        winningProvider !== undefined && BUDDY_PROVIDER_IDS.has(winningProvider);
+      // Order is load-bearing: dropIncompleteToolRounds MUST run before
+      // repairRequestToolCalls (see comment above).
+      effectiveRequest = buddyFamily
+        ? repairRequestToolCalls({
+            ...variantRequest,
+            messages: dropIncompleteToolRounds(variantRequest.messages),
+          })
+        : repairRequestToolCalls(variantRequest);
+      effectiveRequest = sanitizeRequestToolIds(effectiveRequest);
+    }
     if (signal?.aborted)
       throw new GatewayError("transport_closed", 499, "request was cancelled");
     // Project against the chosen candidate, not the intersection of every
-    // candidate in the plan. The planner already filtered `eligible` to the
-    // candidates that support this variant's requirements, so the chosen one
-    // supports them; the intersection does not, because a later fallback
-    // candidate can lack a control the chosen one has. Intersecting here made
-    // a request fail with `capability_unsupported` for a capability its own
-    // winning route supports — a `max_tokens` the chosen wire can express was
-    // rejected because some other candidate in the fallback list cannot.
+    // candidate in the plan. Still required for generation-control stripping
+    // even on the no-tools path — keep it, but it is cheap vs message clones.
     effectiveRequest = projectForRoute(effectiveRequest, routeCapabilitiesFor(eligible[0]!));
     const estimatedInputTokens = estimateInputTokens(effectiveRequest);
     const estimatedOutputTokens =

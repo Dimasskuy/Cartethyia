@@ -6,6 +6,58 @@ import { GatewayError } from "../transport/gateway-error";
 import { hashSecret } from "./crypto";
 import type { AccessScope } from "./access-control";
 
+// ── Authorization cache ──────────────────────────────────────────────────────
+/**
+ * TTL-based in-memory cache for `resolveApiKeyAuthorization`, keyed by the
+ * token hash. The Postgres round-trips this avoids (1–3 SELECTs per request)
+ * are the single largest latency contributor on the `/v1/*` hot path.
+ *
+ * Trade-off: `lifetime_tokens_consumed` in the cached snapshot may be up to
+ * `AUTH_CACHE_TTL_MS` stale. The admission service's real-time in-flight and
+ * estimated-token accounting is the actual enforcement mechanism; the
+ * snapshot's consumed value is a reference point, so a brief stale window
+ * cannot meaningfully over-consume a budget.
+ *
+ * Negative results (unknown/revoked tokens) are deliberately NOT cached, so
+ * a newly minted key is usable immediately.
+ */
+const AUTH_CACHE_TTL_MS = 3_000;
+const AUTH_CACHE_MAX_ENTRIES = 10_000;
+
+interface AuthCacheEntry {
+  readonly at: number;
+  readonly value: ResolvedApiKey;
+}
+
+const authCache = new Map<string, AuthCacheEntry>();
+/** Reverse index: keyId → set of token hashes that resolved to it. */
+const authCacheByKeyId = new Map<string, Set<string>>();
+
+function evictAuthCacheOldest(): void {
+  while (authCache.size > AUTH_CACHE_MAX_ENTRIES) {
+    const oldest = authCache.keys().next().value;
+    if (oldest === undefined) return;
+    authCache.delete(oldest);
+  }
+}
+
+/**
+ * Invalidates every cached authorization entry for one API key (or the entire
+ * cache when `keyId` is omitted). Called by the API-key domain after any
+ * mutation that changes a key's scopes, limits, or revoked state.
+ */
+export function invalidateApiKeyCache(keyId?: string): void {
+  if (keyId === undefined) {
+    authCache.clear();
+    authCacheByKeyId.clear();
+    return;
+  }
+  const hashes = authCacheByKeyId.get(keyId);
+  if (!hashes) return;
+  for (const hash of hashes) authCache.delete(hash);
+  authCacheByKeyId.delete(keyId);
+}
+
 /**
  * Resolves an inbound `/v1/*` bearer token to its persisted API key row and
  * builds the immutable `ApiKeyAuthorizationSnapshot` consumed by
@@ -232,6 +284,8 @@ export async function resolveApiKeyAuthorization(
   token: string,
 ): Promise<ResolvedApiKey | undefined> {
   const hash = hashSecret(token);
+  const cached = authCache.get(hash);
+  if (cached && Date.now() - cached.at < AUTH_CACHE_TTL_MS) return cached.value;
   const store = new DrizzleApiKeyStore(db);
   const row = await store.findActiveByHash(hash);
   if (!row) return undefined;
@@ -266,11 +320,18 @@ export async function resolveApiKeyAuthorization(
     scopes,
   });
 
-  return {
+  const value: ResolvedApiKey = {
     id: row.id,
     tenantId: row.tenantId,
     scopes,
     snapshot,
     ...(row.modelPrefix ? { modelPrefix: row.modelPrefix } : {}),
   };
+  // Populate cache and reverse index.
+  authCache.set(hash, { at: Date.now(), value });
+  const hashes = authCacheByKeyId.get(value.id) ?? new Set<string>();
+  hashes.add(hash);
+  authCacheByKeyId.set(value.id, hashes);
+  evictAuthCacheOldest();
+  return value;
 }

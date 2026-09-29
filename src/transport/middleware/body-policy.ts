@@ -75,13 +75,10 @@ export async function readIngressBody(
 
   const reader = request.body?.getReader();
   if (!reader) throw new GatewayError("invalid_request", 400, "malformed JSON request body");
-  // Decode incrementally — no intermediate chunk array or contiguous buffer,
-  // so the body never exists as a third full copy before parsing. The cap is
-  // enforced against accumulated BYTES: `text.length` counts UTF-16 code
-  // units, which undercounts multibyte UTF-8 and would let oversized bodies
-  // through across chunk boundaries.
-  const decoder = new TextDecoder();
-  let text = "";
+  // Collect raw chunks then decode once. String `+=` on each chunk reallocates
+  // the accumulating UTF-16 string (O(n²) for large Claude Code prompts);
+  // Buffer.concat + one TextDecoder pass is linear and allocation-stable.
+  const chunks: Uint8Array[] = [];
   let totalBytes = 0;
   try {
     while (true) {
@@ -93,9 +90,8 @@ export async function readIngressBody(
         await reader.cancel().catch(() => undefined);
         throw new GatewayError("invalid_request", 413, "request body exceeds configured limit");
       }
-      text += decoder.decode(chunk, { stream: true });
+      chunks.push(chunk);
     }
-    text += decoder.decode();
   } finally {
     // The oversize branch above cancels the reader, and `cancel()` releases
     // the lock itself — releasing again throws ERR_INVALID_STATE, which would
@@ -107,6 +103,7 @@ export async function readIngressBody(
     }
   }
   try {
+    const text = new TextDecoder().decode(Buffer.concat(chunks));
     const body = JSON.parse(text) as unknown;
     assertBoundedJsonDepth(body);
     return body;
@@ -127,8 +124,10 @@ function assertBoundedJsonDepth(value: unknown, depth = 0): void {
     return;
   }
   if (value !== null && typeof value === "object") {
-    for (const item of Object.values(value as Record<string, unknown>))
-      assertBoundedJsonDepth(item, depth + 1);
+    // for...in avoids allocating the Object.values() array per node.
+    for (const key in value as Record<string, unknown>) {
+      assertBoundedJsonDepth((value as Record<string, unknown>)[key], depth + 1);
+    }
   }
 }
 

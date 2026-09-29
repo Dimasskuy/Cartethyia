@@ -3,6 +3,7 @@ import type { Elysia } from "elysia";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { providerAccounts, providers } from "../../persistence/schema";
 import { providerDisplayName } from "../../providers/provider-metadata";
+import { invalidateCredentialCache } from "../../providers/operations/provider-credential-service";
 import { requireTenantScope } from "../shared/errors";
 import {
   GLOBAL_QUOTA_LENS,
@@ -524,6 +525,7 @@ export function registerAccountQuotaTenantRoutes(
         set.status = 404;
         return { error: `Account ${accountId} not found`, code: "not_found" };
       }
+      invalidateCredentialCache(accountId);
       // The account is gone, so its cached quota must go with it — unlike a
       // status flip, nothing can make this value meaningful again.
       await invalidateQuotaCache(access.tenantId, accountId, redis);

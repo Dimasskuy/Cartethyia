@@ -4,6 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { adminAuditLog, providerAccounts } from "../../persistence/schema";
 import { requireGlobalAdmin } from "../shared/errors";
 import { GLOBAL_QUOTA_LENS, invalidateQuotaCache } from "./cache";
+import { invalidateCredentialCache } from "../../providers/operations/provider-credential-service";
 import {
   QUOTA_REFRESH_TIMEOUT_MS,
   loadQuotaTarget,
@@ -106,6 +107,7 @@ export function registerAccountQuotaGlobalRoutes(
         set.status = 404;
         return { error: `Global account ${accountId} not found`, code: "not_found" };
       }
+      invalidateCredentialCache(accountId);
       // Global accounts cache their quota under the shared lens, so that is the
       // entry to drop — nothing can make the value meaningful again.
       await invalidateQuotaCache(GLOBAL_QUOTA_LENS, accountId, redis);

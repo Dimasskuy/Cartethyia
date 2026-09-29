@@ -10,6 +10,44 @@ import { CredentialResolver, parseProviderId, type CredentialAlternative, type C
 import type { ResolvedCredential } from "../provider-registry";
 import { record } from "../authentication/oauth-flow-store";
 
+// ── Credential cache ─────────────────────────────────────────────────────────
+/**
+ * TTL-based cache for `resolveCredentialForAccount`, keyed by accountId.
+ * Avoids a Postgres SELECT + AES-GCM decrypt on every attempt. The TTL is
+ * short enough that credential rotation is picked up almost immediately;
+ * `invalidateCredentialCache` provides explicit invalidation for the
+ * credential-rotation mutation points.
+ */
+const CRED_CACHE_TTL_MS = 5_000;
+const CRED_CACHE_MAX_ENTRIES = 2_000;
+
+interface CredCacheEntry {
+  readonly at: number;
+  readonly value: ResolvedCredential;
+}
+
+const credCache = new Map<string, CredCacheEntry>();
+
+function evictCredCacheOldest(): void {
+  while (credCache.size > CRED_CACHE_MAX_ENTRIES) {
+    const oldest = credCache.keys().next().value;
+    if (oldest === undefined) return;
+    credCache.delete(oldest);
+  }
+}
+
+/**
+ * Invalidates one account's cached credential (or the entire cache).
+ * Call after credential rotation, account deletion, or account disable.
+ */
+export function invalidateCredentialCache(accountId?: string): void {
+  if (accountId === undefined) {
+    credCache.clear();
+    return;
+  }
+  credCache.delete(accountId);
+}
+
 /** Default proactive OAuth refresh window. */
 export const OAUTH_REFRESH_SKEW_MS = 5 * 60 * 1000;
 
@@ -86,6 +124,16 @@ export async function resolveCredentialForAccount(
   accountId: string,
   oauth?: ResolveCredentialOAuth,
 ): Promise<ResolvedCredential> {
+  // Cache hit: skip DB round-trip + AES-GCM decrypt.
+  // Don't cache OAuth credentials whose token is due for refresh soon —
+  // the cached value would contain a soon-to-expire secret.
+  const now = Date.now();
+  const cached = credCache.get(accountId);
+  if (cached && now - cached.at < CRED_CACHE_TTL_MS) {
+    const kind = (cached.value as { credential_kind?: string }).credential_kind;
+    if (kind !== "oauth") return cached.value;
+  }
+
   const parsedProviderId = parseProviderId(providerId);
   const account = await loadAccountWithFreshness(db, accountId);
   if (!account) {
@@ -129,7 +177,15 @@ export async function resolveCredentialForAccount(
     ...(secret ? { secret } : {}),
     ...(authState === undefined ? {} : { auth_state: authState }),
   };
-  return resolver.resolve(parsedProviderId, [alternative]).credential;
+  const value = resolver.resolve(parsedProviderId, [alternative]).credential;
+  // Cache non-OAuth credentials unconditionally; OAuth only when far from expiry.
+  const isOAuth = row.credentialKind === "oauth";
+  const safeToCache = !isOAuth || (dueAt !== undefined && dueAt > now + CRED_CACHE_TTL_MS);
+  if (safeToCache) {
+    credCache.set(accountId, { at: now, value });
+    evictCredCacheOldest();
+  }
+  return value;
 }
 
 export async function resolveAccountSecretString(
