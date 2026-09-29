@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
 import { healthEvents, providerAccounts } from "../../persistence/schema";
-import { CLAUDE_CODE_USER_AGENT } from "../integrations/claude-code/claude-fingerprint";
+import { CLAUDE_CODE_USER_AGENT } from "../integrations/claude/claude-fingerprint";
 import { authCredential, codexJwtAccountId, text } from "../quota/quota-contracts";
 import { getCodexVersion } from "./client-versions";
 

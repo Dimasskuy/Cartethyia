@@ -55,7 +55,7 @@ import {
 } from "./kiro-request";
 import { machineIdForAuthState } from "./kiro-machine-id";
 import { resolveKiroProfileArn } from "./kiro-profile";
-import { kiroContextWindow } from "./catalog";
+import { kiroContextWindow } from "./kiro-catalog";
 import { resolveInboundSessionId } from "../../operations/session-resolution";
 import { KiroStreamDecoder, isKiroTruncationReason, type KiroUsage } from "./kiro-stream";
 

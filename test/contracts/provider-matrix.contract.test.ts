@@ -13,12 +13,12 @@ import { TOKENHARBOR_SPEC } from "../../src/providers/integrations/tokenharbor";
 import { HERMES_SPEC } from "../../src/providers/integrations/hermes";
 import { OPENROUTER_SPEC } from "../../src/providers/integrations/openrouter";
 import { XIAOMIPG_SPEC, XIAOMITP_SPEC } from "../../src/providers/integrations/xiaomi-mimo/xiaomi";
-import { ZAI_SPEC } from "../../src/providers/integrations/zai/spec";
+import { ZAI_SPEC } from "../../src/providers/integrations/zai/zai";
 import { CEREBRAS_SPEC } from "../../src/providers/integrations/cerebras";
 import { createInferhubAdapter } from "../../src/providers/integrations/inferhub";
 import { createApiKeyAdapter, type ApiKeyProviderSpec } from "../../src/providers/integrations/configured-provider";
 import { GENERIC_API_KEY_SPECS } from "../../src/providers/integrations/configured-openai-providers";
-import { ClaudeAdapter } from "../../src/providers/integrations/claude-code/claude";
+import { ClaudeAdapter } from "../../src/providers/integrations/claude/claude";
 import { createCodexAdapter } from "../../src/providers/integrations/codex/codex";
 import type { ProviderDispatchTarget, ProviderAdapter } from "../../src/providers/provider-registry";
 import {

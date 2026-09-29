@@ -91,12 +91,12 @@ export const PROVIDER_CAPABILITIES = {
     loadModelDiscovery: openAIModelDiscovery("anthropic", { headers: (credential) => ({ "x-api-key": credential, "anthropic-version": "2023-06-01" }) }),
   },
   claude: {
-    loadAdapter: async () => (await import("./integrations/claude-code/claude")).claudeAdapter,
-    loadModels: async () => (await import("./integrations/claude-code/claude")).CLAUDE_MODELS,
-    loadAuthentication: oauthCapability(() => import("./integrations/claude-code/claude-oauth"), "claudeOAuthClient", { withRefresher: true }),
-    loadQuotaCollector: quotaCapability(() => import("./integrations/claude-code/claude-quota"), "fetchClaudeQuota"),
+    loadAdapter: async () => (await import("./integrations/claude/claude")).claudeAdapter,
+    loadModels: async () => (await import("./integrations/claude/claude")).CLAUDE_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/claude/claude-oauth"), "claudeOAuthClient", { withRefresher: true }),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/claude/claude-quota"), "fetchClaudeQuota"),
     loadModelDiscovery: async () => async ({ credential, fetcher }) => {
-      const { discoverClaudeModels } = await import("./integrations/claude-code/claude-oauth");
+      const { discoverClaudeModels } = await import("./integrations/claude/claude-oauth");
       const { modelIds } = await discoverClaudeModels(credential, ...(fetcher ? [fetcher] : []));
       return modelIds.map((modelId) => ({
         modelId,
@@ -142,7 +142,7 @@ export const PROVIDER_CAPABILITIES = {
   },
   devin: {
     loadAdapter: async () => (await import("./integrations/devin/devin")).devinAdapter,
-    loadModels: async () => (await import("./integrations/devin/catalog")).DEVIN_MODELS,
+    loadModels: async () => (await import("./integrations/devin/devin-catalog")).DEVIN_MODELS,
     loadAuthentication: oauthCapability(() => import("./integrations/devin/devin-oauth"), "devinOAuthClient"),
     loadQuotaCollector: quotaCapability(() => import("./integrations/devin/devin-quota"), "fetchDevinQuota"),
     // Devin's catalog is per-account: `GetCliModelConfigs` answers with the
@@ -173,7 +173,7 @@ export const PROVIDER_CAPABILITIES = {
   },
   kiro: {
     loadAdapter: async () => (await import("./integrations/kiro/kiro")).kiroAdapter,
-    loadModels: async () => (await import("./integrations/kiro/catalog")).KIRO_MODELS,
+    loadModels: async () => (await import("./integrations/kiro/kiro-catalog")).KIRO_MODELS,
     loadAuthentication: oauthCapability(() => import("./integrations/kiro/kiro-oauth"), "kiroOAuthClient", {
       withRefresher: true,
     }),
@@ -394,9 +394,9 @@ export const PROVIDER_CAPABILITIES = {
     loadQuotaCollector: quotaCapability(() => import("./integrations/xiaomi-mimo/mimostudio-quota"), "fetchMimoStudioQuota"),
   },
   zai: {
-    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/zai/spec")).ZAI_SPEC),
+    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/zai/zai")).ZAI_SPEC),
     loadQuotaCollector: quotaCapability(() => import("./integrations/zai/zai-quota"), "fetchZaiQuota"),
-    loadModelDiscovery: async () => async ({ credential }) => (await import("./integrations/zai/spec")).discoverZaiModels({ credential }),
+    loadModelDiscovery: async () => async ({ credential }) => (await import("./integrations/zai/zai")).discoverZaiModels({ credential }),
   },
   zcode: {
     loadAdapter: async () => createApiKeyAdapter((await import("./integrations/zcode")).ZCODE_SPEC),

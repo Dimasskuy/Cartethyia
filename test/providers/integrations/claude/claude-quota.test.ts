@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fetchClaudeQuota } from "../../../../src/providers/integrations/claude-code/claude-quota";
+import { fetchClaudeQuota } from "../../../../src/providers/integrations/claude/claude-quota";
 import type { FetchLike } from "../../../../src/providers/quota/quota-contracts";
 
 const QUOTA_BODY = JSON.stringify({

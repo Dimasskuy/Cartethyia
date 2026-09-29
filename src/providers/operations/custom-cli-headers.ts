@@ -9,7 +9,7 @@ import { getCodexVersion } from "./client-versions";
 import {
   CLAUDE_CODE_SDK_VERSION,
   CLAUDE_CODE_USER_AGENT,
-} from "../integrations/claude-code/claude-fingerprint";
+} from "../integrations/claude/claude-fingerprint";
 import type { WireFamily } from "../../transport/canonical-model";
 
 /** Builds Codex CLI identity headers for OpenAI-compatible wire families. */

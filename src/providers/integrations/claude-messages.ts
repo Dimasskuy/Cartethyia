@@ -11,7 +11,7 @@
  *
  * Deliberately [CC]-OAuth-free: no CLI fingerprint, no CCH billing
  * attestation, no beta negotiation, no Stainless identity. The [CC] OAuth
- * impersonation policy lives in `./claude-code/`.
+ * impersonation policy lives in `./claude/`.
  */
 import type { CanonicalRequest } from "../../transport/canonical-model";
 import { canonicalToClaudeMessagesPayload } from "../../protocol/request/messages";

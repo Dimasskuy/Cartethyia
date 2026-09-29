@@ -3,8 +3,8 @@
  *
  * Talks to the Cascade chat API (`https://server.codeium.com`,
  * Connect+protobuf over HTTP/1.1) using the generated declarations in
- * `src/providers/integrations/devin/generated/` (generated from the oh-my-pi
- * protos via `buf generate`; never hand-edit generated files, only this wiring).
+ * `src/providers/integrations/devin/generated/` (protobuf declarations;
+ * never hand-edit generated files, only this wiring).
  *
  * Do NOT slim the generated folder: api_server.proto imports cortex,
  * codeium_common, trust, etc., and protoc-gen-es emits per-file — dropping a
@@ -69,7 +69,7 @@ import {
   DEVIN_BASE_URL,
   DEVIN_CHAT_PATH,
   DEVIN_PROVIDER_ID,
-} from "./catalog";
+} from "./devin-catalog";
 import {
   CONNECT_COMPRESSED_FLAG,
   CONNECT_END_STREAM_FLAG,

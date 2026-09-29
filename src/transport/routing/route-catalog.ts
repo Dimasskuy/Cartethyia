@@ -14,7 +14,7 @@ import {
   tenantDisabledModels,
   cliToolMappings,
 } from "../../persistence/schema";
-import "../../providers/integrations/claude-code/claude-oauth";
+import "../../providers/integrations/claude/claude-oauth";
 import "../../providers/integrations/codex/codex-oauth";
 import { resolveTenantOverride } from "../../persistence/tenant-scope";
 import {

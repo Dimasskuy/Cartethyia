@@ -4,18 +4,18 @@ import {
   computeClaudeCch,
   createClaudeBillingText,
   patchClaudeCchBody,
-} from "../../../../src/providers/integrations/claude-code/claude-cch";
-import { CLAUDE_CODE_SDK_VERSION, CLAUDE_CODE_USER_AGENT, CLAUDE_CODE_VERSION } from "../../../../src/providers/integrations/claude-code/claude-fingerprint";
+} from "../../../../src/providers/integrations/claude/claude-cch";
+import { CLAUDE_CODE_SDK_VERSION, CLAUDE_CODE_USER_AGENT, CLAUDE_CODE_VERSION } from "../../../../src/providers/integrations/claude/claude-fingerprint";
 import { CLAUDE_TOOL_PREFIX, prefixClaudeToolName, unprefixClaudeToolName } from "../../../../src/protocol/primitives";
 import { OAUTH_MESSAGES_MAX_OUTPUT_TOKENS, ANTHROPIC_DEFAULT_MAX_TOKENS, canonicalToClaudeMessagesPayload } from "../../../../src/protocol/request/messages";
-import { buildClaudeHeaders, mapStainlessArch, mapStainlessOs } from "../../../../src/providers/integrations/claude-code/claude-credentials";
+import { buildClaudeHeaders, mapStainlessArch, mapStainlessOs } from "../../../../src/providers/integrations/claude/claude-credentials";
 import { filterClaudeCustomHeaders } from "../../../../src/providers/integrations/claude-messages";
-import { CURATED_CLAUDE_MODELS, ClaudeOAuthClient, discoverClaudeModels } from "../../../../src/providers/integrations/claude-code/claude-oauth";
+import { CURATED_CLAUDE_MODELS, ClaudeOAuthClient, discoverClaudeModels } from "../../../../src/providers/integrations/claude/claude-oauth";
 import { GatewayError } from "../../../../src/transport/gateway-error";
 import type { CanonicalRequest } from "../../../../src/transport/canonical-model";
 import type { ProviderDispatchTarget, ProviderDispatchContext } from "../../../../src/providers/provider-registry";
-import { CLAUDE_MODELS, ClaudeAdapter } from "../../../../src/providers/integrations/claude-code/claude";
-import { isClaudeMetadataUserId } from "../../../../src/providers/integrations/claude-code/claude";
+import { CLAUDE_MODELS, ClaudeAdapter } from "../../../../src/providers/integrations/claude/claude";
+import { isClaudeMetadataUserId } from "../../../../src/providers/integrations/claude/claude";
 import { claudeResponseToEvents } from "../../../../src/protocol/response/messages";
 import { ANTHROPIC_MODELS, AnthropicApiKeyAdapter } from "../../../../src/providers/integrations/anthropic";
 import { log } from "../../../../src/observability/logger";

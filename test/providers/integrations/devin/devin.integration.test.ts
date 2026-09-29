@@ -5,7 +5,7 @@ import { create, toBinary } from "@bufbuild/protobuf";
 import { GetChatMessageResponseSchema } from "../../../../src/providers/integrations/devin/generated/exa/api_server_pb/api_server_pb";
 import { GetUserJwtResponseSchema } from "../../../../src/providers/integrations/devin/generated/exa/auth_pb/auth_pb";
 import { _resetDevinAuthCache, buildDevinChatRequest, createDevinAdapter, fetchDevinModels, normalizeDevinSessionToken } from "../../../../src/providers/integrations/devin/devin";
-import { DEVIN_MODELS } from "../../../../src/providers/integrations/devin/catalog";
+import { DEVIN_MODELS } from "../../../../src/providers/integrations/devin/devin-catalog";
 import { providerUsesBespokeWire } from "../../../../src/providers/provider-metadata";
 import type { CanonicalRequest, CanonicalMessage } from "../../../../src/transport/canonical-model";
 import type { ProviderDispatchTarget, ProviderDispatchContext } from "../../../../src/providers/provider-registry";
