@@ -142,6 +142,7 @@ describe("SQL migration integrity", () => {
     const telemetryEvents =
       migration.match(/CREATE TABLE "telemetry_events" \(([\s\S]*?)\n\);/)?.[1] ?? "";
     expect(telemetryEvents).toContain('"error_origin" text');
+    expect(telemetryEvents).toContain('"requested_effort" text');
 
     // The enum the column depends on must be declared here too, or the table
     // cannot be created.

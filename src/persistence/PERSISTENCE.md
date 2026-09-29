@@ -51,7 +51,7 @@ src/persistence/
   `max_inflight`, weight, tenant + health machine + latency/health-check
   columns);
   `health_events` (entity kind + exactly-one-FK CHECK, from/to status, reason,
-  error category).
+  error category, and optional affected model for model-scoped throttles).
 - **Routing:** `model_aliases(tenant, alias, target_model)`;
   `model_combos(tenant, name, members[], strategy)`;
   `provider_routing_settings(provider_id, tenant_id NULL=global, strategy,
@@ -146,10 +146,11 @@ ciphertext.
   references, not bodies (see `observability/OBSERVABILITY.md`).
 - `share-store.ts`: `hashShareToken()` (SHA-256); `DrizzleShareLinkStore` —
   creates `enroll` and `handoff` links and resolves only active, unexpired links
-  whose parent matches the kind: `getApiKeyByShareToken()` resolves an `enroll`
-  link whose parent is an active hashless share template, and
-  `getHandoffByShareToken()` resolves a `handoff` link whose parent is an active
-  personal key. `issueSharedApiKey()` locks
+  whose parent matches the kind: `resolveShareLink()` returns a discriminated
+  `{kind: "enroll" | "handoff"}` result, resolving an `enroll` link only when its
+  parent is an active hashless share template and a `handoff` link only when its
+  parent is an active personal key, and `null` when the link's kind and the key's
+  mode disagree. `issueSharedApiKey()` locks
   parent and link before inserting the policy-inheriting child; the database
   unique-IP violation maps to the one-active-child-per-IP conflict.
 - `api-key-store.ts`: list/get/create/update/revoke plus `listChildren()` and

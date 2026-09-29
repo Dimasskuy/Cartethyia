@@ -1192,6 +1192,18 @@ export default function Usage(): ReactNode {
   const [requestLimit, setRequestLimit] = useState(50);
   const [requestStatusFilter, setRequestStatusFilter] = useState<number | null>(null);
   const requestsQuery = useUsageRequests(period, requestLimit, requestStatusFilter);
+  const [requestSortKey, setRequestSortKey] = useState<"startedAt" | "model" | "status" | "tokens" | "tps" | "ttft" | "duration">("startedAt");
+  const [requestSortDirection, setRequestSortDirection] = useState<"asc" | "desc">("desc");
+  const toggleRequestSort = (key: typeof requestSortKey): void => {
+    setRequestSortKey((current) => {
+      if (current !== key) {
+        setRequestSortDirection(key === "model" ? "asc" : "desc");
+        return key;
+      }
+      setRequestSortDirection((direction) => (direction === "asc" ? "desc" : "asc"));
+      return current;
+    });
+  };
   const seenIdsRef = useRef<Set<string>>(new Set());
   const [newRowIds, setNewRowIds] = useState<Set<string>>(new Set());
 
@@ -1235,7 +1247,37 @@ export default function Usage(): ReactNode {
   };
   const flight = useInFlight();
   const summary = summaryQuery.data?.totals;
-  const requestItems = requestsQuery.data?.items ?? [];
+  const requestItems = useMemo(() => {
+    const items = [...(requestsQuery.data?.items ?? [])];
+    const direction = requestSortDirection === "asc" ? 1 : -1;
+    const numeric = (value: number | undefined): number => (typeof value === "number" && Number.isFinite(value) ? value : -1);
+    items.sort((left, right) => {
+      switch (requestSortKey) {
+        case "model":
+          return `${left.providerId ?? ""}/${left.model ?? ""}`.localeCompare(`${right.providerId ?? ""}/${right.model ?? ""}`) * direction
+            || left.startedAt.localeCompare(right.startedAt) * -1;
+        case "status":
+          return ((left.httpStatus ?? 0) - (right.httpStatus ?? 0)) * direction
+            || left.startedAt.localeCompare(right.startedAt) * -1;
+        case "tokens":
+          return (((left.totalTokens ?? 0) - (right.totalTokens ?? 0)) * direction)
+            || left.startedAt.localeCompare(right.startedAt) * -1;
+        case "tps":
+          return ((numeric(left.tokensPerSec) - numeric(right.tokensPerSec)) * direction)
+            || left.startedAt.localeCompare(right.startedAt) * -1;
+        case "ttft":
+          return ((numeric(left.ttfbMs) - numeric(right.ttfbMs)) * direction)
+            || left.startedAt.localeCompare(right.startedAt) * -1;
+        case "duration":
+          return ((numeric(left.durationMs) - numeric(right.durationMs)) * direction)
+            || left.startedAt.localeCompare(right.startedAt) * -1;
+        case "startedAt":
+        default:
+          return left.startedAt.localeCompare(right.startedAt) * direction;
+      }
+    });
+    return items;
+  }, [requestsQuery.data?.items, requestSortKey, requestSortDirection]);
   const toggleRequestStatus = (status: number): void => {
     setRequestLimit(50);
     setRequestStatusFilter((current) => (current === status ? null : status));
@@ -1447,7 +1489,19 @@ export default function Usage(): ReactNode {
               style={{ maxHeight: "445px", overflow: "auto", borderRadius: "10px", border: "1px solid var(--inner-border)" }}
             >
               <DataTable
-                headers={["Time", "Provider/model", "API Key", "Status", "Tokens", "TPS", "TTFT", "Done"]}
+                headers={[
+                  { key: "startedAt", label: "Time", sortable: true },
+                  { key: "model", label: "Provider/model", sortable: true },
+                  { key: "apiKey", label: "API Key" },
+                  { key: "status", label: "Status", sortable: true },
+                  { key: "tokens", label: "Tokens", sortable: true },
+                  { key: "tps", label: "TPS", sortable: true },
+                  { key: "ttft", label: "TTFT", sortable: true },
+                  { key: "duration", label: "Done", sortable: true },
+                ]}
+                sortKey={requestSortKey}
+                sortDirection={requestSortDirection}
+                onSort={(key) => toggleRequestSort(key as typeof requestSortKey)}
               >
                 {requestItems.map((row) => {
                   const isNew = newRowIds.has(row.requestId);

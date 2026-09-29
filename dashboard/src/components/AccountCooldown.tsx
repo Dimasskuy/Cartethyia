@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-import { formatResetDistance } from "../shared/quota-formatters";
 
 /**
  * Cooldown presentation shared by every view that reports account health.
@@ -63,32 +61,3 @@ export function modelCoolingCount(accounts: readonly ModelCooldownSource[]): num
   return accounts.filter((account) => activeModelCooldowns(account) !== undefined).length;
 }
 
-/**
- * Status-line detail for a health dialog: the account-wide deadline and the
- * soonest per-model one, shown side by side rather than picking one.
- */
-export function AccountStatusDetail({
-  cooldownUntil,
-  modelCooldowns,
-}: {
-  readonly cooldownUntil?: string | null | undefined;
-  readonly modelCooldowns?: Readonly<Record<string, string>> | undefined;
-}): ReactNode {
-  const soonest = activeModelCooldowns({ modelCooldowns });
-  if (!cooldownUntil && !soonest) return null;
-  return (
-    <>
-      {cooldownUntil ? (
-        <span style={{ fontSize: "11px", color: "var(--orange)" }}>
-          Account: {formatResetDistance(cooldownUntil)}
-        </span>
-      ) : null}
-      {soonest ? (
-        <span style={{ fontSize: "11px", color: "var(--orange)" }} title={soonest.modelId}>
-          {soonest.count} model{soonest.count === 1 ? "" : "s"} cooling · {soonest.modelId}{" "}
-          {formatResetDistance(soonest.until)}
-        </span>
-      ) : null}
-    </>
-  );
-}

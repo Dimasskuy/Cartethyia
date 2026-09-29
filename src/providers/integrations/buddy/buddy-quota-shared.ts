@@ -224,37 +224,53 @@ export interface TencentBillingFetchOptions {
   readonly fetcher: FetchLike;
   /** Plan name used when the payload carries neither package field. */
   readonly defaultPlan: string;
+  /** Account UID for the `X-User-Id` billing identity header. */
+  readonly uid?: string | undefined;
 }
 
 /**
  * Fetches one provider's quota from the Tencent billing endpoint.
  *
  * Auth is always `Authorization: Bearer <credential>` — both `api_key` and
- * `oauth` accounts store a secret the caller has already resolved. Recurring
- * semantics ride on the `kind` prefix (`quota:` vs `bonus:`) plus the optional
+ * `oauth` accounts store a secret the caller has already resolved. The filter
+ * envelope is the reference shape (`ProductCode: p_tcaca`, statuses `[0, 3]`,
+ * a 101-year package window): an empty `{}` can answer success with zero
+ * credit packages for an account that has them.
+ * Recurring semantics ride on the `kind` prefix (`quota:` vs `bonus:`) plus the optional
  * `recurring` boolean, so Contract consumers that ignore `recurring` still see
  * the split.
  */
 export async function fetchTencentBillingQuota(
   options: TencentBillingFetchOptions,
 ): Promise<ProviderQuotaResult> {
-  const { source, display, url, headers, credential, fetcher, defaultPlan } = options;
+  const { source, display, url, headers, credential, fetcher, defaultPlan, uid } = options;
   const bearer = resolveBearerToken(credential);
   if (!bearer) {
     return { source, plan: null, windows: [], error: `${display} credential not available.` };
   }
 
   let response: Response;
+  const now = new Date();
+  const end = new Date(now.getTime() + 365 * 101 * 24 * 3600 * 1000);
+  const stamp = (value: Date): string => value.toISOString().slice(0, 19).replace("T", " ");
   try {
     response = await fetcher(url, {
       method: "POST",
       headers: {
         ...headers,
+        ...(uid === undefined || uid.length === 0 ? {} : { "X-User-Id": uid }),
         Authorization: `Bearer ${bearer}`,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: "{}",
+      body: JSON.stringify({
+        PageNumber: 1,
+        PageSize: 100,
+        ProductCode: "p_tcaca",
+        Status: [0, 3],
+        PackageEndTimeRangeBegin: stamp(now),
+        PackageEndTimeRangeEnd: stamp(end),
+      }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {

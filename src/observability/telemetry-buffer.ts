@@ -24,6 +24,8 @@ export interface TelemetryEventInput {
   readonly requestId: string;
   readonly sourceSurface: SourceSurface;
   readonly requestedModel: string;
+  /** Canonical reasoning effort the client asked for, when it asked for one. */
+  readonly requestedEffort?: string;
   readonly endpoint?: string;
   readonly apiKeyId?: string;
   readonly userAgent?: string;
@@ -95,6 +97,7 @@ function telemetryEventRow(event: TelemetryEventInput) {
     requestId: event.requestId,
     sourceSurface: event.sourceSurface,
     requestedModel: event.requestedModel,
+    requestedEffort: event.requestedEffort ?? null,
     endpoint: event.endpoint ?? null,
     apiKeyId: event.apiKeyId ?? null,
     userAgent: event.userAgent ?? null,

@@ -16,7 +16,7 @@ export interface BackoffOptions {
  * @returns The delay in milliseconds
  * 
  * Formula: min(maxDelayMs, baseDelayMs * 2^attempt)
- * With jitter enabled: adds ±25% random jitter to avoid thundering herd
+ * With jitter enabled: adds 0..+25% random jitter to avoid thundering herd
  */
 export function exponentialBackoff(attempt: number, options: BackoffOptions): number {
   const { baseDelayMs, maxDelayMs, jitter = false } = options;

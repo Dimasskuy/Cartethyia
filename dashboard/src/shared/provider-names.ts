@@ -56,7 +56,6 @@ const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   mimostudio: "MiMo Studio",
   perplexity: "Perplexity",
   "github": "GitHub Copilot",
-  autoclaw: "AutoClaw",
 };
 
 /** Resolves the label shown for a provider: explicit label (custom providers) wins, then the built-in display name, then the raw ID. */

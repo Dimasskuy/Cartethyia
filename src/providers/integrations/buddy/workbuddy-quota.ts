@@ -1,15 +1,18 @@
 import type { FetchLike, ProviderQuotaResult } from "../../quota/quota-contracts";
+import type { QuotaCollectionContext } from "../../quota/quota-support";
 import { providerBaseUrl } from "../../provider-metadata";
 import { buildWorkBuddyUserAgent, resolveWorkBuddyVersion } from "../../operations/client-versions";
 import { WORKBUDDY_DOMAIN } from "./workbuddy-shared";
 import { fetchTencentBillingQuota } from "./buddy-quota-shared";
+import { buddyAccountUid } from "./buddy-oauth-shared";
 
 /**
  * WorkBuddy international billing quota.
  *
  * Endpoint: POST https://www.workbuddy.ai/v2/billing/meter/get-user-resource
  * Request:  Authorization: Bearer <accessToken||apiKey>, desktop-client headers,
- *           Content-Type: application/json, Accept: application/json, body "{}"
+ *           X-User-Id for the account UID, and the reference filter envelope
+ *           (ProductCode p_tcaca, statuses [0, 3], 101-year package window).
  * Response: { code: 0, data: { Response: { Data: { Accounts: [...] } } } }
  *
  * Same Tencent billing envelope as CodeBuddy CN, so the parsing is the shared
@@ -44,8 +47,12 @@ async function billingHeaders(enterpriseId?: string): Promise<Record<string, str
 export async function fetchWorkBuddyQuota(
   credential: string,
   fetcher: FetchLike,
-  enterpriseId?: string,
+  context?: QuotaCollectionContext,
 ): Promise<ProviderQuotaResult> {
+  const authState = typeof context?.auth_state === "object" && context?.auth_state !== null
+    ? (context.auth_state as Record<string, unknown>)
+    : undefined;
+  const enterpriseId = typeof authState?.enterpriseId === "string" ? authState.enterpriseId : undefined;
   return fetchTencentBillingQuota({
     source: "workbuddy",
     display: "WorkBuddy",
@@ -54,5 +61,6 @@ export async function fetchWorkBuddyQuota(
     credential,
     fetcher,
     defaultPlan: "WorkBuddy",
+    uid: buddyAccountUid(credential),
   });
 }

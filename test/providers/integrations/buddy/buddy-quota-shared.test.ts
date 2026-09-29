@@ -209,6 +209,33 @@ describe("fetchTencentBillingQuota", () => {
     expect(authorization).toBe("Bearer oauth-access");
   });
 
+  test("sends the reference filter envelope and account billing identity", async () => {
+    let body = "";
+    let headers: Record<string, string> = {};
+    const fetcher = (async (_url: string, init: { body?: unknown; headers: Record<string, string> }) => {
+      body = String(init.body ?? "");
+      headers = init.headers;
+      return new Response(envelope([]));
+    }) as unknown as FetchLike;
+    const payload = `header.${Buffer.from(JSON.stringify({ sub: "account-uid" })).toString("base64url")}.sig`;
+    await fetchTencentBillingQuota({
+      source: "probe",
+      display: "Probe",
+      url: "https://probe.example/v2/billing/meter/get-user-resource",
+      headers: {},
+      credential: payload,
+      fetcher,
+      defaultPlan: "Fallback Plan",
+      uid: "account-uid",
+    });
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    expect(parsed).toMatchObject({ PageNumber: 1, PageSize: 100, ProductCode: "p_tcaca", Status: [0, 3] });
+    expect(typeof parsed.PackageEndTimeRangeBegin).toBe("string");
+    expect(typeof parsed.PackageEndTimeRangeEnd).toBe("string");
+    expect(headers["X-User-Id"]).toBe("account-uid");
+    expect(headers.Authorization).toBe(`Bearer ${payload}`);
+  });
+
   // The window shape is a contract with the Console; guard the fields the
   // dashboard reads directly rather than only the derived percentages.
   test("keeps a zero-capacity window with no percentage rather than dropping it", async () => {

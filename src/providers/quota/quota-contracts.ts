@@ -19,6 +19,8 @@ export interface ProviderQuotaResult {
   readonly plan: string | null;
   readonly windows: readonly ProviderQuotaWindow[];
   readonly error: string | null;
+  /** Display identity the billing surface reported, when it reported one. */
+  readonly accountLabel?: string;
 }
 
 export type FetchLike = typeof fetch;

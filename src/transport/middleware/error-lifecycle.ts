@@ -4,6 +4,7 @@ import { GatewayError, explainGatewayError, labelGatewayMessage, publicGatewayEr
 import type { ProxyRequestState, ProxyRequestStateStore } from "../request/state";
 import { GATEWAY_SECURITY_HEADERS } from "../../security/outbound-headers";
 import type { TelemetryBatchBuffer, TelemetryEventInput } from "../../observability/telemetry-buffer";
+import { reasoningEffortFromIntent } from "../../providers/reasoning";
 import { metrics } from "../../observability/metrics";
 import { computeTokensPerSec } from "../../observability/token-speed";
 import { pushStructuredConsoleLog } from "../../observability/log-ring";
@@ -282,11 +283,17 @@ function requestTelemetryEvent(
   const { status, httpStatus, latencyMs, tokensPerSec } = derived;
   const requestData = state.canonicalRequest;
   const isEarlyRejection = !requestData;
+  const requestedEffort = (() => {
+    if (requestData?.reasoning === undefined) return undefined;
+    const effort = reasoningEffortFromIntent(requestData.reasoning);
+    return effort === undefined || effort === "none" ? undefined : effort;
+  })();
   return {
     tenantId: authorization.tenantId,
     requestId: state.requestId,
     sourceSurface: requestData?.source_surface ?? "chat",
     requestedModel: requestData?.model ?? "unknown",
+    ...(requestedEffort === undefined ? {} : { requestedEffort }),
     ...(state.ingressPath ? { endpoint: state.ingressPath } : {}),
     ...(authorization.id ? { apiKeyId: authorization.id } : {}),
     ...(state.clientUserAgent ? { userAgent: state.clientUserAgent } : {}),

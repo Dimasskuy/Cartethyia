@@ -334,6 +334,7 @@ export const healthEvents = pgTable(
     toStatus: healthStatus("to_status").notNull(),
     reason: text("reason"),
     errorCategory: text("error_category"),
+    modelId: text("model_id"),
     createdAt: createdAtColumn(),
   },
   (table) => [
@@ -741,6 +742,8 @@ export const telemetryEvents = pgTable(
     requestId: uuid("request_id").notNull(),
     sourceSurface: telemetrySourceSurface("source_surface"),
     requestedModel: text("requested_model"),
+    /** Canonical reasoning effort the client asked for; NULL when it asked for none. */
+    requestedEffort: text("requested_effort"),
     providerId: text("provider_id"),
     accountId: uuid("account_id"),
     networkPoolId: uuid("network_pool_id"),

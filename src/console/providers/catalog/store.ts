@@ -786,16 +786,9 @@ export class DrizzleProviderCatalogStore implements ProviderCatalogStore {
         patch.secret.length === 0 ? null : hashSecret(patch.secret);
     }
     if (patch.status !== undefined) set.status = patch.status;
-    // Re-enabling an account, or handing it a new credential, clears the failure
-    // state the health machine recorded — the same reset `recoverAccount`
-    // performs. Without it the stale mark outlived the condition it described: a
-    // rejected credential keeps `auth_invalidated`, which now excludes the
-    // account from the quota sweep, so a re-authed account would never be probed
-    // again and would sit out of rotation forever. A new secret makes the old
-    // rejection meaningless by definition, and enabling the account is the
-    // operator asserting it should be tried.
-    const clearsFailureState =
-      patch.status === "active" || (patch.secret !== undefined && patch.secret.length > 0);
+    // Status toggles are not recovery: preserve the health machine's evidence
+    // until the operator uses Recover or replaces the rejected credential.
+    const clearsFailureState = patch.secret !== undefined && patch.secret.length > 0;
     if (clearsFailureState) {
       set.consecutiveFailures = 0;
       set.cooldownUntil = null;

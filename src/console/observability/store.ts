@@ -119,6 +119,15 @@ function chartBucketSeconds(period: string): number {
   return 86_400;
 }
 
+function modelWithEffort(event: typeof telemetryEvents.$inferSelect): string | undefined {
+  const model = event.requestedModel;
+  if (!model) return undefined;
+  const effort = event.requestedEffort;
+  if (!effort) return model;
+  // The model id is the routing key, so the effort rides as a display suffix —
+  // grouping, routing, and cost joins keep reading the bare id.
+  return `${model} (${effort})`;
+}
 
 function mapUsageRequestItem(
   event: typeof telemetryEvents.$inferSelect,
@@ -131,7 +140,7 @@ function mapUsageRequestItem(
     ...(event.sourceSurface ? { surface: event.sourceSurface } : {}),
     ...(event.providerId ? { providerId: event.providerId } : {}),
     ...(event.accountId ? { accountId: event.accountId } : {}),
-    ...(event.requestedModel ? { model: event.requestedModel } : {}),
+    ...(modelWithEffort(event) === undefined ? {} : { model: modelWithEffort(event) as string }),
     status: event.status ?? "unknown",
     ...(event.errorCategory ? { errorKind: event.errorCategory } : {}),
     ...(event.errorOrigin ? { errorOrigin: event.errorOrigin } : {}),

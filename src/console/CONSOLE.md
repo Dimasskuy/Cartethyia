@@ -445,8 +445,9 @@ upstream failure is `report_failed` with a 502.
 mapped to safe defaults (detailed, bounded, masked). `PATCH /settings/runtime` validates
 the enums and the concurrency limit (positive integer or `null` to clear), applies a JSONB merge
 upsert (`preferences || patch`), bumps the settings revision, and audits `settings.runtime.updated`,
-with errors omitting details. Hot paths read narrower slices than the whole row:
-`getTenantConcurrencyLimit` feeds the admission service, and the observability store masks client
+with errors omitting details. Hot paths read narrower slices than the whole row: the runtime
+dependency wiring projects `preferences.tenantConcurrencyLimit` into the admission service, and
+the observability store masks client
 IPs unless `privacyMode` is `full` (fail-closed: any read error masks).
 
 - `redisModeActual` is environment-derived and read-only; Redis mode is a deployment decision

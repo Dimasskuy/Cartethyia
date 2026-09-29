@@ -21,7 +21,7 @@
  * losing process's write touches zero rows in either table.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, lt, or } from "drizzle-orm";
+import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
 import { providerAccounts, providerOauthStates } from "../../persistence/schema";
 import { decryptCredentialToString, encryptCredential } from "../../security/crypto";
@@ -91,6 +91,11 @@ export interface OAuthTokenRefreshResult {
    * beside a fresh access token. Omitted means the stored state stands.
    */
   readonly auth_state?: Readonly<Record<string, unknown>>;
+  /**
+   * Display identity the refresh learned (email/username from the fresh token
+   * or token response). Omitted when the provider reports nothing new.
+   */
+  readonly accountLabel?: string;
 }
 
 /**
@@ -194,6 +199,15 @@ async function persistRefreshed(
         credentialCiphertext: encryptCredential(result.access),
         // Only what the refresh reported: a refresher that learned nothing new
         // leaves the stored configuration alone rather than blanking it.
+        // A learned identity only replaces a default label — an operator's
+        // custom rename is never overwritten. The CASE keeps the read and the
+        // write in one statement, so a concurrent rename cannot lose to the
+        // refresh's learned identity.
+        ...(result.accountLabel === undefined
+          ? {}
+          : {
+            label: sql`CASE WHEN lower(trim(${providerAccounts.label})) = lower(trim(${providerAccounts.providerId})) THEN ${result.accountLabel} ELSE ${providerAccounts.label} END`,
+          }),
         ...(result.auth_state === undefined ? {} : { authState: result.auth_state }),
       })
       .where(eq(providerAccounts.id, accountId));

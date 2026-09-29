@@ -99,11 +99,8 @@ dbDescribe("DrizzleProviderCatalogStore — account ownership boundary", () => {
     expect(result?.label).toBe("renamed");
   });
 
-  test("enabling an account or replacing its secret clears the recorded failure", async () => {
-    // `auth_invalidated` excludes an account from the quota sweep, so a stale
-    // mark outlives the condition it described: a re-authed account would never
-    // be probed again. Replacing the credential or re-enabling the account is
-    // the operator asserting it should work, so the failure state resets.
+  test("replacing an account secret clears the recorded failure", async () => {
+    // A new secret makes the old rejection evidence obsolete.
     await db
       .update(providerAccounts)
       .set({
@@ -133,6 +130,44 @@ dbDescribe("DrizzleProviderCatalogStore — account ownership boundary", () => {
     expect(row?.consecutiveFailures).toBe(0);
     expect(row?.cooldownUntil).toBeNull();
     expect(row?.modelCooldowns).toEqual({});
+  });
+
+  test("disabling and enabling an account preserve health errors until explicit recovery", async () => {
+    const lastErrorAt = new Date();
+    const cooldownUntil = new Date(Date.now() + 60_000);
+    const modelCooldowns = { "gpt-5": cooldownUntil.toISOString() };
+    await db
+      .update(providerAccounts)
+      .set({
+        status: "active",
+        consecutiveFailures: 2,
+        cooldownUntil,
+        modelCooldowns,
+        lastError: "Provider rate limit",
+        lastErrorCategory: "rate_limit_transient",
+        lastErrorAt,
+      })
+      .where(eq(providerAccounts.id, accountId));
+
+    await store.updateAccount(tenantA, providerId, accountId, { status: "disabled" });
+    let [row] = await db.select().from(providerAccounts).where(eq(providerAccounts.id, accountId)).limit(1);
+    expect(row?.status).toBe("disabled");
+    expect(row?.lastError).toBe("Provider rate limit");
+    expect(row?.lastErrorCategory).toBe("rate_limit_transient");
+    expect(row?.lastErrorAt?.getTime()).toBe(lastErrorAt.getTime());
+    expect(row?.cooldownUntil?.getTime()).toBe(cooldownUntil.getTime());
+    expect(row?.modelCooldowns).toEqual(modelCooldowns);
+    expect(row?.consecutiveFailures).toBe(2);
+
+    await store.updateAccount(tenantA, providerId, accountId, { status: "active" });
+    [row] = await db.select().from(providerAccounts).where(eq(providerAccounts.id, accountId)).limit(1);
+    expect(row?.status).toBe("active");
+    expect(row?.lastError).toBe("Provider rate limit");
+    expect(row?.lastErrorCategory).toBe("rate_limit_transient");
+    expect(row?.lastErrorAt?.getTime()).toBe(lastErrorAt.getTime());
+    expect(row?.cooldownUntil?.getTime()).toBe(cooldownUntil.getTime());
+    expect(row?.modelCooldowns).toEqual(modelCooldowns);
+    expect(row?.consecutiveFailures).toBe(2);
   });
 
   test("a label-only update leaves the recorded failure intact", async () => {
@@ -651,24 +686,6 @@ describe("OAuth account identity", () => {
         .where(eq(providerOauthStates.providerAccountId, first.accountId));
       expect(state).toHaveLength(1);
       expect(state[0]?.expiresAt.getTime()).toBeGreaterThan(Date.now() + 3_600_000);
-    });
-
-    test("persists AutoClaw refresh config and device identity beside imported tokens", async () => {
-      const store = new DrizzleOAuthAccountStore(db);
-      const account = await store.persistAccount(tenantId, "autoclaw", {
-        label: "autoclaw-user",
-        access: "autoclaw-access",
-        refresh: "autoclaw-refresh",
-        expiresAt: new Date(Date.now() + 3_600_000),
-        auth_state: { region: "cn", deviceId: "autoclaw-device" },
-      });
-      const [providerRow] = await db.select().from(providerAccounts).where(eq(providerAccounts.id, account.accountId));
-      const [oauthRow] = await db.select().from(providerOauthStates).where(eq(providerOauthStates.providerAccountId, account.accountId));
-
-      expect(providerRow?.authState).toEqual({ region: "cn", deviceId: "autoclaw-device" });
-      expect(providerRow?.credentialKind).toBe("oauth");
-      expect(oauthRow?.expiresAt.getTime()).toBeGreaterThan(Date.now());
-      expect(oauthRow?.refreshCiphertext).toBeDefined();
     });
 
     test("a different email is a different account", async () => {

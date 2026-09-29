@@ -13,6 +13,7 @@ import { providerBaseUrl } from "../providers/provider-metadata";
 import { GatewayError } from "../transport/gateway-error";
 import type { CanonicalStopReason, CanonicalTerminalEvent, UsageRecord } from "../transport/canonical-model";
 import { type WireFamily } from "../transport/canonical-model";
+import type { GenerationControls } from "../transport/canonical-model";
 import { BASE_PROTECTED_HEADERS, HEADER_CONTROL, HEADER_TOKEN } from "../security/outbound-headers";
 import { unwrapProviderToken } from "../providers/credential-envelope";
 
@@ -384,6 +385,36 @@ export function mapReasoningEffortToWireTier(
   if ((CODEX_WIRE_EFFORT_VALUES as readonly string[]).includes(effort))
     return effort as CodexWireEffort;
   return "medium";
+}
+
+/**
+ * Resolves the requested output verbosity from a canonical request's
+ * generation controls, independent of the surface it arrived on.
+ *
+ * Each surface files the same caller intent under a different key: Chat and
+ * Completion carry the documented top-level `verbosity` as
+ * `extension:verbosity`, Responses nests it under `text.verbosity` and stores
+ * it as `extension:responses.verbosity`, and `GenerationControls.verbosity` is
+ * the canonical slot. Reading only the canonical slot silently drops the
+ * control on every real request, because no surface parser writes it — the
+ * caller's `verbosity: "high"` reached the upstream as the model's default.
+ *
+ * The precedence mirrors `resolvePromptCacheKey`: the surface-specific
+ * spelling wins over the bare one, and both win over the canonical slot.
+ */
+export function resolveOutputVerbosity(
+  controls: GenerationControls | undefined,
+): string | undefined {
+  if (controls === undefined) return undefined;
+  const candidates = [
+    controls["extension:responses.verbosity"],
+    controls["extension:verbosity"],
+    controls.verbosity,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
 }
 
 /**

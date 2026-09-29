@@ -78,8 +78,8 @@ builders/parsers called directly by their adapters
 - `request/responses.ts` — `canonicalToResponsesPayload` +
   `markLatestResponsesCacheBreakpoint`: `extension:responses.*` names the
   canonical spelling and falls back to the bare `extension:*` one, and `verbosity`
-  resolves through `extension:responses.verbosity` → `extension:verbosity` →
-  `generation_controls.verbosity`, so the same intent arriving from any surface
+  resolves through the shared `resolveOutputVerbosity` (`protocol/primitives.ts`),
+  so the same intent arriving from any surface
   reaches `text.verbosity`; system/instructions → message items;
   tool calls/results → `function_call` / `function_call_output` (never
   swallowed into bare messages); `computer_call` / `computer_call_output` with
@@ -108,6 +108,8 @@ builders/parsers called directly by their adapters
   ids, encrypted/summary reasoning items, Harmony escaping gated on
   `gpt-oss`/`gpt-5`, `reasoning{effort,summary,mode,context}` + forced
   `include: ["reasoning.encrypted_content"]` when reasoning is present,
+  `text{verbosity,format}` (this wire has no top-level `response_format`, and
+  the format is nested beside verbosity — a flat one is a 400),
   `prompt_cache_key` derived from the caller's `cache_hint`, forced
   `stream:true, store:false`. The Codex adapter then overwrites that key with
   the session id (`request.session_id ?? resolvePromptCacheKey(request, context)`), and
@@ -190,7 +192,10 @@ never bills as success.
 (composite `|` split, invalid-char → `_`, 64-char cap with hash suffix,
 `_dupN` dedup), `sanitizeSchemaForAnthropic` (allowlisted schema keys),
 OAuth tool prefixing (`CLAUDE_TOOL_PREFIX = "_"`), billing-attestation drop,
-Codex ids/effort/session state, Harmony escaping (gpt-5/gpt-oss only),
+Codex ids/effort/session state, `resolveOutputVerbosity` (the surface-agnostic
+verbosity reader: `extension:responses.verbosity` → `extension:verbosity` →
+the canonical slot, because no surface parser writes the canonical one),
+Harmony escaping (gpt-5/gpt-oss only),
 `joinUrl`/`endpointUrl` (OAuth `?beta=true`), `BUILTIN_DEFAULT_ENDPOINTS`,
 `normalizeBearerToken`, `filterProviderCustomHeaders` (RFC-token name, 4 KiB
 value cap, control-char reject, protected-name reject — protection list
@@ -270,6 +275,13 @@ surface encoder emits the summary-part lifecycle, carrying `summary_index` end t
 missing-reasoning symptom was never reproduced; there is no confirmed defect to fix. If it recurs,
 capture the request id, the upstream event sequence, and what the client rendered before assigning
 a cause — see "Unified API hardening: current state" in `TRANSPORT.md`.
+
+Which of the two shapes a provider sends is the provider's choice, not a gateway decision. Some
+upstreams stream readable thinking (`reasoning_content` / `response.reasoning_text.delta`) and
+others only a short summary heading plus opaque state; the ChatGPT Codex backend is in the second
+group and no request-side field changes that. Per-provider measurements, the levers that were
+tried, and the replay finding are in "Known limitations: reasoning visibility" in
+`src/providers/PROVIDERS.md` — read it before treating a thin reasoning trace as a decoder bug.
 
 ### Token counting and compaction are protocol-specific
 

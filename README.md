@@ -12,7 +12,7 @@ models under admission control, capability checks, health tracking, and
 validated egress.
 
 The result is one endpoint, one key, one dashboard. Point Claude Code, Codex,
-Cursor, or any OpenAI-compatible client at it, and let the gateway work out which
+or any OpenAI-compatible client at it, and let the gateway work out which
 account serves the request, whether the provider can express what the client
 asked for, and what to do when it cannot.
 
@@ -21,7 +21,7 @@ Built with Bun, TypeScript, Elysia, PostgreSQL, and optional Redis coordination.
 ## Highlights
 
 - **Bundled provider integrations** — OpenAI, Anthropic, Codex, Gemini, Grok,
-  xAI Grok Subscription, Cursor, Devin, Mistral, Groq, OpenRouter, Cerebras, NVIDIA,
+  xAI Grok Subscription, Devin, Mistral, Groq, OpenRouter, Cerebras, NVIDIA,
   DeepSeek-family gateways, and more, each with its own authentication, wire
   quirks, and identity headers. The set is declared once in
   `src/providers/provider-metadata.ts`; mirrors (registry, capabilities, dashboard
@@ -268,8 +268,8 @@ It is not a substitute for a database dump.
 ## Providers and egress
 
 Provider integrations live under `src/providers/integrations/`. Generated
-protobuf output consumed by Cursor and Devin integrations is committed under
-their integration directories.
+protobuf output consumed by the Devin integration is committed under its
+integration directory.
 
 Supported network pool transports are:
 
@@ -282,8 +282,8 @@ pool failures are surfaced; requests do not silently fall back to direct egress.
 
 ## Generated protobuf
 
-Cursor and Devin integrations consume committed protobuf output under their own
-integration directories (`src/providers/integrations/*/generated/`). It is
+The Devin integration consumes committed protobuf output under its own
+integration directory (`src/providers/integrations/devin/generated/`). It is
 build input: normal typecheck, build, setup, and Docker build read it as-is and
 never regenerate it, so none of them need Buf, network access, or external code
 generation. Regenerating is a separate, deliberate step.

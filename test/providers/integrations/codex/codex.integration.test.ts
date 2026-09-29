@@ -2186,6 +2186,44 @@ describe("codex text verbosity", () => {
     const capturedBody = requests[0]?.body ?? {};
     expect(capturedBody["text"]).toEqual({ verbosity: "medium" });
   });
+
+  // No surface parser writes `generation_controls.verbosity`; Chat files it at
+  // `extension:verbosity` and Responses at `extension:responses.verbosity`.
+  // Reading only the canonical slot made a caller's `verbosity: "high"` reach
+  // the upstream as the model default, so both spellings must be honored.
+  test("projects the spelling each surface actually writes", () => {
+    expect(
+      canonicalToCodexResponsesPayload(
+        fakeCanonicalRequest({ generation_controls: { "extension:verbosity": "high" } }),
+      )["text"],
+    ).toEqual({ verbosity: "high" });
+    expect(
+      canonicalToCodexResponsesPayload(
+        fakeCanonicalRequest({
+          generation_controls: { "extension:responses.verbosity": "high" },
+        }),
+      )["text"],
+    ).toEqual({ verbosity: "high" });
+  });
+
+  // The Codex wire has no top-level `response_format`: the format is nested
+  // under `text` beside verbosity, and sending it flat is a 400.
+  test("nests the structured-output format under text", () => {
+    const payload = canonicalToCodexResponsesPayload(
+      fakeCanonicalRequest({
+        response_format: {
+          type: "json_schema",
+          name: "person",
+          schema: { type: "object" },
+          strict: true,
+        },
+      }),
+    );
+    expect(payload["response_format"]).toBeUndefined();
+    expect(payload["text"]).toEqual({
+      format: { type: "json_schema", name: "person", schema: { type: "object" }, strict: true },
+    });
+  });
 });
 
 describe("codex concurrent reasoning summaries", () => {

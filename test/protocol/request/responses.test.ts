@@ -92,6 +92,42 @@ describe("canonicalToResponsesPayload", () => {
   });
 
   /**
+   * A Messages request that carries Anthropic's `context_management` map must
+   * not leak it into a Responses-wire build. The two wires disagree on the
+   * shape — Anthropic sends `{edits: [...]}`, Responses requires a sequence —
+   * so forwarding the bare `extension:context_management` key reaches the
+   * upstream as a map and is rejected with
+   * "`context_management`: invalid type: map, expected a sequence".
+   */
+  test("does not forward a Messages-shaped context_management to the Responses wire", () => {
+    const req = new MessagesAdapter().parse({
+      model: "muse-spark-1.3-contributor-free",
+      max_tokens: 100,
+      messages: [{ role: "user", content: "hi" }],
+      context_management: { edits: [{ type: "clear_thinking_20251015", keep: "all" }] },
+    });
+
+    const payload = canonicalToResponsesPayload(req as unknown as CanonicalRequest);
+    expect(payload["context_management"]).toBeUndefined();
+  });
+
+  /** The Responses spelling of the same field is a sequence and must survive. */
+  test("forwards a Responses-shaped context_management unchanged", () => {
+    const req = {
+      model: "muse-spark-1.3-contributor-free",
+      stream: false,
+      source_surface: "responses",
+      generation_controls: {
+        "extension:responses.context_management": [{ type: "compaction", compact_threshold: 500 }],
+      },
+      messages: [{ role: "user", content: [{ kind: "text", text: "hi" }] }],
+    } as unknown as CanonicalRequest;
+
+    const payload = canonicalToResponsesPayload(req);
+    expect(payload["context_management"]).toEqual([{ type: "compaction", compact_threshold: 500 }]);
+  });
+
+  /**
    * `image_url` is a *string* on the Responses wire. A canonical image part is
    * an opaque origin payload, so the computer-use screenshot renderer must
    * resolve it — forwarding the object makes the provider reject the request

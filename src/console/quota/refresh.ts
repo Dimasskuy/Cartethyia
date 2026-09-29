@@ -6,7 +6,7 @@
 // global-admin refresh — so it lives here rather than inside the route module.
 // A drift between them would mean the page and the worker disagree about what
 // "refreshed" means.
-import { and, eq, isNull, ne, or } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
 import { providerAccounts } from "../../persistence/schema";
 import type { RedisClient } from "../../persistence/redis";
@@ -23,6 +23,8 @@ export type QuotaRefreshFailureCode = "missing_credential" | "quota_fetch_failed
 export interface QuotaRefreshOutcome {
   readonly quota: ProviderQuotaResult;
   readonly failure: QuotaRefreshFailureCode | null;
+  /** Display identity the quota surface reported, when it reported one. */
+  readonly accountLabel?: string;
 }
 
 /** Abort budget for one upstream quota fetch. */
@@ -284,6 +286,22 @@ async function runQuotaRefresh(
   // unsupported") is itself the answer the page must render, and caching it
   // stops every page open from re-hitting a provider that just refused us.
   await setCachedQuota(targetLens(target), target.accountId, quota, deps.redis);
+  // A quota surface that names the account adopts the identity — but only over
+  // a default label. An operator's custom rename is never overwritten, and the
+  // CASE keeps the read and the write in one statement so a concurrent rename
+  // cannot lose to the background sweep.
+  if (quota.accountLabel !== undefined && quota.accountLabel.trim().length > 0) {
+    try {
+      await deps.db
+        .update(providerAccounts)
+        .set({
+          label: sql`CASE WHEN lower(trim(${providerAccounts.label})) = lower(trim(${providerAccounts.providerId})) THEN ${quota.accountLabel} ELSE ${providerAccounts.label} END`,
+        })
+        .where(eq(providerAccounts.id, target.accountId));
+    } catch (error) {
+      log.warn(`[quota] failed to adopt account label for account=${target.accountId}`, error as Error);
+    }
+  }
   try {
     await recordAccountCheck(deps.db, target.accountId, {
       ok: quota.error === null,
@@ -293,5 +311,9 @@ async function runQuotaRefresh(
     // A stamp failure must not lose the freshly fetched quota.
     log.warn(`[quota] failed to stamp check outcome for account=${target.accountId}`, error as Error);
   }
-  return { quota, failure: quota.error === null ? null : (failure ?? "quota_fetch_failed") };
+  return {
+    quota,
+    failure: quota.error === null ? null : (failure ?? "quota_fetch_failed"),
+    ...(quota.accountLabel === undefined ? {} : { accountLabel: quota.accountLabel }),
+  };
 }

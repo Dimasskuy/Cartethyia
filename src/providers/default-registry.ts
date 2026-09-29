@@ -447,18 +447,6 @@ export const PROVIDER_CAPABILITIES = {
     loadQuotaCollector: quotaCapability(() => import("./integrations/ollama-cloud-quota"), "fetchOllamaQuota"),
     loadModelDiscovery: openAIModelDiscovery("ollamacloud", { headers: (credential) => ({ authorization: `Bearer ${credential}` }) }),
   },
-  autoclaw: {
-    endpointPathsByWireFamily: { chat: "/autoclaw-proxy/proxy/autoclaw/v1/chat/completions" },
-    loadAdapter: async () => (await import("./integrations/autoclaw/autoclaw")).createAutoClawAdapter(),
-    loadModels: async () => (await import("./integrations/autoclaw/autoclaw")).AUTOCLAW_MODELS,
-    loadModelDiscovery: async () => async ({ credential, fetcher }) =>
-      (await import("./integrations/autoclaw/autoclaw-discovery")).discoverAutoClawModels({
-        credential,
-        ...(fetcher === undefined ? {} : { fetcher }),
-      }),
-    loadAuthentication: oauthCapability(() => import("./integrations/autoclaw/autoclaw-oauth"), "autoclawOAuthClient", { withRefresher: true }),
-    loadQuotaCollector: quotaCapability(() => import("./integrations/autoclaw/autoclaw-quota"), "fetchAutoClawQuota"),
-  },
 } satisfies Readonly<Record<BundledProviderId, ProviderModuleCapabilities>>;
 
 /** Canonical provider registry; every provider subsystem consumes these rows. */

@@ -796,6 +796,14 @@ html[data-glass-enabled="true"] .card-solid {
   white-space: nowrap;
 }
 
+/* Sticky header: the scroll container moves rows, the header row stays put. */
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-1);
+}
+
 .data-table td {
   padding: 7px 10px;
   border-bottom: 1px solid var(--inner-border);

@@ -12,7 +12,7 @@ import {
   clampReasoningEffort,
   resolveSupportedReasoningEfforts,
 } from "../../transport/translation/thinking";
-import { isClaudeBillingHeaderText, resolveImageSource } from "../primitives";
+import { isClaudeBillingHeaderText, resolveImageSource, resolveOutputVerbosity } from "../primitives";
 import { resolvePromptCacheKey } from "../../providers/operations/session-resolution";
 import { reasoningEffortFromIntent } from "../../providers/reasoning";
 
@@ -328,16 +328,22 @@ export function canonicalToResponsesPayload(
     "user",
   ];
   for (const field of responsesPassthrough) {
+    // A bare `extension:<field>` fallback exists because the Chat parser files
+    // shared top-level params (`store`, `user`, `moderation`, …) under the bare
+    // key, and those have the same shape on every wire. `context_management`
+    // does NOT: the Messages parser stores Anthropic's map shape
+    // (`{edits: [...]}`) while this wire requires a sequence, so accepting the
+    // bare key here would forward a map and earn a 400 from the upstream. Only
+    // the Responses-spelled key may supply it.
     const value =
       request.generation_controls[`extension:responses.${field}`] ??
-      request.generation_controls[`extension:${field}` as `extension:${string}`];
+      (field === "context_management"
+        ? undefined
+        : request.generation_controls[`extension:${field}` as `extension:${string}`]);
     if (value !== undefined) payload[field] = value;
   }
   // Responses nests output verbosity and structured-output format under `text`.
-  const verbosity =
-    request.generation_controls["extension:responses.verbosity"] ??
-    request.generation_controls["extension:verbosity"] ??
-    request.generation_controls.verbosity;
+  const verbosity = resolveOutputVerbosity(request.generation_controls);
   if (request.response_format !== undefined || verbosity !== undefined) {
     const text = (payload["text"] as Record<string, unknown> | undefined) ?? {};
     if (verbosity !== undefined) text["verbosity"] = verbosity;

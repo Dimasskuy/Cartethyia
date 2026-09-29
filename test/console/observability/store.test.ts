@@ -31,6 +31,7 @@ dbDescribe("DrizzleObservabilityStore", () => {
         requestId,
         sourceSurface: "chat",
         requestedModel: "test-model",
+        requestedEffort: "xhigh",
         providerId: "openai",
         status: "completed",
         httpStatus: 200,
@@ -121,11 +122,15 @@ dbDescribe("DrizzleObservabilityStore", () => {
     expect(usage.requestsSucceeded).toBe(1);
     expect(usage.requestsFailed).toBe(1);
   });
-
   test("usageRequests lists the seeded event", async () => {
     const page = await store.usageRequests(tenantId, "24h", 10);
     expect(page.items.length).toBeGreaterThanOrEqual(1);
     expect(page.items.some((i) => i.requestId === requestId)).toBe(true);
+  });
+
+  test("usageRequests suffixes the model with the requested effort", async () => {
+    const page = await store.usageRequests(tenantId, "24h", 50);
+    expect(page.items.find((i) => i.requestId === requestId)?.model).toBe("test-model (xhigh)");
   });
 
   test("usageRequestDetail returns the event with proxy label", async () => {

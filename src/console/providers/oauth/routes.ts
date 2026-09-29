@@ -1,5 +1,5 @@
 import { providerAccounts, providerOauthStates } from "../../../persistence/schema";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { encryptCredential, hashSecret } from "../../../security/crypto";
 import type { CartethyiaDatabase } from "../../../persistence/postgres";
 import type { OAuthExchangeResult, OAuthLoginClient } from "../../../providers/authentication/oauth-flow-store";
@@ -37,7 +37,6 @@ function oauthIdentityFingerprint(input: { readonly label: string } & OAuthExcha
   return hashSecret(input.label.trim().length > 0 ? input.label.trim() : input.refresh);
 }
 
-/** Drizzle-backed persistence for a newly completed OAuth login. */
 export class DrizzleOAuthAccountStore implements OAuthAccountStore {
   constructor(private readonly db: CartethyiaDatabase) {}
 
@@ -78,7 +77,11 @@ export class DrizzleOAuthAccountStore implements OAuthAccountStore {
           await tx
             .update(providerAccounts)
             .set({
-              label: input.label,
+              // A re-login carries a freshly validated identity, so it adopts
+              // the learned label — but never over an operator's custom rename.
+              // The CASE keeps the read and the write in one statement, so a
+              // concurrent rename cannot lose to the login.
+              label: sql`CASE WHEN lower(trim(${providerAccounts.label})) = lower(trim(${providerAccounts.providerId})) THEN ${input.label} ELSE ${providerAccounts.label} END`,
               credentialCiphertext,
               credentialKind: "oauth",
               status: "active",

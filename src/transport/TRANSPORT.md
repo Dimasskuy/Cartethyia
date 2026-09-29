@@ -232,7 +232,7 @@ cannot fix, degrade the rest in a fixed least-impact order.
   and planner. The profile itself comes from `buildCapabilityProfile()` (`routing/route-catalog.ts`), which grants
   image/document/audio to every codec-backed route: a catalog's silence about a modality must not become a silent rewrite of
   the caller's attachment — an upstream that cannot accept the part degrades it itself. A bespoke adapter
-  (`providerUsesBespokeWire`, Cursor and Devin) needs an explicit modality instead, because it frames its own protocol and has
+  (`providerUsesBespokeWire`, Devin and Kiro) needs an explicit modality instead, because it frames its own protocol and has
   no generic rich-content path.
   The grant has one exception, and it is a wire fact rather than a metadata one: the Anthropic Messages request schema has no
   audio content block, so `routeCapabilitiesFor()` narrows audio to `AUDIO_CAPABLE_WIRE_FAMILIES` (`chat`, `responses`) for
@@ -628,8 +628,8 @@ payloads or stream envelopes interchangeable.
 - No generic OpenAI Responses compaction. `/v1/responses/compact` is the Codex-native opaque-body
   transport and nothing else; Anthropic threshold/on-demand `compaction` rides as a Messages
   extension with no end-to-end contract of its own.
-- Cursor Editor BYOK is a Chat Completions client, kept separate from the bundled `cursor`
-  OAuth/Connect+protobuf adapter — see `README.md` for its verified limits.
+- Editor BYOK (a client's own OpenAI-compatible API-key path) is a Chat Completions client, kept
+  separate from any bundled provider adapter — see `README.md` for its verified limits.
 
 **Triage rule.** If a symptom is reported again, capture first — request ID, client surface,
 selected provider/model/wire, terminal/status frame, and redacted bodies — and classify where it
@@ -637,5 +637,5 @@ originates (ingress validation, capability projection, upstream status, an in-st
 SSE decoding, or client-side event interpretation) before changing any timeout, retry, or schema.
 A timeout increase or schema relaxation without a reproduction removes evidence rather than a cause.
 
-External protocol/API evidence and Cursor setup caveats are linked in `src/protocol/PROTOCOL.md`,
+External protocol/API evidence and editor-BYOK setup caveats are linked in `src/protocol/PROTOCOL.md`,
 `src/providers/PROVIDERS.md`, and the root `README.md`.

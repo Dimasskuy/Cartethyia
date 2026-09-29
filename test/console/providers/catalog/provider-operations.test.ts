@@ -808,6 +808,7 @@ describe("account operations", () => {
         toStatus: "cooldown",
         reason: "rate_limit_transient",
         errorCategory: "rate_limit_transient",
+        modelId: "gpt-5",
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ];

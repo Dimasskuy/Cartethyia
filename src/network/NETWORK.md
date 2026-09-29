@@ -138,16 +138,16 @@ candidate (`leases.ts` builds it only when the pool-owning tenant's setting is
 `health_events` without sidelining the pool. The console pool overview reads those flags in one
 `MGET` per pool, and a pool with no cooling providers — the normal state — lists no members, so the
 empty case returns an empty list without issuing a command Redis would reject (`MGET` requires at
-least one key). `pool-health-machine.ts` records pool-origin tunnel
-failures and successful pooled requests: a pool that cannot carry traffic enters `cooldown`, with a
-recovery deadline from `CARTETHYIA_POOL_COOLDOWN_MS` (default two minutes), and are excluded from new
-route snapshots. The first failed probe parks the pool; successful requests recover it immediately,
-A proxy-origin HTTP 402 or 407 marks the proxy reachable but unusable, disables it from routing,
-records the status in `health_events`, and invalidates the route snapshot; only an operator can
-re-enable it. Dispatch checks the error origin first, so an upstream provider's 402 quota response
-does not disable the proxy pool. These proxy responses do not count as provider-account failures.
-Disabled pools are never auto-recovered. `subscribePoolHealth` feeds status transitions to the
-console pool SSE stream.
+least one key). `pool-health-machine.ts` records pool-origin tunnel failures and successful pooled
+requests: a pool that cannot carry traffic enters `cooldown` with a recovery deadline from
+`CARTETHYIA_POOL_COOLDOWN_MS` (default two minutes) and is excluded from new route snapshots. A
+successful pooled request recovers a cooling pool immediately, so the deadline is an upper bound
+rather than a fixed wait. A proxy-origin HTTP 402 or 407 marks the proxy reachable but unusable,
+disables it from routing, records the status in `health_events`, and invalidates the route
+snapshot; only an operator can re-enable it. Dispatch checks the error origin first, so an upstream
+provider's 402 quota response does not disable the proxy pool. These proxy responses do not count as
+provider-account failures. Disabled pools are never auto-recovered. `subscribePoolHealth` feeds
+status transitions to the console pool SSE stream.
 
 ## Supporting modules
 

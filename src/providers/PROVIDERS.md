@@ -41,7 +41,7 @@ Three layers combine in `default-registry.ts: BUNDLED_PROVIDER_MODULES`, then `c
    `providerCredentialHint()`, never through the persisted provider row, so a stale or hostile
    record cannot redirect the link. Three providers declare neither (`muse`, `opencodeft`,
    `inferhub`); a provider whose sign-in runs through its own login flow (Claude, Codex, Grok,
-   Cursor, Devin, Antigravity, Qoder) carries the hint and the site URL, and the dashboard
+   Devin, Antigravity, Qoder) carries the hint and the site URL, and the dashboard
    labels its action "Sign in" rather than "Get API Key".
    `providerBaseUrl()` is the single declaration of origin; `providerUpstreamHost()` carries the SSRF
    binding, so dispatch needs no second map. `DEFAULT_PROXY_BYPASS_PROVIDER_IDS` derives the one
@@ -50,7 +50,7 @@ Three layers combine in `default-registry.ts: BUNDLED_PROVIDER_MODULES`, then `c
    `opencodeft` is the one provider that serves a free tier of a shared catalog: its discovery filters
    `/zen/v1/models` down to the free ids (`isFreeTierZenModel`, which keeps the `-free` convention plus the
    explicit exceptions in both directions) and marks the survivors, so "Fetch models" writes only what this
-   provider can actually route rather than the 81-id billed catalog.
+   provider can actually route rather than its full billed catalog.
 2. **Capabilities** (`default-registry.ts: PROVIDER_CAPABILITIES`, keyed by every `BundledProviderId` with
    a `satisfies` check, so a missing key is a type error): `loadAdapter` (required) plus any of
    `loadModels`, `loadAuthentication`, `loadQuotaCollector`, `loadModelDiscovery`,
@@ -59,7 +59,7 @@ Three layers combine in `default-registry.ts: BUNDLED_PROVIDER_MODULES`, then `c
 3. **Lazy import**: every `load*` is `async () => (await import("…")).export`, so nothing provider-specific
    evaluates at startup. `resolve()`, `resolveAuthentication()`, `resolveQuotaCollector()`, and
    `resolveModelDiscovery()` single-flight and cache on first use, keeping protobuf-heavy adapters
-   (Cursor, Devin) out of the boot path.
+   (Devin) out of the boot path.
 
 **Capability split.** `loadAdapter → ProviderAdapter.dispatch()` takes a canonical request and emits
 canonical events, via `createApiKeyAdapter(spec)` / `OpenAICompatibleAdapter` or a bespoke class.
@@ -73,8 +73,8 @@ default, then registered through `registerByokProviders()` / `syncByokProvider()
 `OpenAICompatibleAdapter`; model protocol selection is independent from route-level identity. A custom
 provider may serve Anthropic Messages or OpenAI Chat/Responses according to its wire profile.
 The registry updates custom providers without a backend restart. Their upstream hosts are validated
-at registration and on each network-bound dispatch. This existing BYOK path is separate from the
-Cursor Editor BYOK setup documented in `README.md` and the CLI Tools guide.
+at registration and on each network-bound dispatch. This existing BYOK path is separate from a
+client's own editor BYOK setup documented in `README.md` and the CLI Tools guide.
 
 The per-(tenant, provider) `provider_routing_settings.user_agent` value defaults to
 `codex_cli_rs/0.156.1` and is offered only for built-in API-key providers whose adapter does not
@@ -137,7 +137,7 @@ stay in `integrations/<name>/*-oauth.ts`.
   `supportsBrowserCode` is authoritative when a client states it. The base `OAuthClient` always *defines*
   `buildAuthorizeUrl` and `exchangeCode` — a device-only client overrides the latter to throw — so a
   capability check that only tests for the methods reports browser support for every device-only provider
-  (Cline, Cursor, Grok, Kimi, Muse, Buddy). The console's `oauthFlows` derivation therefore treats an
+  (Cline, Grok, Kimi, Muse, Buddy, GitHub, Kilo, xAI). The console's `oauthFlows` derivation therefore treats an
   explicit `false` as decisive and falls back to the method-shape test only when the flag is omitted.
 - **A device poll is one attempt.** `pollDeviceAuth` performs a single token-endpoint request and returns
   `pending` while the user has not approved; the dashboard owns the cadence. A poll that loops internally
@@ -364,14 +364,14 @@ database. Per-provider entry points live in `integrations/`, registered as each 
   states its own limits is never overridden by the catalog. models.dev is authoritative mainly for **pricing**
   — an upstream `/models` response rarely states a price — and its limits are a secondary source.
   `defineModel` applies the same precedence to a static catalog row and then clamps: an output cap above the
-  context window is unsatisfiable, and the base catalog states `output === context` on 1084 rows and
-  `output > context` on 69 (a Kimi K2.6 row is filed `262144/262144`), so `outputLimit` is
+  context window is unsatisfiable, and the base catalog routinely states `output === context` (and sometimes
+  `output > context`, e.g. a Kimi K2.6 row filed `262144/262144`), so `outputLimit` is
   `min(declared, context)`. A `null` limit stays `null` — "not stated" is not zero.
   A provider models.dev does not file under our id leaves `resolve` undefined, and a fixed default is a worse
   answer than the catalog's own majority view: `modelsDevCatalog.majorityFor(bareId)` votes per field across
   every row for that bare id (ties resolve to the larger value — a limit stated too low truncates work, one
-  stated too high is caught by the provider). 18 of 19 rows file `claude-opus-5` as `1000000/128000`; the
-  single dissenter is a reseller's outlier, not the model. Only what the vote actually answers is taken: an
+  stated too high is caught by the provider). A single dissenting reseller row therefore cannot outvote the
+  model's own majority; only what the vote actually answers is taken, and an
   id nobody records keeps the documented default.
   A **recommended-models** endpoint that reports no limits at all is the case this matters most for: Cline's
   roster publishes only `id`/`name`/`description`/`tags`. Its limits come from Cline's own sibling catalog
@@ -575,13 +575,13 @@ deadlines. Routing, console, and discovery consume providers through these servi
   row still reads healthy. Clearing the mark is what returns an account to the sweep: replacing the credential
   or re-enabling the account (`updateAccount`) resets the same failure state `recoverAccount` does, so a
   re-authed account is probed again instead of sitting out of rotation forever.
-- **Per-account request concurrency and usage.** `provider_accounts.max_inflight`
-  (validated from 1 through 10,000) overrides the effective tenant/global
-  `provider_routing_settings.max_inflight` for that account. `null` inherits the
-  provider-routing value; when that value is also `null`, admission is unlimited.
-  The route snapshot carries the resolved ceiling into the account-specific
-  reservation bucket. Account responses report UTC-today usage from retained
-  request telemetry and lifetime usage from `telemetry_usage_totals`.
+- **Per-tenant provider concurrency and usage.** The effective request ceiling is
+  `provider_routing_settings.max_inflight` for the (tenant, provider) pair, with the
+  `__global__` row as fallback; when both are `null`, admission is unlimited. The route
+  snapshot carries the resolved ceiling into the account-specific reservation bucket. The
+  legacy `provider_accounts.max_inflight` column is **inert** — routing never reads it, and
+  it must not be repurposed as a per-account override. Account responses report UTC-today
+  usage from retained request telemetry and lifetime usage from `telemetry_usage_totals`.
 - **Credential resolution.** `loadAccountWithFreshness` loads the account row plus its optional
   `provider_oauth_states` row in one query and computes `dueAt` as expiry minus skew (`OAUTH_REFRESH_SKEW_MS`,
   5m). `resolveCredentialForAccount` decrypts the stored ciphertext into a dispatchable `ResolvedCredential`
@@ -633,8 +633,8 @@ and `loadModelDiscovery` is a dynamic import — so nothing here may run at star
 `gatewayUserAgent`.
 `createApiKeyAdapter(spec)` builds the `OpenAICompatibleAdapter`, and `base_url` defaults to
 `providerBaseUrl(provider_id)` so the origin has exactly one declaration. `GENERIC_API_KEY_SPECS` (in
-`integrations/configured-openai-providers.ts`) covers eight
-zero-hook hosts (`groq`, `mistral`, `sifo`, `fireworks`, `nvidia`, `gmi`, `ollamacloud`,
+`integrations/configured-openai-providers.ts`) covers the zero-hook
+hosts (`groq`, `mistral`, `sifo`, `fireworks`, `nvidia`, `gmi`, `ollamacloud`,
 `deepseek`); other single-file specs add hooks only where needed. A zero-hook host declares no
 `loadModels`, so any model list it offers is live discovery only — `ollamacloud` and `deepseek`
 both pair the shared spec with an `openAIModelDiscovery` loader for exactly that reason.
@@ -645,7 +645,7 @@ both pair the shared spec with an `openAIModelDiscovery` loader for exactly that
 factory's reach, each carrying a `Factory-blocked` or `Bespoke by wire protocol` header comment naming the
 reason: `anthropic.ts` (Messages envelope + `x-api-key`), `gemini.ts` (per-model `:generateContent` RPC +
 `x-goog-api-key`), `claude-code/claude.ts` (the assistant CLI fingerprint: Stainless identity headers, beta negotiation, CCH billing, and a persisted per-install `device_id` in `metadata.user_id`), `codex/codex.ts`
-(Responses envelope + session headers; `protocol/request/codex.ts` emits tool results from both Chat `tool` and Messages `user` turns as `function_call_output` with the matching `call_id`), `cursor/` and `devin/` (Connect+protobuf), `kiro/` (a `conversationState` ledger over an AWS EventStream binary wire, below), `qoder.ts` (COSY AES/RSA
+(Responses envelope + session headers; `protocol/request/codex.ts` emits tool results from both Chat `tool` and Messages `user` turns as `function_call_output` with the matching `call_id`), `devin/` (Connect+protobuf), `kiro/` (a `conversationState` ledger over an AWS EventStream binary wire, below), `qoder.ts` (COSY AES/RSA
 signing + enveloped SSE), `commandcode.ts` (NDJSON thread/config envelope), `agentrouter.ts`, `kimi/kimi.ts`
 (Messages envelope reusing the shared Claude pipeline).
 
@@ -673,30 +673,22 @@ interprets the event types). Three things there are load-bearing:
   itself and never receive a default. `resolveKiroProfileArn` in `kiro-profile.ts` is the single place this is
   decided, shared by dispatch, quota, and discovery.
 
-`kiro-oauth.ts` covers all seven sign-in paths (AWS Builder ID, Identity Center, Google/GitHub, imported
+`kiro-oauth.ts` covers every sign-in path (AWS Builder ID, Identity Center, Google/GitHub, imported
 refresh token, enterprise identity provider, API key), which differ in endpoint, refresh mechanics, and which
 surface accepts the result. Two details are specific to it: AWS SSO OIDC answers camelCase JSON rather than
 the snake_case form encoding the rest of the kit speaks, and its device flow mints a client secret that must
 be replayed at every later refresh — carried as `client_secret` beside the tokens, never in `auth_state`.
 
-**Cursor's native integration is not its Editor BYOK path.** The bundled `cursor` adapter uses
-Cursor's OAuth credential and Connect/protobuf `AgentService/Run` wire; it rejects API-key
-credentials and does not support tools. Cursor Editor BYOK is a client of the gateway's OpenAI
-Chat Completions surface instead: configure the OpenAI-compatible Cartethyia base URL (`/v1`),
-Cartethyia API key, and a model ID exposed by `/v1/models`.
-
-Cursor's [BYOK help](https://cursor.com/help/models-and-usage/api-keys) currently describes
-third-party API keys for standard, non-reasoning chat models and says Tab completion continues to
-use Cursor's built-in models. Its own API-key requests are routed through Cursor's backend for
-prompt building, so a local-only Cartethyia URL must not be assumed reachable. Cursor staff state
-that the OpenAI Base URL override is global and can affect Cursor-managed OpenAI models, and that
-per-model base URLs are not currently supported ([global override behavior](https://forum.cursor.com/t/does-adding-a-custom-model-override-cursor-s-native-models/157521),
-[per-model endpoint status](https://forum.cursor.com/t/custom-base-urls-for-each-custom-model/147219)).
-The editor setup guide therefore requires verification against the installed Cursor build and must
-not promise that this BYOK path supports Responses, reasoning models, or Tab completion.
+**Editor BYOK is not a bundled integration.** A client's own API-key/editor BYOK path is a client
+of the gateway's OpenAI Chat Completions surface, not a provider adapter: configure the
+OpenAI-compatible Cartethyia base URL (`/v1`), a Cartethyia API key, and a model ID exposed by
+`/v1/models`. Do not assume a local-only Cartethyia URL is reachable from a hosted editor — its own
+API-key requests may be routed through the vendor's backend for prompt building, and a global Base
+URL override can also affect the vendor's managed models with no per-model endpoint support. Verify
+against the installed editor build before promising Responses, reasoning models, or Tab completion.
 
 A bespoke adapter frames its own protocol, so no canonical wire codec serves its rows. That fact is
-declared once per provider as `bespokeWire` in `provider-metadata.ts` (Cursor and Devin are the bundled
+declared once per provider as `bespokeWire` in `provider-metadata.ts` (Devin and Kiro are the bundled
 cases) and carried into the route snapshot as `capability_profile.bespokeWire`. Two consequences follow
 from it, and both used to be expressed by a fourth `native` wire-family value that is now retired:
 
@@ -723,15 +715,14 @@ failure from being misreported as a network-pool fault.
 | Single-file (`openai.ts`, `gemini.ts`, `openrouter.ts`, …) | `*_SPEC` or adapter class, plus a `*_MODELS` catalog where the provider ships one (openrouter relies on live discovery) | Whole provider contract; `loadAdapter` imports it directly |
 | `claude-code/` | `claude.ts` + `claude-{betas,cch,compatibility,credentials,fingerprint,oauth,quota}.ts` | Header/credential/beta/billing policy split by concern |
 | `codex/` | `codex.ts` + `codex-{device-code,errors,headers,identity,oauth,quota}.ts` | Identity + headers + error + OAuth/refresh split; one turn-metadata serialization is reused in the header and request body |
-| `cursor/`, `devin/` | dispatch + `catalog.ts` + `*-oauth.ts` + `*-quota.ts` + `generated/` | Protobuf wire; hand-written wiring only outside `generated/` |
+| `devin/` | dispatch + `catalog.ts` + `devin-{oauth,quota}.ts` + `generated/` | Protobuf wire; hand-written wiring only outside `generated/` |
 | `antigravity/`, `cline/`, `kimi/`, `grok/`, `muse/` | `<name>.ts` + `<name>-{oauth,quota}.ts` (+ `shared`/extra splits where the provider needs them) | OAuth login, quota parser beside the adapter |
 | `xai/` | `xai.ts` + `xai-{oauth,discovery}.ts` | The **paid** xAI subscription surface at `api.x.ai/v1` (SuperGrok / X Premium+), separate from `grok/` (the free Grok Build CLI at `cli-chat-proxy.grok.com`). Plain OpenAI Responses wire, so the shared adapter serves it; the device flow and client id are xAI's, shared with `grok/` because they are facts about the authorization server rather than about either product |
 | `kilo/` | `kilo.ts` + `kilo-{oauth,discovery}.ts` | OAuth login with no refresh grant; its own directory reader because the catalog is OpenRouter-shaped, not OpenAI `/models` |
 | `github/` | `github.ts` + `github-{oauth,discovery,quota}.ts` | Device-code login that mints a short-lived Copilot token from the GitHub one; bespoke adapter because the API host comes from the credential; its own directory reader (per-SKU `supported_endpoints`, nested limits) and a quota reader off the token endpoint |
-| `buddy/` | `codebuddy.ts` + `codebuddy-{cn,oauth,quota,shared}.ts`, `workbuddy.ts` + `workbuddy-{oauth,quota,shared}.ts`, `buddy-{catalog,chat,oauth,quota}-shared.ts` | Tencent buddy family (provider IDs `cb`, `cbcn`, `workbuddy`): cn variant split, per-brand headers, shared Tencent payload/quota/oauth/catalog kernels, plus `buddy-checkin.ts` (daily check-in + growth activity report) for the `daily-checkin` worker |
+| `buddy/` | per-brand `codebuddy*.ts` / `workbuddy*.ts` (adapter, oauth, quota, cn split) over shared `buddy-{catalog,chat,oauth,quota,discovery}-shared.ts`, plus `buddy-checkin.ts` | Tencent buddy family (provider IDs `cb`, `cbcn`, `workbuddy`): per-brand headers and cn split; billing reads send the reference filter envelope (`ProductCode: p_tcaca`, statuses `[0, 3]`, 101-year package window) and `X-User-Id` when the credential carries a UID — an empty `{}` can return success with zero packages; plus the `daily-checkin` worker's check-in + growth report |
 | `zai/` | `spec.ts` + `zai-quota.ts` | Minimal pair: declarative spec plus one quota parser |
-| `xiaomi-mimo/` | `xiaomi.ts`, `mimodesktop-{oauth,quota,sso}.ts` + `mimodesktop.ts`, `mimostudio-{auth,oauth,quota}.ts` + `mimostudio.ts`, `think-stream.ts` | Four provider IDs with independent credentials and wire contracts: `xiaomipg`/`xiaomitp` use API-key OpenAI chat, Desktop exchanges a local passToken for an SSO cookie and uses native `reasoning_content`, and Studio uses browser cookies and its own SSE parser with the think-tag splitter. Desktop and Studio retain separate models and quota collectors. |
-| `autoclaw/` | `autoclaw.ts`, `autoclaw-discovery.ts`, and `autoclaw-{oauth,quota,shared}.ts` | CN-only access/refresh import with device ID; account-scoped remote model catalog and wallet balance; direct Chat Completions with text-only sandbox WebSocket/SSE fallback only when direct route lookup fails |
+| `xiaomi-mimo/` | `xiaomi.ts` (API-key pair), `mimodesktop*.ts` (oauth/quota/sso + adapter), `mimostudio*.ts` (auth/oauth/quota/session/tools + adapter), `think-stream.ts` | Four provider IDs with independent credentials and wire contracts: `xiaomipg`/`xiaomitp` use API-key OpenAI chat, Desktop exchanges a local passToken for an SSO cookie and uses native `reasoning_content`, and Studio uses browser cookies and its own SSE parser with the think-tag splitter. Desktop and Studio retain separate models and quota collectors. |
 
 MiMo Desktop acquires its inference cookie from a stored passToken at dispatch time, reuses
 the SSO session while cached, and renews it when the cache expires or a credential-evidenced
@@ -771,9 +762,9 @@ than teaching a different one, which they ignore. Closed blocks become canonical
 `tool_call_delta` events with `stop_reason: tool_use`, history tool calls and results are
 replayed as the same blocks (a `tool` turn travels as `user`, the only non-assistant role the
 endpoint accepts), and with no declared tools a block stays prose so the gateway never
-invents a call. The `query` field is capped at the measured upstream limit of 50 000
-characters — above it the endpoint answers HTTP 200 with an in-band `query is too long` error
-— by dropping the oldest turns and marking the omission; the model's own context window is
+invents a call. The `query` field is bounded below the measured upstream limit — the endpoint
+answers HTTP 200 with an in-band `query is too long` error once the request envelope exceeds it —
+by dropping the oldest turns and marking the omission; the model's own context window is
 far larger, so this is a property of the request envelope, not of the model. An in-band
 `error` frame is surfaced as a typed gateway error (413 for the length rejection, 409 for the
 duplicate-submit rejection) instead of ending the stream without a terminal event.
@@ -815,7 +806,7 @@ holds only its variant: endpoints, domain, platform, user agent, and envelope-co
 (`strictResponseCode` for CodeBuddy, `coercingResponseCode` for WorkBuddy's gateway, which answers a
 looser envelope).
 
-**Protobuf dirs.** `cursor/generated/agent_pb.ts` and `devin/generated/**` are `buf generate` output
+**Protobuf dirs.** `devin/generated/**` is `buf generate` output
 (protoc-gen-es) — never hand-edit; regenerate from the vendor proto source and update `.codegen-stamp` (check
 the current prefix with `head -c 8 src/providers/integrations/.codegen-stamp`). Only the adjacent hand-written
 modules are edited for those providers.
@@ -910,6 +901,64 @@ kinds. `ensurePayloadModel()` in `integrations/configured-provider.ts` backfills
 candidate; a missing model is a 400, never an empty string. OAuth credential JSON envelopes are unwrapped at
 dispatch (muse, zai) and never forwarded verbatim when `credential_forwarding: "never"` is set. Adapter test
 fixtures live under `test/helpers/provider-dispatch.ts`; this directory holds no test-only module.
+
+## Known limitations: reasoning visibility
+
+Reasoning reaches a client through one of two wire shapes, and **which one a provider
+offers is decided upstream, not by this gateway**:
+
+- **Readable reasoning** — the provider streams the model's thinking as text. On the chat
+  wire this is `delta.reasoning_content`; on the Responses wire it is
+  `response.reasoning_text.delta` (canonical `payload`). `cb`, `cbcn`, `workbuddy`, and
+  `mimodesktop` all take this path.
+- **Summary only** — the provider streams a short heading via
+  `response.reasoning_summary_text.delta` (canonical `summary`) and keeps the thinking
+  itself server-side, handing back an opaque `encrypted_content` blob for replay.
+
+`src/transport/surface/chat/encode.ts` (`eventReasoningText`) already forwards both, so no
+adapter change is needed to surface whichever one a provider sends. The limitation is that
+some providers never send the first shape.
+
+**The ChatGPT Codex backend (`codex`) is summary-only and this is not addressable here.**
+Measured against a live account (`gpt-5.6-luna`, effort `high`), `codex` returned a
+heading-length summary while spending *more* `reasoning_tokens` than the readable providers
+(`cb`, `workbuddy`) spent to return several hundred characters of thinking. Spending more
+tokens to disclose less rules out a gateway-side cause: the model reasoned, and the server
+withheld the trace.
+
+Every lever that could plausibly widen it was tried and none changed the outcome —
+`reasoning.summary` in `auto`/`concise`/`detailed`, `context: "all_turns"`, `store: false`,
+the Responses Lite shape, the WebSocket transport (`responses_websockets=2026-02-06`), and
+several model ids. Two spellings that look promising are rejected outright:
+`reasoning.summary: "none"` and `include: ["reasoning.text"]` both answer `400`; the accepted
+`include` values are the `*_call.results` / `*.image_url` / `code_interpreter_call.outputs`
+family plus `reasoning.encrypted_content` and `message.output_text.logprobs`.
+
+Do not re-derive this. Three further points are easy to misread from the wire alone:
+
+- **`x-reasoning-included` is not a raw-reasoning switch.** It is a response header telling a
+  client that past reasoning tokens are already accounted for, so the client must not
+  re-estimate them for its context budget. It never carried reasoning text in any observed
+  response.
+- **Dropping `include: ["reasoning.encrypted_content"]` does not suppress the blob.** The
+  server attaches `encrypted_content` to the reasoning item regardless of whether it was
+  requested; output was identical with the field present, absent, and empty.
+- **The blob is not needed for replay.** Replaying with it stripped, and replaying with no
+  reasoning item at all, both answered correctly with the same reasoning-token count as the
+  full replay. The server keeps its own reasoning state per conversation, so for OAuth ChatGPT
+  a gateway may drop the blob without breaking multi-turn continuity. Verified on the HTTPS
+  transport only; remote compaction (`/responses/compact`) and rollout-resumed sessions
+  persist reasoning and were **not** tested.
+
+The measurements cover only the providers that answered for that model; `github` and `kiro`
+were not measured (an unrelated proxy-pool outage and a rejected model id), and the `openai`
+API-key route had no account to test against — it may differ, since it reaches the Responses
+API directly rather than through the ChatGPT OAuth backend. One run per provider was taken,
+so the reasoning-token figures are indicative, not a distribution.
+
+Anything that changes the reasoning bytes a provider sends is a change to that provider's
+wire contract — check the adapter and the pinned client version before assuming a gateway
+bug.
 
 ## How to extend
 

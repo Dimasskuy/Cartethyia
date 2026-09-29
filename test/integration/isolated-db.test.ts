@@ -211,6 +211,7 @@ const expectedColumns: Record<string, readonly ExpectedColumn[]> = {
     column("to_status", "USER-DEFINED", "health_status", "NO"),
     column("reason", "text", "text", "YES"),
     column("error_category", "text", "text", "YES"),
+    column("model_id", "text", "text", "YES"),
     column("created_at", "timestamp with time zone", "timestamptz", "NO"),
   ],
   admin_audit_log: [
@@ -283,6 +284,7 @@ const expectedColumns: Record<string, readonly ExpectedColumn[]> = {
     column("request_id", "uuid", "uuid", "NO"),
     column("source_surface", "USER-DEFINED", "telemetry_source_surface", "YES"),
     column("requested_model", "text", "text", "YES"),
+    column("requested_effort", "text", "text", "YES"),
     column("provider_id", "text", "text", "YES"),
     column("account_id", "uuid", "uuid", "YES"),
     column("network_pool_id", "uuid", "uuid", "YES"),

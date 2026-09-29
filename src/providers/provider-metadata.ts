@@ -172,14 +172,6 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     credentialUrl: "https://github.com/settings/copilot",
   },
   { id: "perplexity", displayName: "Perplexity", baseUrl: "https://api.perplexity.ai", credentialUrl: "https://www.perplexity.ai/settings/api" },
-  {
-    id: "autoclaw",
-    displayName: "AutoClaw",
-    baseUrl: "https://autoglm-acceleration-api.zhipuai.cn",
-    hasAdapterUserAgent: true,
-    credentialUrl: "https://autoclaw.z.ai/download",
-    credentialHint: "Import your AutoClaw access token and refresh token from an account in the CN region.",
-  },
 ] as const;
 
 export type BundledProviderId = (typeof RAW_BUNDLED_PROVIDER_METADATA)[number]["id"];
@@ -233,7 +225,7 @@ export interface BundledProviderMetadata {
   /**
    * The provider's adapter frames its own wire protocol instead of going
    * through one of the gateway's canonical codecs (chat / responses /
-   * messages). Cursor and Devin are the bundled cases: they encode requests
+   * messages). Devin and Kiro are the bundled cases: they encode requests
    * by hand, so a part their codec does not handle is dropped rather than
    * encoded, and generation controls reach them raw.
    */

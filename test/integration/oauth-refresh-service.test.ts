@@ -21,6 +21,7 @@ import {
   loadDueOAuthAccounts,
   type OAuthTokenRefresher,
 } from "../../src/providers/authentication/oauth-refresh-service";
+import { refreshAccountQuota } from "../../src/console/quota/refresh";
 import { dbDescribe, testDatabaseUrl } from "../helpers/db-gate";
 
 let pool: Pool | undefined;
@@ -186,8 +187,8 @@ dbDescribe("OAuthRefreshService", () => {
 
   test("provides the decrypted current access token only to opted-in refreshers", async () => {
     const accountId = await insertAccount({
-      providerId: "autoclaw",
-      refreshToken: "refresh-autoclaw",
+      providerId: "openai",
+      refreshToken: "refresh-provider",
       expiresAt: new Date(Date.now() + 60 * 1000),
     });
     const service = new OAuthRefreshService(requireDb());
@@ -196,13 +197,13 @@ dbDescribe("OAuthRefreshService", () => {
       requiresAccessToken: true,
       refresh: async (_refreshToken, _signal, context) => {
         seenContext = context;
-        return { access: "autoclaw-access", expiresAt: new Date(Date.now() + 3600_000) };
+        return { access: "provider-access", expiresAt: new Date(Date.now() + 3600_000) };
       },
     };
 
     const token = await service.ensureFreshAccessToken(accountId, refresher);
 
-    expect(token).toBe("autoclaw-access");
+    expect(token).toBe("provider-access");
     expect(seenContext).toEqual({
       account_id: accountId,
       access_token: "initial-access-token",
@@ -253,6 +254,85 @@ dbDescribe("OAuthRefreshService", () => {
       authMethod: "builder-id",
       profileArn: "arn:aws:codewhisperer:us-east-1:1:profile/AAA",
     });
+  });
+
+  test("adopts a refresh-reported identity only over a default label", async () => {
+    const seeded = async (label: string): Promise<string> => {
+      await requireDb().insert(providers).values({ id: "label-probe", enabled: true }).onConflictDoNothing();
+      const [row] = await requireDb()
+        .insert(providerAccounts)
+        .values({
+          providerId: "label-probe",
+          label,
+          credentialKind: "oauth",
+          credentialCiphertext: encryptCredential("initial-access-token"),
+        })
+        .returning({ id: providerAccounts.id });
+      if (!row) throw new Error("failed to insert test account");
+      createdAccountIds.push(row.id);
+      await requireDb().insert(providerOauthStates).values({
+        providerAccountId: row.id,
+        refreshCiphertext: encryptCredential("refresh-label"),
+        expiresAt: new Date(Date.now() + 60 * 1000),
+      });
+      return row.id;
+    };
+    const readLabel = async (accountId: string): Promise<string | undefined> => {
+      const [row] = await requireDb().select().from(providerAccounts).where(eq(providerAccounts.id, accountId));
+      return row?.label;
+    };
+    const refreshWithLabel = (label: string): OAuthTokenRefresher =>
+      fakeRefresher(async () => ({ access: "fresh-access", expiresAt: new Date(Date.now() + 3600_000), accountLabel: label }));
+
+    const defaulted = await seeded("label-probe");
+    await new OAuthRefreshService(requireDb()).ensureFreshAccessToken(defaulted, refreshWithLabel("user@example.com"), { force: true });
+    expect(await readLabel(defaulted)).toBe("user@example.com");
+
+    const renamed = await seeded("My Work Account");
+    await new OAuthRefreshService(requireDb()).ensureFreshAccessToken(renamed, refreshWithLabel("user@example.com"), { force: true });
+    expect(await readLabel(renamed)).toBe("My Work Account");
+  });
+
+  test("adopts a quota-reported identity only over a default label", async () => {
+    const fakeRedis = { get: async () => null, set: async () => undefined } as never;
+    const seed = async (label: string): Promise<string> => {
+      await requireDb().insert(providers).values({ id: "label-quota", enabled: true }).onConflictDoNothing();
+      const [row] = await requireDb()
+        .insert(providerAccounts)
+        .values({
+          providerId: "label-quota",
+          label,
+          credentialKind: "oauth",
+          credentialCiphertext: encryptCredential("quota-access"),
+        })
+        .returning({ id: providerAccounts.id });
+      if (!row) throw new Error("failed to insert test account");
+      createdAccountIds.push(row.id);
+      return row.id;
+    };
+    const registry = { resolveQuotaCollector: async () => (async () => ({
+      source: "label-quota",
+      plan: null,
+      windows: [],
+      error: null,
+      accountLabel: "quota-user@example.com",
+    })) } as never;
+    const deps = {
+      db: requireDb(),
+      redis: fakeRedis,
+      providerRegistry: registry,
+      resolveCredential: async () => "quota-access",
+    } as never;
+    const defaulted = await seed("label-quota");
+    const first = await refreshAccountQuota(deps, { accountId: defaulted, providerId: "label-quota", tenantId: null } as never, (async () => new Response("{}")) as never);
+    expect(first.accountLabel).toBe("quota-user@example.com");
+    const [adopted] = await requireDb().select().from(providerAccounts).where(eq(providerAccounts.id, defaulted));
+    expect(adopted?.label).toBe("quota-user@example.com");
+
+    const renamed = await seed("My Label");
+    await refreshAccountQuota(deps, { accountId: renamed, providerId: "label-quota", tenantId: null } as never, (async () => new Response("{}")) as never);
+    const [kept] = await requireDb().select().from(providerAccounts).where(eq(providerAccounts.id, renamed));
+    expect(kept?.label).toBe("My Label");
   });
 
   test("refreshes disabled accounts without re-enabling or clearing cooldown health state", async () => {

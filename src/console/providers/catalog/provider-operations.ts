@@ -142,7 +142,7 @@ async function attachProviderCapabilities(
   // `OAuthClient` always defines `buildAuthorizeUrl` and `exchangeCode` — the
   // device-only clients override the latter to throw — so testing only for the
   // methods reports browser support for every device-only provider (Cline,
-  // Cursor, Grok, Kimi, Muse, Buddy). The dashboard then offered "Login with
+  // Grok, Kimi, Muse, Buddy, GitHub, Kilo, xAI). The dashboard then offered "Login with
   // browser" on those rows and the click failed server-side with
   // `browser_code_not_supported`. An explicit `false` suppresses the flow; an
   // omitted flag keeps the method-shape test, since a client that does not

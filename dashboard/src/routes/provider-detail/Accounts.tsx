@@ -38,7 +38,6 @@ import {
 } from "../../shared/credential-extract";
 import { formatResetDistance } from "../../shared/quota-formatters";
 import {
-  AccountStatusDetail,
   activeModelCooldowns,
   lastModelCooldownAt,
 } from "../../components/AccountCooldown";
@@ -375,12 +374,6 @@ function AccountRow({
             status: account.status,
             errorCategory: account.lastErrorCategory ?? undefined,
             errorMessage: account.lastError ?? undefined,
-            statusDetail: (
-              <AccountStatusDetail
-                cooldownUntil={account.cooldownUntil}
-                modelCooldowns={account.modelCooldowns}
-              />
-            ),
             emptyMessage: "Status transitions, rate limits, and auto-recoveries will appear here.",
           }}
           onClose={() => setShowHistory(false)}

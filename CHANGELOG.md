@@ -5,9 +5,36 @@
 > All changes below are pre-release. Cartethyia has not been tagged or
 > released; this document reflects the current production codebase architecture and capabilities.
 
+### WorkBuddy quota reads the reference billing filter
+
+Tencent billing queries now send the reference filter envelope (`ProductCode: p_tcaca`, statuses `[0, 3]`, and the 101-year package window) plus `X-User-Id` when the access token carries a UID. An empty `{}` could answer success with zero credit packages for an account that has them, which surfaced as “No credit package found”.
+
+### Account labels adopt a learned identity only over the default
+
+OAuth refresh and quota refresh now carry a learned display identity (`accountLabel`) and write it back only when the stored label is still the provider default. Operator renames are never overwritten; the check and the write stay in one statement so a concurrent rename cannot lose.
+
+### Usage requests show the requested reasoning effort
+
+Telemetry records the canonical effort the client asked for (`requested_effort`), and the Usage requests table renders it as a model suffix — `gpt-6-luna (xhigh)`. Grouping and cost joins keep reading the bare model id.
+
+### Health history shows model-scoped failures
+
+The account health log records and displays the affected model on the event row. Its wider, viewport-bounded dialog keeps long model IDs and error details readable with scrolling on narrow screens. Disabling or re-enabling an account no longer clears its failure evidence; only explicit recovery or replacing the credential resets it.
+
 ### Correct OpenCode MiMo Flash context limit
 
 `opencodeft` and `opencodezen` both expose `mimo-v2.6-flash-free` with a 1,000,000-token context limit.
+
+### A Messages-shaped `context_management` no longer reaches a Responses upstream
+
+The two wires disagree on this field's shape: Anthropic Messages sends a map (`{edits: [...]}`)
+while the Responses wire requires a sequence. The Responses codec read a bare
+`extension:context_management` fallback, which the Messages parser populates, so a Messages request
+routed to a Responses-wire model (for example `opencodeft`/`muse-spark-1.3-contributor-free`)
+forwarded the map and the upstream rejected it with
+"`context_management`: invalid type: map, expected a sequence". The Responses codec now accepts only
+its own `extension:responses.context_management` spelling for that field; every other passthrough
+field keeps the bare fallback, because the Chat parser files those and their shape is wire-neutral.
 
 ### Kiro (AWS CodeWhisperer) is a bundled provider
 
@@ -63,6 +90,25 @@ upstream demanded back. The exemption is key-based rather than value-based, so e
 and IP-like numbers inside math or code inside a reasoning block are preserved too; credential,
 secret-key, and IPv4 rules are unchanged for every other field.
 
+### Reasoning visibility differs by provider, and the Codex limit is upstream
+
+A provider streams either readable thinking or a short summary heading, and which one is the
+provider's choice: `cb`, `cbcn`, `workbuddy`, and `mimodesktop` send the model's reasoning as text,
+while the ChatGPT Codex backend sends only a short heading plus opaque
+`encrypted_content`. Measured on `gpt-5.6-luna` with the same prompt, Codex spent *more* reasoning
+tokens than the others while disclosing the least, so the thin trace is the server withholding it,
+not a decoder dropping it.
+
+No request-side field widens it: every mode of `reasoning.summary`, `context: "all_turns"`, the
+Responses Lite shape, the WebSocket transport, and three other models all produced the same
+heading, and the two spellings that look like the answer (`reasoning.summary: "none"`,
+`include: ["reasoning.text"]`) are rejected with `400`. Two further points that read as levers but
+are not: `x-reasoning-included` is a response header about past-token accounting, and omitting
+`include: ["reasoning.encrypted_content"]` does not stop the server attaching the blob. Replay is
+unaffected by dropping it — a stripped replay and a replay with no reasoning item at all both
+answered correctly. The levers tried, the replay finding, and the coverage caveats are recorded
+in "Known limitations: reasoning visibility" in `src/providers/PROVIDERS.md`.
+
 ### The logger sanitizes once, and for both sinks
 
 `log.debug/info/warn/error` now build one sanitized argument list and use it for the console ring and
@@ -114,7 +160,9 @@ now returns `unsupported_media_type` 415 instead of `invalid_request`.
 former, so a Responses-authored request keeps its ceiling when served on the chat or Messages wire
 instead of falling back to that wire's default. Chat and Responses passthrough fields now fall back
 between the `extension:responses.*` and bare `extension:*` spellings, and `verbosity` resolves from
-any of its three sources. On the Messages wire an unsupported `service_tier` is logged as a warning
+any of its three sources. That fallback is for fields whose shape is wire-neutral; `context_management`
+is excluded because Anthropic Messages and the Responses wire disagree on it, so only the
+Responses-spelled key may supply it. On the Messages wire an unsupported `service_tier` is logged as a warning
 rather than rejected or silently discarded, and `extension:metadata_user_id` merges into
 `metadata.user_id`. Gemini `functionResponse.response` is always a JSON object — array content is
 carried as `{ content: "<json text>" }`, since parsing a just-stringified array back into a value
@@ -2377,7 +2425,6 @@ read and is declared in `CONFIG_SPEC`, so it is covered by the drift check.
 - The dashboard's session mirror is derived, not hand-written, and finally guarded. The backend `SessionStatusResponse` is now a discriminated union on `status` (the route already emitted every authenticated field together, so the flat optional bag let the mirror omit `username` and mark `display_name`, `is_first_boot`, and `session_expires_at` required without a compile error). `dashboard/src/lib/contracts.ts` aliases `SessionResponse` to it and pins `SessionUser`'s field set in `dashboard/src/session-parity.test.ts`; the two dashboard fixtures missing `username` were corrected. Two further unguarded dashboard provider-id copies — `ProviderIcon.tsx`'s `iconAssets` and `Providers.tsx`'s `FREE_*`/`FOUNDING_IDS` sets — are covered by `dashboard/src/provider-lists-parity.test.ts`. That guard immediately caught a real drift: `workbuddy` had no icon entry, so every WorkBuddy row rendered initials instead of the logo.
 
 ### Provider ecosystem & protocol fidelity
-- **AutoClaw CN is available as a bundled provider.** Operators import access/refresh tokens and the required device ID; Cartethyia validates and rotates credentials, reads wallet credits and per-account model limits, and uses the authenticated CN sandbox WebSocket/SSE relay only for text-only requests when the direct route is unavailable. Relay requests reject caller tools rather than dropping their schemas.
 
 - **Codex and Claude model SKUs now expose the current provider catalog.** Codex gains
   `gpt-6-sol`, `gpt-6-luna`, and `gpt-daybreak-blue-latest`, and its `gpt-6-astra`/`gpt-5.5`

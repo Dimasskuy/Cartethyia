@@ -66,6 +66,7 @@ export interface AccountHealthEventRecord {
   readonly toStatus: string;
   readonly reason: string | null;
   readonly errorCategory: string | null;
+  readonly modelId: string | null;
   readonly createdAt: string;
 }
 
@@ -491,6 +492,7 @@ async function persistAccountFailure(
         toStatus: classification.status,
         reason: classification.reason,
         errorCategory: classification.category,
+        modelId: modelId ?? null,
         createdAt: now,
       });
     }
@@ -787,6 +789,7 @@ export async function listAccountHealthEvents(
       accountId: r.accountId as string,
       fromStatus: r.fromStatus,
       toStatus: r.toStatus,
+      modelId: r.modelId ?? null,
       reason: r.reason,
       errorCategory: r.errorCategory,
       createdAt: r.createdAt.toISOString(),

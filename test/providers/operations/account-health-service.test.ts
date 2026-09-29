@@ -159,6 +159,8 @@ dbDescribe("Account Health Recorder & Auto-Recovery", () => {
     // cooling instead of showing a reasonless "1 model cooling".
     expect(rows[0]?.lastErrorCategory).toBe("rate_limit_transient");
     expect(rows[0]?.lastErrorAt).toBeInstanceOf(Date);
+    const events = await listAccountHealthEvents(db, accountId);
+    expect(events[0]?.modelId).toBe("gpt-5");
   });
 
   test("sweepExpiredCooldowns prunes expired model cooldown keys", async () => {

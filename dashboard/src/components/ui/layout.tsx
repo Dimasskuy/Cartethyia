@@ -102,27 +102,69 @@ export function StatCard({
   );
 }
 
+export interface DataTableColumn {
+  readonly key: string;
+  readonly label: string;
+  readonly sortable?: boolean;
+}
+
 export function DataTable({
   headers,
   children,
   maxHeight,
   onScroll,
+  sortKey,
+  sortDirection,
+  onSort,
 }: {
-  headers: readonly string[];
+  headers: readonly (string | DataTableColumn)[];
   children: ReactNode;
   maxHeight?: number;
   onScroll?: React.UIEventHandler<HTMLDivElement>;
+  sortKey?: string;
+  sortDirection?: "asc" | "desc";
+  onSort?: (key: string) => void;
 }) {
   return (
     <div className="data-table-container" style={maxHeight ? { maxHeight, overflowY: "auto" } : undefined} onScroll={onScroll}>
       <table className="data-table">
         <thead>
           <tr>
-            {headers.map((header) => (
-              <th scope="col" key={header}>
-                {header}
-              </th>
-            ))}
+            {headers.map((header) => {
+              const key = typeof header === "string" ? header : header.key;
+              const label = typeof header === "string" ? header : header.label;
+              const sortable = typeof header !== "string" && header.sortable === true && onSort !== undefined;
+              const active = sortKey === key;
+              return (
+                <th scope="col" key={key} aria-sort={active ? (sortDirection === "asc" ? "ascending" : "descending") : undefined}>
+                  {sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => onSort(key)}
+                      title={`Sort by ${label}`}
+                      style={{
+                        all: "unset",
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        font: "inherit",
+                        color: "inherit",
+                        textTransform: "inherit",
+                        letterSpacing: "inherit",
+                      }}
+                    >
+                      <span>{label}</span>
+                      <span aria-hidden="true" style={{ fontSize: "9px", opacity: active ? 1 : 0.35 }}>
+                        {active ? (sortDirection === "asc" ? "▲" : "▼") : "△"}
+                      </span>
+                    </button>
+                  ) : (
+                    label
+                  )}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>{children}</tbody>

@@ -18,6 +18,7 @@ import {
   isClaudeBillingHeaderText,
   mapReasoningEffortToWireTier,
   resolveImageSource,
+  resolveOutputVerbosity,
   tryParseJsonObject,
 } from "../primitives";
 
@@ -462,10 +463,28 @@ export function canonicalToCodexResponsesPayload(
     includeSet.add("reasoning.encrypted_content");
     payload["include"] = [...includeSet];
   }
-  // Codex accepts output verbosity only through the nested `text` object; the
-  // flat canonical `generation_controls.verbosity` never goes upstream alone.
-  if (request.generation_controls.verbosity !== undefined) {
-    payload["text"] = { verbosity: request.generation_controls.verbosity };
+  // Output verbosity and structured-output format are both nested under the
+  // Codex `text` object; neither exists as a top-level field on this wire.
+  // Verbosity resolves through the shared surface-agnostic reader, because the
+  // canonical slot is never what a surface parser writes (see
+  // `resolveOutputVerbosity`).
+  const verbosity = resolveOutputVerbosity(request.generation_controls);
+  const format = request.response_format;
+  if (verbosity !== undefined || format !== undefined) {
+    const text: Record<string, unknown> = {};
+    if (verbosity !== undefined) text["verbosity"] = verbosity;
+    if (format?.type === "json_object") {
+      text["format"] = { type: "json_object" };
+    } else if (format?.type === "json_schema") {
+      text["format"] = {
+        type: "json_schema",
+        ...(format.name === undefined ? {} : { name: format.name }),
+        ...(format.schema === undefined ? {} : { schema: format.schema }),
+        ...(format.strict === undefined ? {} : { strict: format.strict }),
+        ...(format.description === undefined ? {} : { description: format.description }),
+      };
+    }
+    payload["text"] = text;
   }
   // Concurrent reasoning summaries are opt-in and only meaningful once a
   // summary was requested (codex-rs `concurrent_reasoning_summaries`).
@@ -474,8 +493,6 @@ export function canonicalToCodexResponsesPayload(
       reasoning_summary_delivery: "sequential_cutoff",
     };
   }
-  if (request.response_format !== undefined)
-    payload["response_format"] = request.response_format;
   if (request.cache_hint !== undefined) {
     payload["prompt_cache_key"] =
       request.cache_hint === "stable_prefix"
