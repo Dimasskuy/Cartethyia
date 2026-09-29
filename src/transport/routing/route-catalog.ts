@@ -45,6 +45,7 @@ export function cliMappingSourceKeys(toolId: string, sourceModel: string): reado
     family,
     `claude-${family}-5`,
     `claude-${family}-5-1`,
+    `claude-${family}-5-5`,
     `claude-${family}-4-6`,
     `claude-${family}-4-5`,
   ])];

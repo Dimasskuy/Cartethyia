@@ -119,6 +119,7 @@ dbDescribe("createDatabaseSnapshotBuilder — model aliases/combos", () => {
       sonnet: modelId,
       "claude-sonnet-5": modelId,
       "claude-sonnet-5-1": modelId,
+      "claude-sonnet-5-5": modelId,
       "claude-sonnet-4-6": modelId,
     });
     expect(built.cli_aliases?.[`${tenantB}:${keyB}`]).toEqual({
@@ -126,6 +127,7 @@ dbDescribe("createDatabaseSnapshotBuilder — model aliases/combos", () => {
       haiku: modelId,
       "claude-haiku-5": modelId,
       "claude-haiku-5-1": modelId,
+      "claude-haiku-5-5": modelId,
       "claude-haiku-4-6": modelId,
     });
     expect(built.combos[tenantB]).toEqual({

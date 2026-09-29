@@ -138,14 +138,14 @@ function setup(client?: OAuthLoginClient) {
 describe("OAuthLoginOperations.beginAuthorize", () => {
   test("requires dashboard:write", async () => {
     const { factory } = setup(claudeClient());
-    await expect(factory.beginAuthorize(undefined, "claude", "label")).rejects.toThrow(
+    return expect(factory.beginAuthorize(undefined, "claude", "label")).rejects.toThrow(
       ConsoleDomainError,
     );
   });
 
   test("404s for a provider with no registered login client", async () => {
     const { factory } = setup();
-    await expect(factory.beginAuthorize(fakeAccess(), "claude", "label")).rejects.toThrow(
+    return expect(factory.beginAuthorize(fakeAccess(), "claude", "label")).rejects.toThrow(
       "Provider claude has no OAuth login client registered",
     );
   });
@@ -383,7 +383,7 @@ describe("OAuthLoginOperations device-code flow", () => {
 
   test("rejects device start for a provider that does not support it", async () => {
     const { factory } = setup(claudeClient());
-    await expect(factory.startDevice(fakeAccess(), "claude", "label")).rejects.toThrow(
+    return expect(factory.startDevice(fakeAccess(), "claude", "label")).rejects.toThrow(
       "Provider claude does not support device-code login",
     );
   });
@@ -398,7 +398,7 @@ describe("OAuthLoginOperations device-code flow", () => {
       accessResolver: () => fakeAccess({ tenantId: "tenant-7" }),
       callbackListener: testCallbackListener(),
     });
-    await expect(
+    return expect(
       factory.beginAuthorize(fakeAccess({ tenantId: "tenant-7" }), "muse", "device-account"),
     ).rejects.toMatchObject({
       code: "browser_code_not_supported",
@@ -451,14 +451,14 @@ describe("OAuthLoginOperations device-code flow", () => {
     expect(accountStore.calls[0]).toMatchObject({ tenantId: "tenant-7", providerId: "codex" });
 
     // Correlation is deleted once resolved — a further poll is unknown.
-    await expect(
+    return expect(
       factory.pollDevice(fakeAccess({ tenantId: "tenant-7" }), "codex", started.deviceAuthId),
     ).rejects.toThrow("Unknown or expired device-code flow");
   });
 
   test("poll rejects an unknown deviceAuthId", async () => {
     const { factory } = setup(claudeClient());
-    await expect(factory.pollDevice(fakeAccess(), "claude", "never-started")).rejects.toThrow(
+    return expect(factory.pollDevice(fakeAccess(), "claude", "never-started")).rejects.toThrow(
       "Unknown or expired device-code flow",
     );
   });
@@ -557,7 +557,7 @@ describe("OAuthLoginOperations imported-credential flow", () => {
 
   test("refuses an import for a provider that cannot complete one", async () => {
     const { factory } = setup(claudeClient());
-    await expect(
+    return expect(
       factory.importCredential(fakeAccess(), "claude", "label", "material", {}),
     ).rejects.toMatchObject({ code: "import_not_supported", status: 409 });
   });
@@ -573,7 +573,7 @@ describe("OAuthLoginOperations imported-credential flow", () => {
       accessResolver: () => fakeAccess({ tenantId: "tenant-7" }),
       callbackListener: testCallbackListener(),
     });
-    await expect(
+    return expect(
       factory.importCredential(fakeAccess({ tenantId: "tenant-7" }), "kiro", "label", "dead", {}),
     ).rejects.toThrow("rejected by the upstream");
     expect(accountStore.calls).toHaveLength(0);
