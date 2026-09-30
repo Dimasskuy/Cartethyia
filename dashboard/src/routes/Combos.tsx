@@ -330,6 +330,10 @@ function CombosSection(): ReactNode {
   const [smartNoToolMembers, setSmartNoToolMembers] = useState("");
   const [smartResearchMembers, setSmartResearchMembers] = useState("");
   const [smartClassifierModel, setSmartClassifierModel] = useState("");
+  const [swarmManagerModel, setSwarmManagerModel] = useState("");
+  const [swarmStaffModel, setSwarmStaffModel] = useState("");
+  const [swarmWorkerModels, setSwarmWorkerModels] = useState("");
+  const [swarmWorkerCount, setSwarmWorkerCount] = useState("8");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<ModelComboRow | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -367,6 +371,10 @@ function CombosSection(): ReactNode {
     setSmartNoToolMembers("");
     setSmartResearchMembers("");
     setSmartClassifierModel("");
+    setSwarmManagerModel("");
+    setSwarmStaffModel("");
+    setSwarmWorkerModels("");
+    setSwarmWorkerCount("8");
     setDialogOpen(true);
   };
 
@@ -399,6 +407,11 @@ function CombosSection(): ReactNode {
         ? smart.intentDetection.llmClassifierFallback.model
         : "",
     );
+    const swarm = c.config?.swarm;
+    setSwarmManagerModel(typeof swarm?.managerModel === "string" ? swarm.managerModel : "");
+    setSwarmStaffModel(typeof swarm?.staffModel === "string" ? swarm.staffModel : "");
+    setSwarmWorkerModels(listToText(swarm?.workerModels));
+    setSwarmWorkerCount(typeof swarm?.workerCount === "number" ? String(swarm.workerCount) : "8");
     setDialogOpen(true);
   };
 
@@ -463,7 +476,18 @@ function CombosSection(): ReactNode {
                     : {}),
                 },
               }
-            : null;
+            : strategy === "swarm"
+              ? {
+                  swarm: {
+                    ...(swarmManagerModel.trim() ? { managerModel: swarmManagerModel.trim() } : {}),
+                    ...(swarmStaffModel.trim() ? { staffModel: swarmStaffModel.trim() } : {}),
+                    ...(parseMemberList(swarmWorkerModels).length > 0
+                      ? { workerModels: parseMemberList(swarmWorkerModels) }
+                      : {}),
+                    workerCount: clampInt(swarmWorkerCount, 1, 16, 8),
+                  },
+                }
+              : null;
 
     if (editingCombo) {
       updateMutation.mutate(
@@ -743,6 +767,43 @@ function CombosSection(): ReactNode {
                 placeholder="e.g. provider/cheap-model"
                 value={smartClassifierModel}
                 onChange={(e) => setSmartClassifierModel(e.target.value)}
+              />
+            </div>
+          )}
+          {strategy === "swarm" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <Input
+                label="Manager model (optional — default: first combo member)"
+                id="combo-swarm-manager"
+                type="text"
+                placeholder="e.g. provider/strong-model"
+                value={swarmManagerModel}
+                onChange={(e) => setSwarmManagerModel(e.target.value)}
+              />
+              <Input
+                label="Staff/audit model (optional — skips audit when empty)"
+                id="combo-swarm-staff"
+                type="text"
+                placeholder="e.g. provider/strong-model"
+                value={swarmStaffModel}
+                onChange={(e) => setSwarmStaffModel(e.target.value)}
+              />
+              <Textarea
+                label="Worker models (one per line, optional — default: all members)"
+                id="combo-swarm-workers"
+                rows={3}
+                placeholder="provider/model"
+                value={swarmWorkerModels}
+                onChange={(e) => setSwarmWorkerModels(e.target.value)}
+              />
+              <Input
+                label="Max subtasks dispatched per request"
+                id="combo-swarm-worker-count"
+                type="number"
+                min={1}
+                max={16}
+                value={swarmWorkerCount}
+                onChange={(e) => setSwarmWorkerCount(e.target.value)}
               />
             </div>
           )}

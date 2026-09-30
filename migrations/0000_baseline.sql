@@ -16,7 +16,7 @@ CREATE TYPE "public"."telemetry_status" AS ENUM('completed', 'failed', 'cancelle
 --> statement-breakpoint
 CREATE TYPE "public"."wire_family" AS ENUM('chat', 'responses', 'messages');
 --> statement-breakpoint
-CREATE TYPE "public"."model_combo_strategy" AS ENUM('fallback', 'round_robin', 'cascade', 'fusion', 'smart_routing');
+CREATE TYPE "public"."model_combo_strategy" AS ENUM('fallback', 'round_robin', 'cascade', 'fusion', 'smart_routing', 'swarm');
 --> statement-breakpoint
 CREATE TYPE "public"."provider_routing_strategy" AS ENUM('fallback', 'round_robin');
 --> statement-breakpoint

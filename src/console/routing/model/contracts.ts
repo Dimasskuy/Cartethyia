@@ -399,8 +399,8 @@ function modelRoutingErrorResponse(error: unknown, set: { status?: number | stri
 // without updating these literals fails here.
 type ExpectComboParity<T extends true> = T;
 export type ComboSchemaParity = ExpectComboParity<
-  [ComboStrategy] extends ["fallback" | "round_robin" | "cascade" | "fusion" | "smart_routing"]
-    ? (["fallback" | "round_robin" | "cascade" | "fusion" | "smart_routing"] extends [ComboStrategy] ? true : false)
+  [ComboStrategy] extends ["fallback" | "round_robin" | "cascade" | "fusion" | "smart_routing" | "swarm"]
+    ? (["fallback" | "round_robin" | "cascade" | "fusion" | "smart_routing" | "swarm"] extends [ComboStrategy] ? true : false)
     : false
 >;
 
@@ -443,10 +443,24 @@ const smartRoutingComboConfigSchema = t.Object({
   noToolMembers: t.Optional(t.Array(t.String({ maxLength: 200 }), { maxItems: 16 })),
   researchMembers: t.Optional(t.Array(t.String({ maxLength: 200 }), { maxItems: 16 })),
 });
+/** Bounds for swarm tuning; the dispatch layer clamps defensively too. */
+const swarmComboConfigSchema = t.Object({
+  managerModel: t.Optional(t.String({ maxLength: 200 })),
+  staffModel: t.Optional(t.String({ maxLength: 200 })),
+  workerModels: t.Optional(t.Array(t.String({ maxLength: 200 }), { maxItems: 16 })),
+  workerCount: t.Optional(t.Integer({ minimum: 1, maximum: 16 })),
+  minWorkers: t.Optional(t.Integer({ minimum: 1, maximum: 8 })),
+  maxWorkers: t.Optional(t.Integer({ minimum: 1, maximum: 16 })),
+  workerQuorum: t.Optional(t.Integer({ minimum: 1, maximum: 8 })),
+  stragglerGraceMs: t.Optional(t.Integer({ minimum: 0, maximum: 120000 })),
+  workerHardTimeoutMs: t.Optional(t.Integer({ minimum: 1000, maximum: 600000 })),
+  managerTimeoutMs: t.Optional(t.Integer({ minimum: 1000, maximum: 600000 })),
+});
 const comboConfigSchema = t.Object({
   cascade: t.Optional(cascadeComboConfigSchema),
   fusion: t.Optional(fusionComboConfigSchema),
   smartRouting: t.Optional(smartRoutingComboConfigSchema),
+  swarm: t.Optional(swarmComboConfigSchema),
 });
 /** The combo-strategy enum's own values; see `ComboSchemaParity` above. */
 const comboStrategySchema = literalUnion(modelComboStrategy.enumValues);

@@ -351,13 +351,14 @@ export const healthEvents = pgTable(
 // Model aliasing & combos: replaces the dormant, disconnected
 // `routing_policies` scaffolding. Aliases resolve a client-facing name to a
 // real model; combos back a client-facing name with >=1 real models,
-// auto-selected via `fallback`, `round_robin`, `cascade`, `fusion`, or `smart_routing`.
+// auto-selected via `fallback`, `round_robin`, `cascade`, `fusion`, `smart_routing`, or `swarm`.
 export const modelComboStrategy = pgEnum("model_combo_strategy", [
   "fallback",
   "round_robin",
   "cascade",
   "fusion",
   "smart_routing",
+  "swarm",
 ]);
 
 /** Canonical `ComboStrategy` union, derived from the enum above. Console
@@ -386,6 +387,7 @@ export interface ModelComboConfig {
   readonly cascade?: CascadeComboConfig;
   readonly fusion?: FusionComboConfig;
   readonly smartRouting?: SmartRoutingComboConfig;
+  readonly swarm?: SwarmComboConfig;
 }
 
 /** Tuning knobs for the `smart_routing` combo strategy. The member pool is
@@ -410,6 +412,33 @@ export interface SmartRoutingComboConfig {
   readonly noToolMembers?: string[];
   /** Members tried first when research intent is detected. */
   readonly researchMembers?: string[];
+}
+
+/** Tuning knobs for the `swarm` combo strategy. A manager model classifies
+ * the request (gatekeeper), decomposes complex requests into parallel
+ * subtasks, fans them out to worker models, optionally audits the results
+ * with a staff model, then synthesizes one final answer. */
+export interface SwarmComboConfig {
+  /** Manager/coordinator model ref; defaults to the first combo member. */
+  readonly managerModel?: string;
+  /** Staff/audit model ref; when omitted the audit stage is skipped. */
+  readonly staffModel?: string;
+  /** Worker pool model refs; defaults to all combo members. */
+  readonly workerModels?: string[];
+  /** Cap on subtasks dispatched per request (1-16). */
+  readonly workerCount?: number;
+  /** Min successful workers before falling back to a direct answer. */
+  readonly minWorkers?: number;
+  /** Safety cap on fan-out width. */
+  readonly maxWorkers?: number;
+  /** Min successful workers before stragglers get a grace window. */
+  readonly workerQuorum?: number;
+  /** Ms to wait for laggards once quorum is reached. */
+  readonly stragglerGraceMs?: number;
+  /** Hard cap per worker call, in ms. */
+  readonly workerHardTimeoutMs?: number;
+  /** Cap for each coordinator (gatekeeper/manager/audit) call, in ms. */
+  readonly managerTimeoutMs?: number;
 }
 
 /** Tuning knobs for the `fusion` combo strategy. Every panel member answers

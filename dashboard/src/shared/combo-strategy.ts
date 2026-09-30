@@ -16,4 +16,5 @@ export const COMBO_STRATEGY_OPTIONS: ReadonlyArray<SelectOption & { value: Combo
   { value: "cascade", label: "Cascade (escalate by confidence)" },
   { value: "fusion", label: "Fusion (parallel panel + judge)" },
   { value: "smart_routing", label: "Smart Routing (per-request ordering)" },
+  { value: "swarm", label: "Swarm (hierarchical multi-agent)" },
 ];
