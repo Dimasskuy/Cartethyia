@@ -1,11 +1,13 @@
 /**
  * RTK-equivalent tool-output compression for the gateway.
  *
- * Upstream RTK (rtk-ai/rtk) is a terminal wrapper; here the same idea runs
- * as a message preprocessing stage: `toolResult` text parts are
- * auto-detected (git-diff, grep, ls/tree, logs) and compressed with
+ * The concept follows rtk-ai/rtk (Apache-2.0) — a CLI proxy that compresses
+ * command output (git-diff, grep, ls, tree, dedup-log, smart-truncate) —
+ * reimplemented here as original code for a gateway message preprocessing
+ * stage: `toolResult` text parts are auto-detected and compressed with
  * dedup + smart-truncate before the request reaches the LLM. Runs before
- * format translation so it works across all wire formats.
+ * format translation so it works across all wire formats. Default ON for
+ * combo requests, matching upstream's default.
  *
  * Only `toolResult` text parts are ever rewritten; user/assistant prose and
  * non-text parts pass through untouched.

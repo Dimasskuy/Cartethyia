@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyTokenSavers,
+  cavemanPrompt,
   compressMessages,
   compressToolOutput,
   compressWithHeadroom,
   injectedSavers,
   injectSystemPrompt,
   normalizeTokenSaverConfig,
+  ponytailPrompt,
   tokenSaversActive,
 } from "../../src/tokensaver";
 import type { CanonicalMessage, CanonicalRequest } from "../../src/transport/canonical-model";
@@ -246,5 +248,138 @@ describe("applyTokenSavers", () => {
     });
     expect(outcome.applied).toEqual([]);
     expect(outcome.request).toBe(request);
+  });
+});
+
+describe("saver prompt fidelity (upstream mechanics)", () => {
+  test("ponytail carries the upstream ladder and its distinctive rules", () => {
+    const prompt = ponytailPrompt("full");
+    expect(prompt).toContain("Does this need to exist at all?");
+    expect(prompt).toContain("root cause, not symptom");
+    expect(prompt).toContain("ponytail:");
+    expect(prompt).toContain("ONE runnable check");
+    expect(prompt).toContain("take the higher one");
+    expect(prompt).toContain("never simplify");
+  });
+
+  test("ponytail intensity levels match upstream semantics", () => {
+    expect(ponytailPrompt("lite")).toContain("name the lazier alternative in one line");
+    expect(ponytailPrompt("full")).toContain("The ladder is enforced");
+    expect(ponytailPrompt("ultra")).toContain("YAGNI extremist");
+  });
+
+  test("caveman protects code/commands/paths and keeps the escape hatch", () => {
+    const prompt = cavemanPrompt("full");
+    expect(prompt).toContain("file paths");
+    expect(prompt).toContain("commands");
+    expect(prompt).toContain("exact error messages");
+    expect(prompt).toContain("full sentences");
+  });
+});
+
+describe("compressWithHeadroom strict response validation", () => {
+  async function withServer(
+    handler: (req: Request) => Response | Promise<Response>,
+    run: (url: string) => Promise<void>,
+  ): Promise<void> {
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handler });
+    try {
+      await run(`http://127.0.0.1:${server.port}`);
+    } finally {
+      server.stop();
+    }
+  }
+
+  test("accepts a well-formed response, strips unknown wire fields", async () => {
+    const messages = [userMessage("hello")];
+    await withServer(
+      () =>
+        Response.json({
+          messages: [
+            {
+              role: "user",
+              content: [{ kind: "text", text: "hi" }],
+              injected: "drop me",
+            },
+          ],
+        }),
+      async (url) => {
+        const result = await compressWithHeadroom(messages, url);
+        expect(result.compressed).toBe(true);
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0]!.content).toEqual([{ kind: "text", text: "hi" }]);
+        expect("injected" in (result.messages[0] as unknown as Record<string, unknown>)).toBe(false);
+      },
+    );
+  });
+
+  test("rejects unknown part kinds (fail-open)", async () => {
+    const messages = [userMessage("hello")];
+    await withServer(
+      () =>
+        Response.json({
+          messages: [{ role: "user", content: [{ kind: "mystery", text: "x" }] }],
+        }),
+      async (url) => {
+        const result = await compressWithHeadroom(messages, url);
+        expect(result.compressed).toBe(false);
+        expect(result.messages).toBe(messages);
+      },
+    );
+  });
+
+  test("rejects malformed parts and role mismatches (fail-open)", async () => {
+    const messages = [userMessage("hello")];
+    await withServer(
+      () =>
+        Response.json({
+          messages: [{ role: "assistant", content: [{ kind: "text" }] }],
+        }),
+      async (url) => {
+        const result = await compressWithHeadroom(messages, url);
+        expect(result.compressed).toBe(false);
+        expect(result.messages).toBe(messages);
+      },
+    );
+  });
+
+  test("accepts nested toolResult parts and preserves phase", async () => {
+    const messages: CanonicalMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            kind: "toolResult",
+            call_id: "call-1",
+            content: [{ kind: "text", text: "compressed output" }],
+          },
+        ],
+        phase: "final_answer",
+      },
+    ];
+    await withServer(
+      () =>
+        Response.json({
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  kind: "toolResult",
+                  call_id: "call-1",
+                  content: [{ kind: "text", text: "c" }],
+                },
+              ],
+            },
+          ],
+        }),
+      async (url) => {
+        const result = await compressWithHeadroom(messages, url);
+        expect(result.compressed).toBe(true);
+        expect(result.messages[0]!.phase).toBe("final_answer");
+        const part = result.messages[0]!.content[0]!;
+        expect(part.kind).toBe("toolResult");
+      },
+    );
   });
 });
