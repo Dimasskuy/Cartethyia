@@ -399,8 +399,8 @@ function modelRoutingErrorResponse(error: unknown, set: { status?: number | stri
 // without updating these literals fails here.
 type ExpectComboParity<T extends true> = T;
 export type ComboSchemaParity = ExpectComboParity<
-  [ComboStrategy] extends ["fallback" | "round_robin" | "cascade" | "fusion"]
-    ? (["fallback" | "round_robin" | "cascade" | "fusion"] extends [ComboStrategy] ? true : false)
+  [ComboStrategy] extends ["fallback" | "round_robin" | "cascade" | "fusion" | "smart_routing"]
+    ? (["fallback" | "round_robin" | "cascade" | "fusion" | "smart_routing"] extends [ComboStrategy] ? true : false)
     : false
 >;
 
@@ -423,9 +423,30 @@ const fusionComboConfigSchema = t.Object({
   panelTimeoutMs: t.Optional(t.Integer({ minimum: 1000, maximum: 600000 })),
   judgePrompt: t.Optional(t.String({ maxLength: 8000 })),
 });
+/** Bounds for smart-routing tuning; the dispatch layer clamps defensively too. */
+const smartRoutingComboConfigSchema = t.Object({
+  intentDetection: t.Optional(
+    t.Object({
+      keywords: t.Optional(t.Array(t.String({ maxLength: 100 }), { maxItems: 50 })),
+      confidenceThreshold: t.Optional(t.Number({ minimum: 0, maximum: 1 })),
+      urlPatternBoost: t.Optional(t.Boolean()),
+      llmClassifierFallback: t.Optional(
+        t.Object({
+          enabled: t.Optional(t.Boolean()),
+          model: t.Optional(t.String({ maxLength: 200 })),
+          promptTemplate: t.Optional(t.String({ maxLength: 2000 })),
+        }),
+      ),
+    }),
+  ),
+  toolCallingMembers: t.Optional(t.Array(t.String({ maxLength: 200 }), { maxItems: 16 })),
+  noToolMembers: t.Optional(t.Array(t.String({ maxLength: 200 }), { maxItems: 16 })),
+  researchMembers: t.Optional(t.Array(t.String({ maxLength: 200 }), { maxItems: 16 })),
+});
 const comboConfigSchema = t.Object({
   cascade: t.Optional(cascadeComboConfigSchema),
   fusion: t.Optional(fusionComboConfigSchema),
+  smartRouting: t.Optional(smartRoutingComboConfigSchema),
 });
 /** The combo-strategy enum's own values; see `ComboSchemaParity` above. */
 const comboStrategySchema = literalUnion(modelComboStrategy.enumValues);

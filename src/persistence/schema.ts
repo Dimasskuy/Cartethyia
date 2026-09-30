@@ -351,12 +351,13 @@ export const healthEvents = pgTable(
 // Model aliasing & combos: replaces the dormant, disconnected
 // `routing_policies` scaffolding. Aliases resolve a client-facing name to a
 // real model; combos back a client-facing name with >=1 real models,
-// auto-selected via `fallback`, `round_robin`, `cascade`, or `fusion`.
+// auto-selected via `fallback`, `round_robin`, `cascade`, `fusion`, or `smart_routing`.
 export const modelComboStrategy = pgEnum("model_combo_strategy", [
   "fallback",
   "round_robin",
   "cascade",
   "fusion",
+  "smart_routing",
 ]);
 
 /** Canonical `ComboStrategy` union, derived from the enum above. Console
@@ -384,6 +385,31 @@ export interface CascadeComboConfig {
 export interface ModelComboConfig {
   readonly cascade?: CascadeComboConfig;
   readonly fusion?: FusionComboConfig;
+  readonly smartRouting?: SmartRoutingComboConfig;
+}
+
+/** Tuning knobs for the `smart_routing` combo strategy. The member pool is
+ * reordered per request: tool-calling requests go to tool-capable members,
+ * research-intent requests prefer `researchMembers`, everything else keeps
+ * the combo's member order. */
+export interface SmartRoutingComboConfig {
+  readonly intentDetection?: {
+    readonly keywords?: string[];
+    readonly confidenceThreshold?: number;
+    readonly urlPatternBoost?: boolean;
+    readonly llmClassifierFallback?: {
+      readonly enabled?: boolean;
+      readonly model?: string;
+      readonly promptTemplate?: string;
+    };
+  };
+  /** Explicit tool-capable member order; when omitted, all members except
+   * `noToolMembers` are treated as tool-capable. */
+  readonly toolCallingMembers?: string[];
+  /** Members excluded from the pool for tool-calling requests. */
+  readonly noToolMembers?: string[];
+  /** Members tried first when research intent is detected. */
+  readonly researchMembers?: string[];
 }
 
 /** Tuning knobs for the `fusion` combo strategy. Every panel member answers

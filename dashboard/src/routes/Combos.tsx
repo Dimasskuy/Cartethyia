@@ -4,7 +4,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardBody, CardHeader } from "../components/ui/card";
 import { Dialog } from "../components/ui/dialog";
-import { Input } from "../components/ui/input";
+import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/state";
 import { Inline } from "../components/ui/inline";
@@ -326,6 +326,10 @@ function CombosSection(): ReactNode {
   const [fusionMinPanel, setFusionMinPanel] = useState("2");
   const [fusionPanelTimeoutMs, setFusionPanelTimeoutMs] = useState("90000");
   const [fusionStragglerGraceMs, setFusionStragglerGraceMs] = useState("8000");
+  const [smartToolMembers, setSmartToolMembers] = useState("");
+  const [smartNoToolMembers, setSmartNoToolMembers] = useState("");
+  const [smartResearchMembers, setSmartResearchMembers] = useState("");
+  const [smartClassifierModel, setSmartClassifierModel] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<ModelComboRow | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -359,6 +363,10 @@ function CombosSection(): ReactNode {
     setFusionMinPanel("2");
     setFusionPanelTimeoutMs("90000");
     setFusionStragglerGraceMs("8000");
+    setSmartToolMembers("");
+    setSmartNoToolMembers("");
+    setSmartResearchMembers("");
+    setSmartClassifierModel("");
     setDialogOpen(true);
   };
 
@@ -381,6 +389,16 @@ function CombosSection(): ReactNode {
     setFusionStragglerGraceMs(
       typeof fusion?.stragglerGraceMs === "number" ? String(fusion.stragglerGraceMs) : "8000",
     );
+    const smart = c.config?.smartRouting;
+    const listToText = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").join("\n") : "");
+    setSmartToolMembers(listToText(smart?.toolCallingMembers));
+    setSmartNoToolMembers(listToText(smart?.noToolMembers));
+    setSmartResearchMembers(listToText(smart?.researchMembers));
+    setSmartClassifierModel(
+      typeof smart?.intentDetection?.llmClassifierFallback?.model === "string"
+        ? smart.intentDetection.llmClassifierFallback.model
+        : "",
+    );
     setDialogOpen(true);
   };
 
@@ -389,6 +407,12 @@ function CombosSection(): ReactNode {
     if (!Number.isFinite(parsed)) return fallback;
     return Math.min(max, Math.max(min, parsed));
   };
+
+  const parseMemberList = (raw: string): string[] =>
+    raw
+      .split("\n")
+      .map((m) => m.trim())
+      .filter((m) => m.length > 0);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -418,7 +442,28 @@ function CombosSection(): ReactNode {
                 stragglerGraceMs: clampInt(fusionStragglerGraceMs, 0, 60000, 8000),
               },
             }
-          : null;
+          : strategy === "smart_routing"
+            ? {
+                smartRouting: {
+                  ...(parseMemberList(smartToolMembers).length > 0
+                    ? { toolCallingMembers: parseMemberList(smartToolMembers) }
+                    : {}),
+                  ...(parseMemberList(smartNoToolMembers).length > 0
+                    ? { noToolMembers: parseMemberList(smartNoToolMembers) }
+                    : {}),
+                  ...(parseMemberList(smartResearchMembers).length > 0
+                    ? { researchMembers: parseMemberList(smartResearchMembers) }
+                    : {}),
+                  ...(smartClassifierModel.trim()
+                    ? {
+                        intentDetection: {
+                          llmClassifierFallback: { enabled: true, model: smartClassifierModel.trim() },
+                        },
+                      }
+                    : {}),
+                },
+              }
+            : null;
 
     if (editingCombo) {
       updateMutation.mutate(
@@ -663,6 +708,42 @@ function CombosSection(): ReactNode {
                   style={{ flex: 1 }}
                 />
               </div>
+            </div>
+          )}
+          {strategy === "smart_routing" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <Textarea
+                label="Tool-capable members (one per line, optional — default: all members)"
+                id="combo-smart-tool-members"
+                rows={3}
+                placeholder="provider/model"
+                value={smartToolMembers}
+                onChange={(e) => setSmartToolMembers(e.target.value)}
+              />
+              <Textarea
+                label="Members without tool support (excluded for tool requests)"
+                id="combo-smart-no-tool-members"
+                rows={2}
+                placeholder="provider/model"
+                value={smartNoToolMembers}
+                onChange={(e) => setSmartNoToolMembers(e.target.value)}
+              />
+              <Textarea
+                label="Research-preferred members (tried first for research intent)"
+                id="combo-smart-research-members"
+                rows={2}
+                placeholder="provider/model"
+                value={smartResearchMembers}
+                onChange={(e) => setSmartResearchMembers(e.target.value)}
+              />
+              <Input
+                label="Intent classifier model (optional — enables LLM fallback)"
+                id="combo-smart-classifier"
+                type="text"
+                placeholder="e.g. provider/cheap-model"
+                value={smartClassifierModel}
+                onChange={(e) => setSmartClassifierModel(e.target.value)}
+              />
             </div>
           )}
           <Stack gap="4px">

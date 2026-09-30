@@ -20,6 +20,7 @@ import { resolvePromptCacheKey } from "../../providers/operations/session-resolu
 import { createDispatchStreamEncoder } from "./stream-bridge";
 import { runCascadeCombo } from "./cascade";
 import { runFusionCombo } from "./fusion";
+import { runSmartRoutingCombo } from "./smart-routing";
 import { shouldCooldownPool } from "./retry-policy";
 import { applyTenantPreferences } from "./tenant-preferences";
 import { metrics } from "../../observability/metrics";
@@ -919,6 +920,16 @@ export async function handleProviderProxyRequest(
   }
   if (combo?.strategy === "fusion") {
     return runFusionCombo({
+      combo,
+      comboName: prepared.plan.requested_model,
+      canonicalRequest,
+      candidates,
+      requestId: state.requestId,
+      dispatch: dispatchCandidates,
+    });
+  }
+  if (combo?.strategy === "smart_routing") {
+    return runSmartRoutingCombo({
       combo,
       comboName: prepared.plan.requested_model,
       canonicalRequest,
