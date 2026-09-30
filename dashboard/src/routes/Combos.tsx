@@ -309,6 +309,28 @@ function AliasesSection(): ReactNode {
 
 // ── Combos Section ───────────────────────────────────────────────────────────
 
+/** Label row with a small Browse button that opens the model picker. */
+function BrowseLabel({
+  htmlFor,
+  onBrowse,
+  children,
+}: {
+  htmlFor: string;
+  onBrowse: () => void;
+  children: ReactNode;
+}): ReactNode {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+      <label htmlFor={htmlFor} style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+        {children}
+      </label>
+      <Button variant="secondary" size="sm" type="button" icon={<Search size={12} />} onClick={onBrowse}>
+        Browse
+      </Button>
+    </div>
+  );
+}
+
 function CombosSection(): ReactNode {
   const combosQuery = useModelCombos();
   const createMutation = useCreateModelCombo();
@@ -335,6 +357,8 @@ function CombosSection(): ReactNode {
   const [swarmWorkerModels, setSwarmWorkerModels] = useState("");
   const [swarmWorkerCount, setSwarmWorkerCount] = useState("8");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [rolePickerTarget, setRolePickerTarget] = useState<"manager" | "staff" | "classifier" | null>(null);
+  const [workerPickerOpen, setWorkerPickerOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<ModelComboRow | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const { copy } = useClipboard();
@@ -763,42 +787,62 @@ function CombosSection(): ReactNode {
                 value={smartResearchMembers}
                 onChange={(e) => setSmartResearchMembers(e.target.value)}
               />
-              <Input
-                label="Intent classifier model (optional — enables LLM fallback)"
-                id="combo-smart-classifier"
-                type="text"
-                placeholder="e.g. provider/cheap-model"
-                value={smartClassifierModel}
-                onChange={(e) => setSmartClassifierModel(e.target.value)}
-              />
+              <div>
+                <BrowseLabel htmlFor="combo-smart-classifier" onBrowse={() => setRolePickerTarget("classifier")}>
+                  Intent classifier model (optional — enables LLM fallback)
+                </BrowseLabel>
+                <Input
+                  id="combo-smart-classifier"
+                  type="text"
+                  placeholder="e.g. provider/cheap-model"
+                  aria-label="Intent classifier model"
+                  value={smartClassifierModel}
+                  onChange={(e) => setSmartClassifierModel(e.target.value)}
+                />
+              </div>
             </div>
           )}
           {strategy === "swarm" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <Input
-                label="Manager model (optional — default: first combo member)"
-                id="combo-swarm-manager"
-                type="text"
-                placeholder="e.g. provider/strong-model"
-                value={swarmManagerModel}
-                onChange={(e) => setSwarmManagerModel(e.target.value)}
-              />
-              <Input
-                label="Staff/audit model (optional — skips audit when empty)"
-                id="combo-swarm-staff"
-                type="text"
-                placeholder="e.g. provider/strong-model"
-                value={swarmStaffModel}
-                onChange={(e) => setSwarmStaffModel(e.target.value)}
-              />
-              <Textarea
-                label="Worker models (one per line, optional — default: all members)"
-                id="combo-swarm-workers"
-                rows={3}
-                placeholder="provider/model"
-                value={swarmWorkerModels}
-                onChange={(e) => setSwarmWorkerModels(e.target.value)}
-              />
+              <div>
+                <BrowseLabel htmlFor="combo-swarm-manager" onBrowse={() => setRolePickerTarget("manager")}>
+                  Manager model (optional — default: first combo member)
+                </BrowseLabel>
+                <Input
+                  id="combo-swarm-manager"
+                  type="text"
+                  placeholder="e.g. provider/strong-model"
+                  aria-label="Manager model"
+                  value={swarmManagerModel}
+                  onChange={(e) => setSwarmManagerModel(e.target.value)}
+                />
+              </div>
+              <div>
+                <BrowseLabel htmlFor="combo-swarm-staff" onBrowse={() => setRolePickerTarget("staff")}>
+                  Staff/audit model (optional — skips audit when empty)
+                </BrowseLabel>
+                <Input
+                  id="combo-swarm-staff"
+                  type="text"
+                  placeholder="e.g. provider/strong-model"
+                  aria-label="Staff/audit model"
+                  value={swarmStaffModel}
+                  onChange={(e) => setSwarmStaffModel(e.target.value)}
+                />
+              </div>
+              <div>
+                <BrowseLabel htmlFor="combo-swarm-workers" onBrowse={() => setWorkerPickerOpen(true)}>
+                  Worker models (one per line, optional — default: all members)
+                </BrowseLabel>
+                <Textarea
+                  id="combo-swarm-workers"
+                  rows={3}
+                  placeholder="provider/model"
+                  aria-label="Worker models"
+                  value={swarmWorkerModels}
+                  onChange={(e) => setSwarmWorkerModels(e.target.value)}
+                />
+              </div>
               <Input
                 label="Max subtasks dispatched per request"
                 id="combo-swarm-worker-count"
@@ -897,6 +941,38 @@ function CombosSection(): ReactNode {
             selected={selectedMembers}
             onToggle={handlePickerToggle}
             title="Select combo members"
+            multi
+          />
+          <ModelPickerModal
+            open={rolePickerTarget !== null}
+            onClose={() => setRolePickerTarget(null)}
+            selected={[]}
+            onToggle={() => {}}
+            onSelectOne={(value) => {
+              if (rolePickerTarget === "manager") setSwarmManagerModel(value);
+              else if (rolePickerTarget === "staff") setSwarmStaffModel(value);
+              else if (rolePickerTarget === "classifier") setSmartClassifierModel(value);
+            }}
+            title={
+              rolePickerTarget === "staff"
+                ? "Select staff/audit model"
+                : rolePickerTarget === "classifier"
+                  ? "Select intent classifier model"
+                  : "Select manager model"
+            }
+            multi={false}
+          />
+          <ModelPickerModal
+            open={workerPickerOpen}
+            onClose={() => setWorkerPickerOpen(false)}
+            selected={parseMemberList(swarmWorkerModels)}
+            onToggle={(value) => {
+              const list = parseMemberList(swarmWorkerModels);
+              setSwarmWorkerModels(
+                list.includes(value) ? list.filter((m) => m !== value).join("\n") : [...list, value].join("\n"),
+              );
+            }}
+            title="Select worker models"
             multi
           />
           <div
