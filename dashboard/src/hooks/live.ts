@@ -8,11 +8,56 @@ export interface InFlightState {
   readonly count: number | null;
   /** Unique client IPs behind the live count, or null before arrival. */
   readonly uniqueIps: number | null;
+  /** Per-request live detail (serving model + failover trail), or null before arrival. */
+  readonly flights: readonly LiveFlight[] | null;
   /** True while the SSE stream is open and pushing. */
   readonly live: boolean;
 }
 
-function readSnapshot(payload: unknown): { count: number; uniqueIps: number } | null {
+export interface LiveFailover {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly at: number;
+}
+
+export interface LiveFlight {
+  readonly id: string;
+  readonly startedAt: number;
+  readonly providerId: string | null;
+  readonly modelId: string | null;
+  readonly attempt: number;
+  readonly failovers: readonly LiveFailover[];
+}
+
+function readFlights(payload: unknown): readonly LiveFlight[] | null {
+  if (!isRecord(payload) || !Array.isArray(payload.flights)) return null;
+  const flights: LiveFlight[] = [];
+  for (const raw of payload.flights) {
+    if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.startedAt !== "number") continue;
+    const failovers: LiveFailover[] = [];
+    if (Array.isArray(raw.failovers)) {
+      for (const f of raw.failovers) {
+        if (!isRecord(f) || typeof f.providerId !== "string" || typeof f.modelId !== "string") continue;
+        failovers.push({
+          providerId: f.providerId,
+          modelId: f.modelId,
+          at: typeof f.at === "number" ? f.at : 0,
+        });
+      }
+    }
+    flights.push({
+      id: raw.id,
+      startedAt: raw.startedAt,
+      providerId: typeof raw.providerId === "string" ? raw.providerId : null,
+      modelId: typeof raw.modelId === "string" ? raw.modelId : null,
+      attempt: typeof raw.attempt === "number" && Number.isFinite(raw.attempt) ? Math.max(0, Math.floor(raw.attempt)) : 0,
+      failovers,
+    });
+  }
+  return flights;
+}
+
+function readSnapshot(payload: unknown): { count: number; uniqueIps: number; flights: readonly LiveFlight[] | null } | null {
   if (!isRecord(payload)) return null;
   if (typeof payload.inFlight !== "number" || !Number.isFinite(payload.inFlight)) return null;
   const count = Math.max(0, Math.floor(payload.inFlight));
@@ -22,7 +67,9 @@ function readSnapshot(payload: unknown): { count: number; uniqueIps: number } | 
     typeof payload.uniqueIps === "number" && Number.isFinite(payload.uniqueIps)
       ? Math.max(0, Math.min(count, Math.floor(payload.uniqueIps)))
       : count;
-  return { count, uniqueIps };
+  // Older gateways send no `flights`: the count pill works, the activity
+  // view stays empty.
+  return { count, uniqueIps, flights: readFlights(payload) };
 }
 
 const STREAM_RETRY_MS = 5_000;
@@ -38,6 +85,7 @@ const STREAM_RETRY_MS = 5_000;
 export function useInFlight(): InFlightState {
   const [count, setCount] = useState<number | null>(null);
   const [uniqueIps, setUniqueIps] = useState<number | null>(null);
+  const [flights, setFlights] = useState<readonly LiveFlight[] | null>(null);
   const [live, setLive] = useState(false);
 
   useEffect(() => {
@@ -55,6 +103,7 @@ export function useInFlight(): InFlightState {
         if (next !== null) {
           setCount(next.count);
           setUniqueIps(next.uniqueIps);
+          setFlights(next.flights);
         }
 
         const nextSource = new EventSource("/console/api/live/in-flight/stream");
@@ -66,6 +115,7 @@ export function useInFlight(): InFlightState {
             if (seen !== null) {
               setCount(seen.count);
               setUniqueIps(seen.uniqueIps);
+              setFlights(seen.flights);
               setLive(true);
             }
           } catch {
@@ -101,7 +151,7 @@ export function useInFlight(): InFlightState {
     };
   }, []);
 
-  return { count, uniqueIps, live };
+  return { count, uniqueIps, flights, live };
 }
 
 export interface PoolUsageRow {

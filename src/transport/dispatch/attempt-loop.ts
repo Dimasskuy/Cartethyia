@@ -26,6 +26,7 @@ import type { ProxyRequestState } from "../request/state";
 import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer";
 import { flagPoolCooldown } from "../../network/pool-health";
 import { completeAttempt, estimatedUsage, type ProviderExchangeCapture } from "./attempt-finalize";
+import { recordInFlightFailover, updateInFlightServing } from "../request/inflight";
 import { repriceUsage } from "../../providers/usage";
 import { shouldCooldownPool, isOAuthCredentialInvalidated } from "./retry-policy";
 
@@ -130,7 +131,15 @@ export async function runAttemptLoop<TResult, TAdapter>(
       // the estimate is only charged once the request truly consumed
       // upstream resources; the lease and reservation are held from here on.
       bindingEstablished = true;
-      state.startProviderFlight();
+      state.startProviderFlight(input.tenantId);
+      // Live activity feed: this candidate is now serving the request. The
+      // entry was registered by `startProviderFlight`; internal combo legs
+      // share the request id, so the view follows the latest serving leg.
+      updateInFlightServing(state.requestId, {
+        providerId: candidate.provider_id,
+        modelId: candidate.model_id,
+        attemptIndex: index,
+      });
       return await input.attempt({
         candidate,
         credential,
@@ -218,6 +227,14 @@ export async function runAttemptLoop<TResult, TAdapter>(
       if (terminalAttempt) {
         metrics.proxy_requests_total.inc(1, { status: cancelled ? "cancelled" : "failed" });
         throw error;
+      }
+      // The request survives this failure and moves to the next candidate:
+      // leave the hop on the live trail so the activity view shows the path.
+      if (!cancelled) {
+        recordInFlightFailover(state.requestId, {
+          providerId: candidate.provider_id,
+          modelId: candidate.model_id,
+        });
       }
       retryDelayMs = fallbackRetryDelayMs(index);
     } finally {

@@ -80,6 +80,7 @@ function makeStore(knownModels: readonly string[] = ["claude-sonnet-4-5", "gpt-4
         name: input.name,
         members: [...input.members],
         strategy: input.strategy ?? "fallback",
+        config: input.config ?? null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -93,6 +94,7 @@ function makeStore(knownModels: readonly string[] = ["claude-sonnet-4-5", "gpt-4
         ...comboRows[idx]!,
         ...(patch.members === undefined ? {} : { members: [...patch.members] }),
         ...(patch.strategy === undefined ? {} : { strategy: patch.strategy }),
+        ...(patch.config === undefined ? {} : { config: patch.config }),
         updatedAt: new Date().toISOString(),
       };
       comboRows[idx] = merged;
@@ -430,6 +432,83 @@ describe("model routing domain factory — audit + snapshot invalidation", () =>
       "model_combo.deleted",
       "model_alias.deleted",
     ]);
+  });
+
+  describe("combo role-model validation", () => {
+    test("createCombo rejects role refs that are not combo members", async () => {
+      const { store } = makeStore();
+      const factory = createModelRoutingOperations({ store, accessResolver: () => access });
+      await expect(
+        factory.createCombo(access, {
+          name: "judged",
+          members: ["gpt-4", "claude-sonnet-4-5"],
+          strategy: "fusion",
+          config: { fusion: { judgeModel: "typo-model" } },
+        }),
+      ).rejects.toMatchObject({ code: "unresolved_role_model", status: 422 });
+      await expect(
+        factory.createCombo(access, {
+          name: "swarmed",
+          members: ["gpt-4", "claude-sonnet-4-5"],
+          strategy: "swarm",
+          config: { swarm: { managerModel: "gpt-4", workerModels: ["gpt-4", "ghost"] } },
+        }),
+      ).rejects.toMatchObject({
+        code: "unresolved_role_model",
+        status: 422,
+        details: { field: "swarm.workerModels[1]", value: "ghost" },
+      });
+      await expect(
+        factory.createCombo(access, {
+          name: "routed",
+          members: ["gpt-4", "claude-sonnet-4-5"],
+          strategy: "smart_routing",
+          config: { smartRouting: { toolCallingMembers: ["gpt-4", "ghost"] } },
+        }),
+      ).rejects.toMatchObject({ code: "unresolved_role_model", status: 422 });
+    });
+
+    test("createCombo accepts role refs that name members; strategies without roles skip", async () => {
+      const { store } = makeStore();
+      const factory = createModelRoutingOperations({ store, accessResolver: () => access });
+      const created = await factory.createCombo(access, {
+        name: "judged",
+        members: ["gpt-4", "claude-sonnet-4-5"],
+        strategy: "fusion",
+        config: { fusion: { judgeModel: "claude-sonnet-4-5" } },
+      });
+      expect(created.name).toBe("judged");
+      // Empty refs are treated as unset, and fallback/cascade have no roles.
+      const plain = await factory.createCombo(access, {
+        name: "plain",
+        members: ["gpt-4"],
+        strategy: "cascade",
+        config: { fusion: { judgeModel: "ghost" } },
+      });
+      expect(plain.name).toBe("plain");
+    });
+
+    test("updateCombo re-validates role refs when members/strategy/config change", async () => {
+      const { store } = makeStore();
+      const factory = createModelRoutingOperations({ store, accessResolver: () => access });
+      const created = await factory.createCombo(access, {
+        name: "judged",
+        members: ["gpt-4", "claude-sonnet-4-5"],
+        strategy: "fusion",
+        config: { fusion: { judgeModel: "gpt-4" } },
+      });
+      // Shrinking members so the judge dangles is rejected…
+      await expect(
+        factory.updateCombo(access, created.id, { members: ["claude-sonnet-4-5"] }),
+      ).rejects.toMatchObject({ code: "unresolved_role_model", status: 422 });
+      // …as is pointing the judge at a non-member…
+      await expect(
+        factory.updateCombo(access, created.id, { config: { fusion: { judgeModel: "ghost" } } }),
+      ).rejects.toMatchObject({ code: "unresolved_role_model", status: 422 });
+      // …but unrelated edits to a valid combo still pass.
+      const renamed = await factory.updateCombo(access, created.id, { strategy: "fallback" });
+      expect(renamed.strategy).toBe("fallback");
+    });
   });
 });
 });

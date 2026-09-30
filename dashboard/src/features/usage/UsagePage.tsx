@@ -51,6 +51,8 @@ import { useInFlight } from "../../hooks/live";
 import { useTrackedTimeout } from "../../hooks/use-timeout";
 import { USAGE_PERIODS, type UsagePeriod as Period } from "../../data/usage-periods";
 import { httpStatusLabel, httpStatusShortLabel, httpStatusTone } from "../../shared/http-status";
+import { LiveActivityCard } from "./LiveActivityCard";
+import { ProviderHealthCard } from "./ProviderHealthCard";
 import { USAGE_DIMENSIONS, type UsageDimension } from "../../data/contracts";
 import {
   DEFAULT_TOKEN_SCALE,
@@ -127,7 +129,7 @@ function asDimension(value: string | null): Dimension {
     : "model";
 }
 
-function formatUsd(value: number | null | undefined): string {
+export function formatUsd(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   if (value === 0) return "$0.00";
   if (value < 0.01) return `$${value.toFixed(4)}`;
@@ -1366,6 +1368,9 @@ export default function Usage(): ReactNode {
           icon={<DollarSign size={13} />}
         />
       </div>
+
+      <LiveActivityCard />
+      <ProviderHealthCard period={period} />
 
       <div className="two-column-grid">
 

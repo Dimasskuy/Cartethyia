@@ -13,6 +13,7 @@ import type {
   PoolStrategySetting,
   ProviderResponse,
   ProviderRoutingResponse,
+  ProviderHealthResponse,
   SystemHealthResponse,
   UsageByResponse,
   UsageChartResponse,
@@ -128,6 +129,28 @@ export function assertUsageBy(value: unknown): UsageByResponse {
     }
   }
   return value as unknown as UsageByResponse;
+}
+
+export function assertProviderHealth(value: unknown): ProviderHealthResponse {
+  if (!isRecord(value) || !Array.isArray(value.providers)) {
+    throw invalidResponse("Invalid provider health response");
+  }
+  for (const row of value.providers) {
+    if (
+      !isRecord(row) ||
+      typeof row.providerId !== "string" ||
+      !["requests", "errors", "successRate"].every((field) => isFiniteNumber(row[field])) ||
+      !(row.avgLatencyMs === null || isFiniteNumber(row.avgLatencyMs)) ||
+      !(row.p95LatencyMs === null || isFiniteNumber(row.p95LatencyMs)) ||
+      !(row.costUsd === null || isFiniteNumber(row.costUsd)) ||
+      !(row.lastRequestAt === null || typeof row.lastRequestAt === "string") ||
+      !(row.lastErrorAt === null || typeof row.lastErrorAt === "string") ||
+      !(row.lastErrorCategory === null || typeof row.lastErrorCategory === "string")
+    ) {
+      throw invalidResponse("Invalid provider health response");
+    }
+  }
+  return value as unknown as ProviderHealthResponse;
 }
 
 function assertUsageRequestItem(value: unknown): void {

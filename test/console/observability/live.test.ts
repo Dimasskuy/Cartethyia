@@ -19,13 +19,29 @@ describe("live in-flight routes", () => {
   beforeEach(() => resetInFlightForTests());
 
   test("snapshot returns the current count and unique IPs", async () => {
-    trackInFlight("r1", "1.1.1.1");
-    trackInFlight("r2", "1.1.1.1");
+    trackInFlight("r1", "1.1.1.1", "tenant-1");
+    trackInFlight("r2", "1.1.1.1", "tenant-1");
     const response = await appWith(readerAccess).handle(
       new Request("http://localhost/live/in-flight"),
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ inFlight: 2, uniqueIps: 1 });
+    const body = (await response.json()) as { inFlight: number; uniqueIps: number; flights: unknown[] };
+    expect(body.inFlight).toBe(2);
+    expect(body.uniqueIps).toBe(1);
+    expect(body.flights).toHaveLength(2);
+  });
+
+  test("snapshot only exposes the caller's own tenant flights", async () => {
+    trackInFlight("r1", "1.1.1.1", "tenant-1");
+    trackInFlight("r2", "2.2.2.2", "tenant-2");
+    const response = await appWith(readerAccess).handle(
+      new Request("http://localhost/live/in-flight"),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { inFlight: number; uniqueIps: number; flights: unknown[] };
+    expect(body.inFlight).toBe(1);
+    expect(body.uniqueIps).toBe(1);
+    expect(body.flights).toHaveLength(1);
   });
 
   test("snapshot rejects unauthenticated callers", async () => {
@@ -36,7 +52,7 @@ describe("live in-flight routes", () => {
   });
 
   test("stream emits a count snapshot frame first", async () => {
-    trackInFlight("r1", "9.9.9.9");
+    trackInFlight("r1", "9.9.9.9", "tenant-1");
     const response = await appWith(readerAccess).handle(
       new Request("http://localhost/live/in-flight/stream"),
     );
@@ -45,7 +61,7 @@ describe("live in-flight routes", () => {
     const reader = response.body!.getReader();
     const first = await reader.read();
     await reader.cancel();
-    expect(new TextDecoder().decode(first.value)).toContain(`event: count\ndata: {"inFlight":1,"uniqueIps":1}`);
+    expect(new TextDecoder().decode(first.value)).toContain(`event: count\ndata: {"inFlight":1,"uniqueIps":1`);
   });
 
   test("stream subscribes before its snapshot so count changes are not lost", async () => {
@@ -56,11 +72,27 @@ describe("live in-flight routes", () => {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     const snapshot = await reader.read();
-    trackInFlight("r1", "7.7.7.7");
+    trackInFlight("r1", "7.7.7.7", "tenant-1");
     const update = await reader.read();
     await reader.cancel();
-    expect(decoder.decode(snapshot.value)).toContain(`event: count\ndata: {"inFlight":0,"uniqueIps":0}`);
-    expect(decoder.decode(update.value)).toContain(`event: count\ndata: {"inFlight":1,"uniqueIps":1}`);
+    expect(decoder.decode(snapshot.value)).toContain(`event: count\ndata: {"inFlight":0,"uniqueIps":0`);
+    expect(decoder.decode(update.value)).toContain(`event: count\ndata: {"inFlight":1,"uniqueIps":1`);
+  });
+
+  test("stream frames stay scoped to the caller's tenant", async () => {
+    trackInFlight("r1", "9.9.9.9", "tenant-1");
+    trackInFlight("r2", "8.8.8.8", "tenant-2");
+    const response = await appWith(readerAccess).handle(
+      new Request("http://localhost/live/in-flight/stream"),
+    );
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    await reader.cancel();
+    const frame = new TextDecoder().decode(first.value);
+    expect(frame).toContain(`event: count\ndata: {"inFlight":1,"uniqueIps":1`);
+    expect(frame).toContain(`"id":"r1"`);
+    expect(frame).not.toContain(`"id":"r2"`);
   });
 
   test("stream rejects unauthenticated callers without opening a stream", async () => {

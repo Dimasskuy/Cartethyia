@@ -41,7 +41,7 @@ export interface ProxyRequestState {
   /** Timestamp set when the adapter's upstream fetch / streaming iterator begins. */
   upstreamDispatchStartedAtMs?: number;
   /** Start one logical provider flight after dispatch leases are acquired. */
-  startProviderFlight(): void;
+  startProviderFlight(tenantId: string | null): void;
   deadlineMs: number;
   readonly abortController: AbortController;
   /** Body decoded by the single ingress reader, when this is a proxy request. */
@@ -167,10 +167,10 @@ export class ProxyRequestStateStore {
       startedAtMs: now,
       deadlineMs,
       abortController,
-      startProviderFlight: () => {
+      startProviderFlight: (tenantId: string | null) => {
         if (cleaned || providerFlightStarted) return;
         providerFlightStarted = true;
-        trackInFlight(requestId, state.clientIdentity?.address ?? "unknown");
+        trackInFlight(requestId, state.clientIdentity?.address ?? "unknown", tenantId);
       },
       ingressMethod: request.method,
       ingressPath: fastPathname(request.url),

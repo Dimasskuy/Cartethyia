@@ -129,6 +129,26 @@ export { USAGE_DIMENSIONS, type UsageDimension };
 export interface UsageByResponse {
   rows: UsageByRow[];
 }
+
+/** Per-provider health aggregate for the health dashboard. */
+export interface ProviderHealthRow {
+  providerId: string;
+  requests: number;
+  errors: number;
+  /** 0-100; 100 when there are no requests. */
+  successRate: number;
+  avgLatencyMs: number | null;
+  p95LatencyMs: number | null;
+  /** Null when no row in the group carries persisted cost. */
+  costUsd: number | null;
+  lastRequestAt: string | null;
+  lastErrorAt: string | null;
+  lastErrorCategory: string | null;
+}
+export interface ProviderHealthResponse {
+  period: string;
+  providers: ProviderHealthRow[];
+}
 export interface UsageCacheResponse {
   period: string;
   inputTokens: number;
@@ -243,6 +263,7 @@ export interface ObservabilityStore {
     httpStatus?: number,
   ): Promise<UsageRequestsResponse>;
   usageRequestDetail(tenantId: string, requestId: string): Promise<UsageRequestDetail | undefined>;
+  providerHealth(tenantId: string, period: string): Promise<ProviderHealthResponse>;
 }
 export interface ObservabilityConfig {
   readonly store: ObservabilityStore;
@@ -337,6 +358,13 @@ export function createObservabilityOperations(config: ObservabilityConfig) {
         }
         return config.store.usageBy(tenantId, dimension, operations.requirePeriod(period));
       },
+    async getProviderHealth(
+        access: AccessDecision | undefined,
+        period = "24h",
+      ): Promise<ProviderHealthResponse> {
+        const tenantId = operations.requireTenant(access);
+        return config.store.providerHealth(tenantId, operations.requirePeriod(period));
+      },
     async getUsageCache(
         access: AccessDecision | undefined,
         period = "24h",
@@ -403,6 +431,9 @@ export function createObservabilityRoutes(config: ObservabilityConfig): Elysia {
 })
     .get("/system/usage", { query: usageQuery }, async ({ request, query }) => {
       return await factory.getTenantUsage(config.accessResolver(request), query.period);
+})
+    .get("/system/health/providers", { query: usageQuery }, async ({ request, query }) => {
+      return await factory.getProviderHealth(config.accessResolver(request), query.period);
 })
     .get("/system/usage/summary", { query: usageQuery }, async ({ request, query }) => {
       return await factory.getUsageSummary(config.accessResolver(request), query.period);

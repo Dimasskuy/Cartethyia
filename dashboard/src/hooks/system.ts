@@ -2,7 +2,7 @@ import { consoleRequest, fetchSessionUser } from "../data/api";
 import type { ApiErrorShape } from "../data/api";
 import { queryKeys } from "../data/query-keys";
 import type { SessionUser, UsageDimension } from "../data/contracts";
-import { assertAuditListPage, assertSystemHealth, assertUsageBy, assertUsageChart, assertUsageRequestDetail, assertUsageRequests, assertUsageSummary, querySignal } from "./common";
+import { assertAuditListPage, assertSystemHealth, assertProviderHealth, assertUsageBy, assertUsageChart, assertUsageRequestDetail, assertUsageRequests, assertUsageSummary, querySignal } from "./common";
 import { DASHBOARD_QUERY_OPTIONS } from "../data/query-policy";
 import { useQuery } from "@tanstack/react-query";
 
@@ -71,6 +71,19 @@ export function useUsageBy(period: string, dimension: UsageDimension) {
       ).then(assertUsageBy),
     ...DASHBOARD_QUERY_OPTIONS,
     refetchInterval: 10_000,
+  });
+}
+
+/** Loads per-provider health aggregates (success rate, latency, last error). */
+export function useProviderHealth(period: string) {
+  return useQuery({
+    queryKey: queryKeys.usageAnalytics.providerHealth(period),
+    queryFn: (context) =>
+      consoleRequest<unknown>(`/system/health/providers?period=${encodeURIComponent(period)}`, {
+        signal: querySignal(context),
+      }).then(assertProviderHealth),
+    ...DASHBOARD_QUERY_OPTIONS,
+    refetchInterval: 30_000,
   });
 }
 

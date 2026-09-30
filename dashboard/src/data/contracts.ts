@@ -30,6 +30,8 @@ export {
 
 export type {
   SystemHealthResponse,
+  ProviderHealthResponse,
+  ProviderHealthRow,
   UsageByResponse,
   UsageByRow,
   UsageChartResponse,

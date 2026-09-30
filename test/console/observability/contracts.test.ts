@@ -37,6 +37,7 @@ function stubStore(recorded: Recorded, overrides: Partial<ObservabilityStore> = 
     usageCache: record("usageCache", {}),
     usageRequests: record("usageRequests", {}),
     usageRequestDetail: record("usageRequestDetail", { id: "req" }),
+    providerHealth: record("providerHealth", { period: "24h", providers: [] }),
     ...overrides,
   };
 }

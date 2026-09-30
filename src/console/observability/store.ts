@@ -10,6 +10,7 @@ import type {
   ObservabilityStore,
   UsageDimension,
   SystemHealthResponse,
+  ProviderHealthResponse,
   TelemetryEventView,
   TelemetryEventDetail,
   TelemetryEventListPage,
@@ -589,6 +590,80 @@ export class DrizzleObservabilityStore implements ObservabilityStore {
         return label === undefined ? row : { ...row, label };
       }),
     };
+  }
+
+  /**
+   * Per-provider health aggregates for the health dashboard: request volume,
+   * error rate, latency (avg + p95), and the most recent error. Two queries:
+   * one grouped aggregate, one `DISTINCT ON` for the latest error per
+   * provider, joined in JS to keep the SQL portable across the two shapes.
+   */
+  async providerHealth(tenantId: string, period: string): Promise<ProviderHealthResponse> {
+    const scope = and(
+      this.usageScope(tenantId, period),
+      isNotNull(telemetryEvents.providerId),
+      ne(telemetryEvents.providerId, ""),
+    );
+    const rows = await this.db
+      .select({
+        providerId: telemetryEvents.providerId,
+        requests: sql<number>`count(*)`,
+        errors: sql<number>`count(*) filter (where ${gatewayErrors()})`,
+        avgLatencyMs: sql<number | null>`avg(${telemetryEvents.latencyMs}) filter (where ${telemetryEvents.latencyMs} is not null)`,
+        p95LatencyMs: sql<number | null>`percentile_cont(0.95) within group (order by ${telemetryEvents.latencyMs}) filter (where ${telemetryEvents.latencyMs} is not null)`,
+        cost: sql<string | null>`sum(${telemetryEvents.estimatedCostUsd})`,
+        lastRequestAt: sql<string | null>`max(${telemetryEvents.createdAt})`,
+        lastErrorAt: sql<string | null>`max(${telemetryEvents.createdAt}) filter (where ${gatewayErrors()})`,
+      })
+      .from(telemetryEvents)
+      .where(scope)
+      .groupBy(telemetryEvents.providerId)
+      .orderBy(sql`count(*) desc`)
+      .limit(100);
+    const erroredProviders = rows.filter(
+      (row) => typeof row.providerId === "string" && row.lastErrorAt !== null,
+    );
+    const lastErrors = new Map<string, { category: string | null; at: string }>();
+    if (erroredProviders.length > 0) {
+      const errorResult = await this.db.execute(sql`
+        select distinct on (${telemetryEvents.providerId})
+          ${telemetryEvents.providerId} as provider_id,
+          ${telemetryEvents.errorCategory} as error_category,
+          ${telemetryEvents.createdAt} as created_at
+        from ${telemetryEvents}
+        where ${scope} and ${gatewayErrors()}
+        order by ${telemetryEvents.providerId}, ${telemetryEvents.createdAt} desc
+      `);
+      const errorRows = (errorResult.rows ?? []) as Array<{
+        provider_id: string;
+        error_category: string | null;
+        created_at: unknown;
+      }>;
+      for (const row of errorRows) {
+        lastErrors.set(row.provider_id, { category: row.error_category, at: String(row.created_at) });
+      }
+    }
+    const providers = rows.flatMap((row) => {
+      if (typeof row.providerId !== "string" || row.providerId.length === 0) return [];
+      const requests = Number(row.requests ?? 0);
+      const errors = Number(row.errors ?? 0);
+      const lastError = lastErrors.get(row.providerId);
+      return [
+        {
+          providerId: row.providerId,
+          requests,
+          errors,
+          successRate: requests > 0 ? ((requests - errors) / requests) * 100 : 100,
+          avgLatencyMs: row.avgLatencyMs === null ? null : Number(row.avgLatencyMs),
+          p95LatencyMs: row.p95LatencyMs === null ? null : Number(row.p95LatencyMs),
+          costUsd: row.cost === null ? null : Number(row.cost),
+          lastRequestAt: row.lastRequestAt === null ? null : String(row.lastRequestAt),
+          lastErrorAt: row.lastErrorAt === null ? null : String(row.lastErrorAt),
+          lastErrorCategory: lastError?.category ?? null,
+        },
+      ];
+    });
+    return { period, providers };
   }
 
   private async apiKeyLabels(tenantId: string, ids: readonly string[]): Promise<Map<string, string>> {

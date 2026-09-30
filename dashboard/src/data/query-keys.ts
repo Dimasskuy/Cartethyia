@@ -18,6 +18,7 @@ export const queryKeys = {
     requests: (period: string, limit: number, httpStatus?: number | null) =>
       ["console", "usage", "requests", period, limit, httpStatus ?? "all"] as const,
     requestDetail: (requestId: string) => ["console", "usage", "requests", requestId] as const,
+    providerHealth: (period: string) => ["console", "usage", "provider-health", period] as const,
   },
   providers: {
     all: ["console", "providers"] as const,

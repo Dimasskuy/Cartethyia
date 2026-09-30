@@ -4,8 +4,10 @@
 // health notifications. The streams push changes with a heartbeat; health data
 // is joined to the owning tenant before it leaves the process.
 //
-// Every endpoint requires `dashboard:read`. The global request count is
-// process-level; pool usage and health are filtered to the caller's tenant.
+// Every endpoint requires `dashboard:read`. In-flight snapshots and streams
+// are filtered to the caller's tenant — a tenant never sees another
+// tenant's live requests. Platform admins (tenant null) see everything;
+// pool usage and health are likewise filtered to the caller's tenant.
 
 import { Elysia } from "elysia";
 import { errorResponse, requireScope } from "../shared/errors";
@@ -37,22 +39,23 @@ export function createLiveRoutes(config: LiveConfig): Elysia {
   return new Elysia()
     .get("/live/in-flight", ({ request, set }) => {
       try {
-        requireScope(config.accessResolver(request), "dashboard:read");
-        return getInFlightSnapshot();
+        const access = requireScope(config.accessResolver(request), "dashboard:read");
+        return getInFlightSnapshot(access.tenantId);
       } catch (e) {
         return errorResponse(e, set, "Live operation failed");
       }
     })
     .get("/live/in-flight/stream", ({ request, set }) => {
+      let tenantId: string | null;
       try {
-        requireScope(config.accessResolver(request), "dashboard:read");
+        tenantId = requireScope(config.accessResolver(request), "dashboard:read").tenantId;
       } catch (e) {
         return errorResponse(e, set, "Live operation failed");
       }
       return consoleSseResponse(
         createConsoleSseStream(request.signal, ({ send }) => {
-          const unsubscribe = subscribeInFlight((snapshot) => send("count", snapshot));
-          send("count", getInFlightSnapshot());
+          const unsubscribe = subscribeInFlight((snapshot) => send("count", snapshot), tenantId);
+          send("count", getInFlightSnapshot(tenantId));
           return unsubscribe;
         }),
       );

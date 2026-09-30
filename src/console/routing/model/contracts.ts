@@ -130,6 +130,55 @@ async function targetResolves(
   return false;
 }
 
+/**
+ * Role-model refs (fusion judge, swarm manager/staff/workers, smart-routing
+ * member lists and classifier model) must name an actual combo member. The
+ * dispatch engines only warn and silently fall back when a ref dangles, so a
+ * typo degrades to the default role assignment with no signal at save time.
+ * Reject it here with the offending field named. Refs are matched exactly
+ * against member strings, mirroring the engine comparison.
+ */
+function validateComboRoleRefs(
+  strategy: ComboStrategy,
+  config: ModelComboConfig | null | undefined,
+  members: readonly string[],
+): void {
+  if (!config) return;
+  const memberSet = new Set(members);
+  const refs: Array<{ field: string; value: string }> = [];
+  const push = (field: string, value: unknown) => {
+    if (typeof value === "string" && value.trim().length > 0)
+      refs.push({ field, value: value.trim() });
+  };
+  const pushAll = (field: string, values: unknown) => {
+    if (Array.isArray(values)) values.forEach((value, index) => push(`${field}[${index}]`, value));
+  };
+  if (strategy === "fusion") {
+    push("fusion.judgeModel", config.fusion?.judgeModel);
+  } else if (strategy === "swarm") {
+    push("swarm.managerModel", config.swarm?.managerModel);
+    push("swarm.staffModel", config.swarm?.staffModel);
+    pushAll("swarm.workerModels", config.swarm?.workerModels);
+  } else if (strategy === "smart_routing") {
+    pushAll("smartRouting.toolCallingMembers", config.smartRouting?.toolCallingMembers);
+    pushAll("smartRouting.noToolMembers", config.smartRouting?.noToolMembers);
+    pushAll("smartRouting.researchMembers", config.smartRouting?.researchMembers);
+    push(
+      "smartRouting.intentDetection.llmClassifierFallback.model",
+      config.smartRouting?.intentDetection?.llmClassifierFallback?.model,
+    );
+  }
+  for (const ref of refs) {
+    if (!memberSet.has(ref.value))
+      throw new ConsoleDomainError(
+        "unresolved_role_model",
+        422,
+        `${ref.field} "${ref.value}" is not a combo member; role models must reference a member of this combo`,
+        { field: ref.field, value: ref.value },
+      );
+  }
+}
+
 export function createModelRoutingOperations(deps: ModelRoutingConfig) {
   const operations = {
     async listAliases(access: AccessDecision | undefined): Promise<readonly ModelAliasRow[]> {
@@ -289,6 +338,7 @@ export function createModelRoutingOperations(deps: ModelRoutingConfig) {
             );
         }
         const strategy = input.strategy ?? "fallback";
+        validateComboRoleRefs(strategy, input.config ?? null, members);
         const created = await deps.store.createCombo(tenantId, {
           name,
           members,
@@ -362,6 +412,15 @@ export function createModelRoutingOperations(deps: ModelRoutingConfig) {
                 { member },
               );
           }
+        }
+        // Role refs only need re-validation when the shape that feeds them
+        // changed; unrelated edits to an older combo must not start failing.
+        if (members !== undefined || patch.strategy !== undefined || patch.config !== undefined) {
+          validateComboRoleRefs(
+            patch.strategy ?? current.strategy,
+            patch.config !== undefined ? patch.config : (current.config ?? null),
+            members ?? current.members,
+          );
         }
         const updated = await deps.store.updateCombo(tenantId, id, {
           ...(members === undefined ? {} : { members }),
