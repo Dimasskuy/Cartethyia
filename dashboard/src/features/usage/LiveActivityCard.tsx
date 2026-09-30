@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Radio } from "lucide-react";
 import { Card, CardBody, CardHeader } from "../../components/ui/card";
 import { EmptyState } from "../../components/ui/state";
@@ -48,7 +48,15 @@ function FailoverPath({ flight }: { flight: LiveFlight }): React.ReactNode {
   );
 }
 
-function PreviewBlock({ label, text }: { label: string; text: string }): React.ReactNode {
+function PreviewBlock({
+  label,
+  text,
+  muted = false,
+}: {
+  label: string;
+  text: string;
+  muted?: boolean;
+}): React.ReactNode {
   return (
     <div style={{ minWidth: 0 }}>
       <div
@@ -68,7 +76,8 @@ function PreviewBlock({ label, text }: { label: string; text: string }): React.R
           fontFamily: "var(--font-mono)",
           fontSize: "12px",
           lineHeight: 1.6,
-          color: "var(--text-secondary)",
+          color: muted ? "var(--text-tertiary)" : "var(--text-secondary)",
+          fontStyle: muted ? "italic" : "normal",
           background: "var(--surface-2)",
           border: "1px solid var(--inner-border)",
           borderRadius: "8px",
@@ -85,10 +94,39 @@ function PreviewBlock({ label, text }: { label: string; text: string }): React.R
   );
 }
 
-function FlightDetail({ flight, now }: { flight: LiveFlight; now: number }): React.ReactNode {
+/** Small status dot for collapsed rows: green = streaming, gray = waiting/done. */
+function StatusDot({ flight, done = false }: { flight: LiveFlight; done?: boolean }): React.ReactNode {
+  const streaming = !done && flight.status === "streaming";
+  const label = done ? "Done" : streaming ? "Streaming" : "Waiting for first token";
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      style={{
+        display: "inline-block",
+        width: "8px",
+        height: "8px",
+        borderRadius: "50%",
+        flexShrink: 0,
+        background: streaming ? "var(--status-success)" : "var(--text-tertiary)",
+        boxShadow: streaming ? "0 0 6px var(--status-success)" : "none",
+      }}
+    />
+  );
+}
+
+function FlightDetail({
+  flight,
+  now,
+  done = false,
+}: {
+  flight: LiveFlight;
+  now: number;
+  done?: boolean;
+}): React.ReactNode {
   const elapsedSec = Math.max(0.1, (now - flight.startedAt) / 1000);
   const tokPerSec =
-    flight.status === "streaming" && flight.outputTokens !== null
+    !done && flight.status === "streaming" && flight.outputTokens !== null
       ? Math.round(flight.outputTokens / elapsedSec)
       : null;
   return (
@@ -101,14 +139,19 @@ function FlightDetail({ flight, now }: { flight: LiveFlight; now: number }): Rea
               fontWeight: 700,
               padding: "3px 10px",
               borderRadius: "999px",
-              background:
-                flight.status === "streaming"
+              background: done
+                ? "var(--surface-muted)"
+                : flight.status === "streaming"
                   ? "color-mix(in srgb, var(--status-success) 16%, transparent)"
                   : "var(--surface-muted)",
-              color: flight.status === "streaming" ? "var(--status-success)" : "var(--text-secondary)",
+              color: done
+                ? "var(--text-tertiary)"
+                : flight.status === "streaming"
+                  ? "var(--status-success)"
+                  : "var(--text-secondary)",
             }}
           >
-            {flight.status === "streaming" ? "● Streaming" : "○ Waiting for first token"}
+            {done ? "✓ Done" : flight.status === "streaming" ? "● Streaming" : "○ Waiting for first token"}
           </span>
         </Inline>
         {flight.stage && (
@@ -129,7 +172,12 @@ function FlightDetail({ flight, now }: { flight: LiveFlight; now: number }): Rea
         </span>
         {flight.tokenSavers.length > 0 && (
           <Inline gap="6px" align="center">
-            <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>Savers:</span>
+            <span
+              style={{ fontSize: "11px", color: "var(--text-tertiary)" }}
+              title="Token-saving transforms applied to this request (RTK, Headroom, Caveman, Ponytail)"
+            >
+              Savers:
+            </span>
             {flight.tokenSavers.map((saver) => (
               <span
                 key={saver}
@@ -148,7 +196,7 @@ function FlightDetail({ flight, now }: { flight: LiveFlight; now: number }): Rea
           </Inline>
         )}
       </Inline>
-      {(flight.promptPreview || flight.responsePreview) && (
+      {(flight.promptPreview || flight.responsePreview || done) && (
         <div
           style={{
             display: "grid",
@@ -157,7 +205,17 @@ function FlightDetail({ flight, now }: { flight: LiveFlight; now: number }): Rea
           }}
         >
           {flight.promptPreview && <PreviewBlock label="Prompt" text={flight.promptPreview} />}
-          {flight.responsePreview && <PreviewBlock label="Response so far" text={flight.responsePreview} />}
+          {flight.responsePreview ? (
+            <PreviewBlock label="Response so far" text={flight.responsePreview} />
+          ) : (
+            !done && (
+              <PreviewBlock
+                label="Response so far"
+                text="Waiting for the first token…"
+                muted
+              />
+            )
+          )}
         </div>
       )}
     </div>
@@ -169,16 +227,36 @@ function FlightDetail({ flight, now }: { flight: LiveFlight; now: number }): Rea
  * serving it, and the failover hops it took to get there. Rows expand to a
  * live detail panel (status, stage, tokens, savers, prompt/response preview).
  * Fed by the console SSE in-flight stream, so it updates without polling.
+ * Recently finished requests linger ~6s in a faded "done" state so they can
+ * still be inspected right after they complete.
  */
 export function LiveActivityCard(): React.ReactNode {
   const { flights, live } = useInFlight();
   const [now, setNow] = useState(() => Date.now());
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [done, setDone] = useState<readonly { flight: LiveFlight; endedAt: number }[]>([]);
+  const prevFlightsRef = useRef<readonly LiveFlight[]>([]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Track flights that vanished (finished) so they linger briefly as "done".
+  useEffect(() => {
+    const current = flights ?? [];
+    const activeIds = new Set(current.map((f) => f.id));
+    const at = Date.now();
+    setDone((prev) => {
+      const kept = prev.filter((d) => !activeIds.has(d.flight.id) && at - d.endedAt < 6000);
+      const keptIds = new Set(kept.map((d) => d.flight.id));
+      const added = prevFlightsRef.current
+        .filter((f) => !activeIds.has(f.id) && !keptIds.has(f.id))
+        .map((f) => ({ flight: f, endedAt: at }));
+      return [...kept, ...added];
+    });
+    prevFlightsRef.current = current;
+  }, [flights, now]);
 
   const toggle = (id: string) => {
     setExpanded((prev) => {
@@ -190,15 +268,111 @@ export function LiveActivityCard(): React.ReactNode {
   };
 
   const rows = flights ?? [];
+  const subtitle = !live
+    ? "Live feed disconnected — last seen state"
+    : rows.length === 0
+      ? "No requests executing right now"
+      : `${rows.length} ${rows.length === 1 ? "request" : "requests"} executing right now — click a row for detail`;
+
+  const rowPair = (flight: LiveFlight, doneEntry: { endedAt: number } | null) => {
+    const isDone = doneEntry !== null;
+    const isOpen = expanded.has(flight.id);
+    const elapsed = isDone ? doneEntry.endedAt - flight.startedAt : now - flight.startedAt;
+    return [
+      <tr
+        key={flight.id}
+        onClick={() => toggle(flight.id)}
+        style={{ cursor: "pointer", opacity: isDone ? 0.55 : 1 }}
+        aria-expanded={isOpen}
+      >
+        <td>
+          <ChevronDown
+            size={15}
+            style={{
+              color: "var(--text-tertiary)",
+              transform: isOpen ? "rotate(180deg)" : "none",
+              transition: "transform 0.15s",
+              display: "block",
+            }}
+          />
+        </td>
+        <td style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>
+          <Inline gap="8px" align="center">
+            <StatusDot flight={flight} done={isDone} />
+            <span>#{flight.id}</span>
+            {isDone && (
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: "999px",
+                  background: "var(--surface-muted)",
+                  color: "var(--text-tertiary)",
+                }}
+              >
+                Done
+              </span>
+            )}
+          </Inline>
+        </td>
+        <td
+          style={{
+            fontSize: "12px",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={flight.route ?? undefined}
+        >
+          {flight.route ?? <span style={{ color: "var(--text-tertiary)" }}>—</span>}
+        </td>
+        <td
+          style={{
+            fontWeight: 600,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={servingLabel(flight)}
+        >
+          {servingLabel(flight)}
+        </td>
+        <td style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>
+          {flight.attempt + 1}
+          {flight.attempt > 0 && (
+            <span style={{ color: "var(--warning)", marginLeft: "6px" }}>
+              failover ×{flight.attempt}
+            </span>
+          )}
+        </td>
+        <td>
+          <FailoverPath flight={flight} />
+        </td>
+        <td style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>
+          {formatElapsed(elapsed)}
+        </td>
+      </tr>,
+      isOpen && (
+        <tr key={`${flight.id}-detail`}>
+          <td colSpan={7} style={{ background: "var(--surface-1)", padding: "14px 16px" }}>
+            <FlightDetail
+              flight={flight}
+              now={isDone ? doneEntry.endedAt : now}
+              done={isDone}
+            />
+          </td>
+        </tr>
+      ),
+    ];
+  };
+
+  const hasRows = rows.length > 0 || done.length > 0;
   return (
     <Card className="grid-span-full">
       <CardHeader
         title="Live activity"
-        subtitle={
-          live
-            ? `${rows.length} ${rows.length === 1 ? "request" : "requests"} executing right now — click a row for detail`
-            : "Live feed disconnected — last seen state"
-        }
+        subtitle={subtitle}
         icon={<Radio size={16} />}
         action={
           <Inline gap="6px" align="center">
@@ -215,13 +389,13 @@ export function LiveActivityCard(): React.ReactNode {
               }}
             />
             <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-              {live ? "Live" : "Offline"}
+              {live ? `Live · ${rows.length} in flight` : "Offline"}
             </span>
           </Inline>
         }
       />
       <CardBody style={{ padding: 0 }}>
-        {rows.length === 0 ? (
+        {!hasRows ? (
           <div style={{ padding: "20px" }}>
             <EmptyState
               title="No active requests"
@@ -243,82 +417,17 @@ export function LiveActivityCard(): React.ReactNode {
               <thead>
                 <tr>
                   <th />
-                  <th>Request</th>
-                  <th>Route</th>
-                  <th>Serving now</th>
-                  <th>Attempt</th>
-                  <th>Failover path</th>
-                  <th>Elapsed</th>
+                  <th title="Short request id — click a row to expand its live detail">Request</th>
+                  <th title="Combo name or direct provider/model route for this request">Route</th>
+                  <th title="Provider/model currently serving this request">Serving now</th>
+                  <th title="Dispatch attempt number — above 1 means a failover happened">Attempt</th>
+                  <th title="Providers/models tried before the current one, in order">Failover path</th>
+                  <th title="Time since the request started">Elapsed</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((flight) => {
-                  const isOpen = expanded.has(flight.id);
-                  return [
-                    <tr
-                      key={flight.id}
-                      onClick={() => toggle(flight.id)}
-                      style={{ cursor: "pointer" }}
-                      aria-expanded={isOpen}
-                    >
-                      <td>
-                        <ChevronDown
-                          size={15}
-                          style={{
-                            color: "var(--text-tertiary)",
-                            transform: isOpen ? "rotate(180deg)" : "none",
-                            transition: "transform 0.15s",
-                            display: "block",
-                          }}
-                        />
-                      </td>
-                      <td style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>#{flight.id}</td>
-                      <td
-                        style={{
-                          fontSize: "12px",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                        title={flight.route ?? undefined}
-                      >
-                        {flight.route ?? <span style={{ color: "var(--text-tertiary)" }}>—</span>}
-                      </td>
-                      <td
-                        style={{
-                          fontWeight: 600,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                        title={servingLabel(flight)}
-                      >
-                        {servingLabel(flight)}
-                      </td>
-                      <td style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>
-                        {flight.attempt + 1}
-                        {flight.attempt > 0 && (
-                          <span style={{ color: "var(--warning)", marginLeft: "6px" }}>
-                            failover ×{flight.attempt}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <FailoverPath flight={flight} />
-                      </td>
-                      <td style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>
-                        {formatElapsed(now - flight.startedAt)}
-                      </td>
-                    </tr>,
-                    isOpen && (
-                      <tr key={`${flight.id}-detail`}>
-                        <td colSpan={7} style={{ background: "var(--surface-1)", padding: "14px 16px" }}>
-                          <FlightDetail flight={flight} now={now} />
-                        </td>
-                      </tr>
-                    ),
-                  ];
-                })}
+                {rows.map((flight) => rowPair(flight, null))}
+                {done.map((d) => rowPair(d.flight, { endedAt: d.endedAt }))}
               </tbody>
             </table>
           </div>
