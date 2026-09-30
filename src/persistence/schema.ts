@@ -351,14 +351,38 @@ export const healthEvents = pgTable(
 // Model aliasing & combos: replaces the dormant, disconnected
 // `routing_policies` scaffolding. Aliases resolve a client-facing name to a
 // real model; combos back a client-facing name with >=1 real models,
-// auto-selected via `fallback` or `round_robin`.
-export const modelComboStrategy = pgEnum("model_combo_strategy", ["fallback", "round_robin"]);
+// auto-selected via `fallback`, `round_robin`, or `cascade`.
+export const modelComboStrategy = pgEnum("model_combo_strategy", [
+  "fallback",
+  "round_robin",
+  "cascade",
+]);
 
 /** Canonical `ComboStrategy` union, derived from the enum above. Console
  * domain and routing layers import this instead of hand-typing their own mirror.
  * `ProviderRoutingStrategy` covers the same two values but persists on
  * `provider_routing_settings` beside `rotateCount`; sticky routing is gone. */
 export type ComboStrategy = (typeof modelComboStrategy.enumValues)[number];
+
+/** Tuning knobs for the `cascade` combo strategy. The model is asked to
+ * self-rate its confidence (0-100) per stage; a stage below
+ * `confidenceThreshold` escalates to the next (stronger) member. */
+export interface CascadeComboConfig {
+  /** 0-100; escalate when the stage's self-reported confidence is below this. */
+  readonly confidenceThreshold?: number;
+  /** Suffix appended to the stage request asking the model to self-rate. */
+  readonly confidencePrompt?: string;
+  /** Prefix used when escalating with the prior stage's answer as context. */
+  readonly escalatePrompt?: string;
+  /** Max stages per request (1-8); capped by the member count. */
+  readonly maxStages?: number;
+}
+
+/** Per-strategy tuning for a model combo, stored as JSONB. Strategies that
+ * don't read it ignore it; new strategies add their own optional section. */
+export interface ModelComboConfig {
+  readonly cascade?: CascadeComboConfig;
+}
 
 export const modelAliases = pgTable(
   "model_aliases",
@@ -381,6 +405,8 @@ export const modelCombos = pgTable(
     name: text("name").notNull(),
     members: jsonb("members").notNull().$type<string[]>(),
     strategy: modelComboStrategy("strategy").notNull().default("fallback"),
+    /** Per-strategy tuning (e.g. cascade thresholds); null = defaults. */
+    config: jsonb("config").$type<ModelComboConfig | null>(),
     ...timestampColumns(),
   },
   (t) => [uniqueIndex("model_combos_tenant_name_uidx").on(t.tenantId, t.name)],

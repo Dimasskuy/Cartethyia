@@ -5,9 +5,9 @@ import { ConsoleDomainError, errorResponse, requireTenantScope } from "../../sha
 import { literalUnion } from "../../shared/elysia-schema";
 import { Elysia, t } from "elysia";
 import type { AccessDecision } from "../../../security/access-control";
-import { modelComboStrategy, type ComboStrategy } from "../../../persistence/schema";
+import { modelComboStrategy, type ComboStrategy, type ModelComboConfig } from "../../../persistence/schema";
 
-export type { ComboStrategy };
+export type { ComboStrategy, ModelComboConfig };
 
 export interface ModelAliasRow {
   readonly id: string;
@@ -35,6 +35,7 @@ export interface ModelComboRow {
   readonly name: string;
   readonly members: readonly string[];
   readonly strategy: ComboStrategy;
+  readonly config?: ModelComboConfig | null;
   readonly contextLimit?: number | null;
   readonly outputLimit?: number | null;
   readonly createdAt: string;
@@ -45,11 +46,13 @@ export interface ModelComboCreateInput {
   readonly name: string;
   readonly members: readonly string[];
   readonly strategy?: ComboStrategy;
+  readonly config?: ModelComboConfig | null;
 }
 
 export interface ModelComboPatchInput {
   readonly members?: readonly string[];
   readonly strategy?: ComboStrategy;
+  readonly config?: ModelComboConfig | null;
 }
 
 export interface ModelRoutingStore {
@@ -286,7 +289,12 @@ export function createModelRoutingOperations(deps: ModelRoutingConfig) {
             );
         }
         const strategy = input.strategy ?? "fallback";
-        const created = await deps.store.createCombo(tenantId, { name, members, strategy });
+        const created = await deps.store.createCombo(tenantId, {
+          name,
+          members,
+          strategy,
+          ...(input.config === undefined ? {} : { config: input.config }),
+        });
         await deps.auditSink?.record({
           access: a,
           action: "model_combo.created",
@@ -358,6 +366,7 @@ export function createModelRoutingOperations(deps: ModelRoutingConfig) {
         const updated = await deps.store.updateCombo(tenantId, id, {
           ...(members === undefined ? {} : { members }),
           ...(patch.strategy === undefined ? {} : { strategy: patch.strategy }),
+          ...(patch.config === undefined ? {} : { config: patch.config }),
         });
         if (!updated) throw new ConsoleDomainError("combo_not_found", 404, `Combo ${id} not found`);
         await deps.auditSink?.record({
@@ -390,23 +399,37 @@ function modelRoutingErrorResponse(error: unknown, set: { status?: number | stri
 // without updating these literals fails here.
 type ExpectComboParity<T extends true> = T;
 export type ComboSchemaParity = ExpectComboParity<
-  [ComboStrategy] extends ["fallback" | "round_robin"]
-    ? (["fallback" | "round_robin"] extends [ComboStrategy] ? true : false)
+  [ComboStrategy] extends ["fallback" | "round_robin" | "cascade"]
+    ? (["fallback" | "round_robin" | "cascade"] extends [ComboStrategy] ? true : false)
     : false
 >;
 
 const createAliasBody = t.Object({ alias: t.String(), targetModel: t.String() });
 const updateAliasBody = t.Object({ targetModel: t.String() });
+/** Bounds for cascade tuning; the dispatch layer clamps defensively too. */
+const cascadeComboConfigSchema = t.Object({
+  confidenceThreshold: t.Optional(t.Number({ minimum: 0, maximum: 100 })),
+  confidencePrompt: t.Optional(t.String({ maxLength: 2000 })),
+  escalatePrompt: t.Optional(t.String({ maxLength: 2000 })),
+  maxStages: t.Optional(t.Integer({ minimum: 1, maximum: 8 })),
+});
+/** Per-strategy combo tuning. Sections for strategies that don't read them
+ * are stored but ignored; new strategies add their own optional section. */
+const comboConfigSchema = t.Object({
+  cascade: t.Optional(cascadeComboConfigSchema),
+});
 /** The combo-strategy enum's own values; see `ComboSchemaParity` above. */
 const comboStrategySchema = literalUnion(modelComboStrategy.enumValues);
 const createComboBody = t.Object({
   name: t.String(),
   members: t.Array(t.String(), { minItems: 1 }),
   strategy: t.Optional(comboStrategySchema),
+  config: t.Optional(comboConfigSchema),
 });
 const updateComboBody = t.Object({
   members: t.Optional(t.Array(t.String(), { minItems: 1 })),
   strategy: t.Optional(comboStrategySchema),
+  config: t.Optional(comboConfigSchema),
 });
 
 export function createModelRoutingRoutes(config: ModelRoutingConfig): Elysia {

@@ -535,7 +535,7 @@ export class RoutingEngine {
     keyId?: string,
   ): Promise<RoutePlan> {
     const tid = tenantId ?? null;
-    const { resolved, matching } = this.resolveMatchingCandidates(
+    const { resolved, combo, matching } = this.resolveMatchingCandidates(
       requestedModel,
       snapshot,
       tid,
@@ -606,6 +606,7 @@ export class RoutingEngine {
       requested_model: requestedModel,
       resolved_model: resolved.model,
       provider_id: chosen.provider_id,
+      ...(combo ? { combo } : {}),
     };
   }
 

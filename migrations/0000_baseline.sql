@@ -16,7 +16,7 @@ CREATE TYPE "public"."telemetry_status" AS ENUM('completed', 'failed', 'cancelle
 --> statement-breakpoint
 CREATE TYPE "public"."wire_family" AS ENUM('chat', 'responses', 'messages');
 --> statement-breakpoint
-CREATE TYPE "public"."model_combo_strategy" AS ENUM('fallback', 'round_robin');
+CREATE TYPE "public"."model_combo_strategy" AS ENUM('fallback', 'round_robin', 'cascade');
 --> statement-breakpoint
 CREATE TYPE "public"."provider_routing_strategy" AS ENUM('fallback', 'round_robin');
 --> statement-breakpoint
@@ -157,6 +157,7 @@ CREATE TABLE "model_combos" (
   "name" text NOT NULL,
   "members" jsonb NOT NULL,
   "strategy" "model_combo_strategy" DEFAULT 'fallback' NOT NULL,
+  "config" jsonb,
   "created_at" timestamptz DEFAULT now() NOT NULL,
   "updated_at" timestamptz DEFAULT now() NOT NULL,
   CONSTRAINT "model_combos_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE cascade

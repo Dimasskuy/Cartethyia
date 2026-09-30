@@ -2,14 +2,14 @@ import { isBundledProviderId } from "../../providers/provider-registry";
 import type { ProviderDispatchContext, ProviderId, ProviderAdapter } from "../../providers/provider-registry";
 import { GatewayError, explainGatewayError, labelGatewayMessage, publicGatewayErrorDetails } from "../gateway-error";
 import { classifyTerminalCategory } from "../failure-policy";
-import type { CanonicalEvent, UsageRecord } from "../canonical-model";
+import type { CanonicalEvent, CanonicalRequest, UsageRecord } from "../canonical-model";
 import { resolveCredentialForAccount } from "../../providers/operations/provider-credential-service";
 import type { OAuthTokenRefresher } from "../../providers/authentication/oauth-refresh-service";
 import type { OAuthRefreshService } from "../../providers/authentication/oauth-refresh-service";
 import type { ValidatedNetworkBindingFactory } from "../../network/pool/resolver";
 import type { ByokUpstreamHost } from "../../providers/operations/provider-catalog-service";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
-import type { RouteSnapshotService } from "../routing/route-model";
+import type { RouteCandidate, RouteSnapshotService } from "../routing/route-model";
 import { releaseAttemptLeases } from "./leases";
 import { chatAdapter } from "../surface/chat/adapter";
 import { responsesAdapter } from "../surface/responses/adapter";
@@ -18,6 +18,7 @@ import { completionAdapter } from "../surface/completion";
 import { forwardedRequestHeaders, proxySuccessHeaders, buildUpstreamDispatchContext } from "./upstream";
 import { resolvePromptCacheKey } from "../../providers/operations/session-resolution";
 import { createDispatchStreamEncoder } from "./stream-bridge";
+import { runCascadeCombo } from "./cascade";
 import { shouldCooldownPool } from "./retry-policy";
 import { applyTenantPreferences } from "./tenant-preferences";
 import { metrics } from "../../observability/metrics";
@@ -120,7 +121,11 @@ export async function handleProviderProxyRequest(
   const conversationAffinity = resolvePromptCacheKey(canonicalRequest, {
     request_headers: inboundHeaders,
   } as ProviderDispatchContext);
-  return runAttemptLoop<Response, ProviderAdapter>({
+  const dispatchCandidates = (
+    stageRequest: CanonicalRequest,
+    stageCandidates: readonly RouteCandidate[],
+  ): Promise<Response> =>
+    runAttemptLoop<Response, ProviderAdapter>({
     state,
     deps,
     leaseSource: {
@@ -131,7 +136,7 @@ export async function handleProviderProxyRequest(
       estimatedOutputTokens: prepared.estimatedOutputTokens,
       authorizationSnapshot: prepared.authorization.snapshot,
     },
-    candidates,
+      candidates: stageCandidates,
     tenantId: prepared.authorization.tenantId,
     strictPoolSelection: true,
     resolveHost: (candidate) => deps.byokUpstreamHosts?.get(candidate.provider_id),
@@ -187,14 +192,14 @@ export async function handleProviderProxyRequest(
         user_agent: candidate.user_agent,
       };
       const candidateRequest =
-        candidate.model_id === canonicalRequest.model
-          ? canonicalRequest
-          : { ...canonicalRequest, model: candidate.model_id };
+        candidate.model_id === stageRequest.model
+          ? stageRequest
+          : { ...stageRequest, model: candidate.model_id };
       const dispatchRequest = projectForRoute(
         candidateRequest,
         routeCapabilitiesFor(candidate),
       );
-      if (canonicalRequest.stream) {
+      if (stageRequest.stream) {
         const outboundFetch = deps.networkBindingFactory?.fetch(
           networkPoolId,
           prepared.authorization.snapshot.tenant_id,
@@ -237,7 +242,7 @@ export async function handleProviderProxyRequest(
         const streamAccountLabel = candidate.provider_account_label;
         const streamOptions = {
           created: Date.now() / 1000,
-          include_usage: canonicalRequest.generation_controls["extension:include_usage"] === true,
+          include_usage: stageRequest.generation_controls["extension:include_usage"] === true,
         };
         // Prime the very first upstream event BEFORE committing the HTTP 200
         // response (which flushes headers). If candidate 0 cannot even produce
@@ -287,16 +292,16 @@ export async function handleProviderProxyRequest(
         const streamRouteCandidate = candidate;
         const streamPrepared = prepared;
         const streamEncoder = createDispatchStreamEncoder(
-          canonicalRequest.source_surface,
-          canonicalRequest.source_surface === "completion"
+          stageRequest.source_surface,
+          stageRequest.source_surface === "completion"
             ? {
                 model: streamRouteCandidate.model_id,
                 created: Date.now() / 1000,
-                prompt: canonicalRequest.generation_controls["extension:completion.prompt"],
-                echo: canonicalRequest.generation_controls["extension:completion.echo"] === true,
-                suffix: canonicalRequest.generation_controls["extension:completion.suffix"],
+                prompt: stageRequest.generation_controls["extension:completion.prompt"],
+                echo: stageRequest.generation_controls["extension:completion.echo"] === true,
+                suffix: stageRequest.generation_controls["extension:completion.suffix"],
               }
-            : canonicalRequest.source_surface === "messages"
+            : stageRequest.source_surface === "messages"
               ? { response_id: `msg-${crypto.randomUUID()}`, model: streamRouteCandidate.model_id }
               : streamOptions,
         );
@@ -815,7 +820,7 @@ export async function handleProviderProxyRequest(
           ? { outboundWebSocket: deps.networkBindingFactory.webSocket(networkPoolId, prepared.authorization.snapshot.tenant_id) }
           : {}),
       });
-      const dispatch = async (input: typeof canonicalRequest): Promise<CanonicalEvent[]> => {
+      const dispatch = async (input: typeof stageRequest): Promise<CanonicalEvent[]> => {
         const events: CanonicalEvent[] = [];
         for await (const event of adapter.dispatch(
           input,
@@ -848,20 +853,20 @@ export async function handleProviderProxyRequest(
       const pricedUsage = repriceUsage(usage, candidate.provider_id, candidate.model_id);
       const options = {
         created: Date.now() / 1000,
-        include_usage: canonicalRequest.generation_controls["extension:include_usage"] === true,
+        include_usage: stageRequest.generation_controls["extension:include_usage"] === true,
       };
       const output =
-        canonicalRequest.source_surface === "chat"
+        stageRequest.source_surface === "chat"
           ? chatAdapter.encode(events, options)
-          : canonicalRequest.source_surface === "responses"
+          : stageRequest.source_surface === "responses"
             ? responsesAdapter.encodeOutput(events, options as never)
-            : canonicalRequest.source_surface === "messages"
+            : stageRequest.source_surface === "messages"
               ? messagesAdapter.encodeOutput(events, options as never)
               : completionAdapter.encodeOutput(events, {
                   ...options,
-                  prompt: canonicalRequest.generation_controls["extension:completion.prompt"],
-                  echo: canonicalRequest.generation_controls["extension:completion.echo"] === true,
-                  suffix: canonicalRequest.generation_controls["extension:completion.suffix"],
+                  prompt: stageRequest.generation_controls["extension:completion.prompt"],
+                  echo: stageRequest.generation_controls["extension:completion.echo"] === true,
+                  suffix: stageRequest.generation_controls["extension:completion.suffix"],
                 });
       await completeAttempt(state, {
         status: "completed",
@@ -898,5 +903,18 @@ export async function handleProviderProxyRequest(
         headers: { "content-type": output.content_type, ...proxySuccessHeaders(state) },
       });
     },
-  });
+    });
+
+  const combo = prepared.plan.combo;
+  if (combo?.strategy === "cascade") {
+    return runCascadeCombo({
+      combo,
+      comboName: prepared.plan.requested_model,
+      canonicalRequest,
+      candidates,
+      requestId: state.requestId,
+      dispatch: dispatchCandidates,
+    });
+  }
+  return dispatchCandidates(canonicalRequest, candidates);
 }

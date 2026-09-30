@@ -228,6 +228,7 @@ const COMBO_COLUMNS = {
   name: modelCombos.name,
   members: modelCombos.members,
   strategy: modelCombos.strategy,
+  config: modelCombos.config,
 } as const;
 
 const ROUTING_COLUMNS = {
@@ -591,7 +592,11 @@ class RouteCatalogRepository {
     const combos: Record<string, Record<string, ComboDefinition>> = {};
     for (const row of comboRows) {
       if (tenantId === undefined || row.tenantId === tenantId) {
-        (combos[row.tenantId] ??= {})[row.name] = { members: row.members, strategy: row.strategy };
+        (combos[row.tenantId] ??= {})[row.name] = {
+          members: row.members,
+          strategy: row.strategy,
+          ...(row.config ? { config: row.config } : {}),
+        };
       }
     }
 

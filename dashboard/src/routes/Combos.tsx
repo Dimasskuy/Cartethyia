@@ -320,6 +320,8 @@ function CombosSection(): ReactNode {
   const [comboName, setComboName] = useState("");
   const [membersText, setMembersText] = useState("");
   const [strategy, setStrategy] = useState<ComboStrategy>("fallback");
+  const [cascadeThreshold, setCascadeThreshold] = useState("70");
+  const [cascadeMaxStages, setCascadeMaxStages] = useState("3");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<ModelComboRow | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -347,6 +349,8 @@ function CombosSection(): ReactNode {
     setComboName("");
     setMembersText("");
     setStrategy("fallback");
+    setCascadeThreshold("70");
+    setCascadeMaxStages("3");
     setDialogOpen(true);
   };
 
@@ -355,7 +359,18 @@ function CombosSection(): ReactNode {
     setComboName(c.name);
     setMembersText(c.members.join("\n"));
     setStrategy(c.strategy);
+    const cascade = c.config?.cascade;
+    setCascadeThreshold(
+      typeof cascade?.confidenceThreshold === "number" ? String(cascade.confidenceThreshold) : "70",
+    );
+    setCascadeMaxStages(typeof cascade?.maxStages === "number" ? String(cascade.maxStages) : "3");
     setDialogOpen(true);
+  };
+
+  const clampInt = (raw: string, min: number, max: number, fallback: number): number => {
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -367,9 +382,21 @@ function CombosSection(): ReactNode {
 
     if (!comboName.trim() || members.length === 0) return;
 
+    // Cascade tuning; cleared when the strategy is not cascade so stale
+    // thresholds never linger on a repurposed combo.
+    const config =
+      strategy === "cascade"
+        ? {
+            cascade: {
+              confidenceThreshold: clampInt(cascadeThreshold, 0, 100, 70),
+              maxStages: clampInt(cascadeMaxStages, 1, 8, 3),
+            },
+          }
+        : null;
+
     if (editingCombo) {
       updateMutation.mutate(
-        { id: editingCombo.id, request: { members, strategy } },
+        { id: editingCombo.id, request: { members, strategy, config } },
         {
           onSuccess: () => {
             setDialogOpen(false);
@@ -379,7 +406,7 @@ function CombosSection(): ReactNode {
       );
     } else {
       createMutation.mutate(
-        { name: comboName.trim(), members, strategy },
+        { name: comboName.trim(), members, strategy, config },
         {
           onSuccess: () => {
             setDialogOpen(false);
@@ -458,7 +485,7 @@ function CombosSection(): ReactNode {
                   <Inline gap="8px">
                     <strong style={{ fontSize: "14px" }}>{c.name}</strong>
                     <Badge tone="accent">
-                      {c.strategy === "round_robin" ? "round-robin" : "fallback"}
+                      {c.strategy === "round_robin" ? "round-robin" : c.strategy}
                     </Badge>
                   </Inline>
 
@@ -544,6 +571,30 @@ function CombosSection(): ReactNode {
             onValueChange={(v) => setStrategy(v as ComboStrategy)}
             options={COMBO_STRATEGY_OPTIONS}
           />
+          {strategy === "cascade" && (
+            <div style={{ display: "flex", gap: "12px" }}>
+              <Input
+                label="Confidence threshold (0-100)"
+                id="combo-cascade-threshold"
+                type="number"
+                min={0}
+                max={100}
+                value={cascadeThreshold}
+                onChange={(e) => setCascadeThreshold(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <Input
+                label="Max stages (1-8)"
+                id="combo-cascade-stages"
+                type="number"
+                min={1}
+                max={8}
+                value={cascadeMaxStages}
+                onChange={(e) => setCascadeMaxStages(e.target.value)}
+                style={{ flex: 1 }}
+              />
+            </div>
+          )}
           <Stack gap="4px">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>

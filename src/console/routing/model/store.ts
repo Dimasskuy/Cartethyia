@@ -55,6 +55,7 @@ function mapComboRow(row: ModelCombo): ModelComboRow {
     name: row.name,
     members: row.members,
     strategy: row.strategy,
+    ...(row.config ? { config: row.config } : {}),
     contextLimit,
     outputLimit,
     createdAt: row.createdAt.toISOString(),
@@ -119,6 +120,7 @@ export class DrizzleModelRoutingStore implements ModelRoutingStore {
         name: input.name,
         members: [...input.members],
         strategy: input.strategy ?? "fallback",
+        ...(input.config === undefined ? {} : { config: input.config }),
       })
       .returning();
     const row = rows[0];
@@ -137,6 +139,7 @@ export class DrizzleModelRoutingStore implements ModelRoutingStore {
         updatedAt: new Date(),
         ...(patch.members === undefined ? {} : { members: [...patch.members] }),
         ...(patch.strategy === undefined ? {} : { strategy: patch.strategy }),
+        ...(patch.config === undefined ? {} : { config: patch.config }),
       })
       .where(and(eq(modelCombos.tenantId, tenantId), eq(modelCombos.id, id)))
       .returning();

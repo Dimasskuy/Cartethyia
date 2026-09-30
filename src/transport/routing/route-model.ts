@@ -116,13 +116,18 @@ export interface RoutePlan {
   readonly requested_model: string;
   readonly resolved_model: string;
   readonly provider_id: string;
+  /** Present when the requested model resolved to a combo; the dispatch
+   * layer reads the strategy (e.g. `cascade`) and its config from here. */
+  readonly combo?: ComboDefinition;
 }
 
-import type { ComboStrategy, PoolRoutingStrategy } from "../../persistence/schema";
+import type { ComboStrategy, ModelComboConfig, PoolRoutingStrategy } from "../../persistence/schema";
 
 export interface ComboDefinition {
   readonly members: readonly string[];
   readonly strategy: ComboStrategy;
+  /** Per-strategy tuning (e.g. cascade thresholds); absent/null = defaults. */
+  readonly config?: ModelComboConfig | null;
 }
 
 export interface RouteSnapshot {
