@@ -64,6 +64,12 @@ export interface ProxyRequestState {
    */
   streaming?: boolean;
   /**
+   * Token savers applied to the canonical request by the dispatch handler
+   * (e.g. `["rtk", "caveman:full"]`), in application order. Set before the
+   * attempt loop so telemetry and the live activity feed can report it.
+   */
+  tokenSaversApplied?: readonly string[];
+  /**
    * Set by `completeAttempt` (dispatch/attempt-finalize) once the *terminal*
    * attempt has run its completion bookkeeping (usage commit, health report,
    * payload capture, telemetry finalization). The `afterResponse` telemetry

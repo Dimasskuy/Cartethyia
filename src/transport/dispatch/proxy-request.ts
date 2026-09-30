@@ -24,6 +24,7 @@ import { runSmartRoutingCombo } from "./smart-routing";
 import { runSwarmCombo } from "./swarm";
 import { shouldCooldownPool } from "./retry-policy";
 import { applyTenantPreferences } from "./tenant-preferences";
+import { applyTokenSavers } from "../../tokensaver";
 import { metrics } from "../../observability/metrics";
 import { flagPoolCooldown } from "../../network/pool-health";
 import type { NetworkPoolSelector } from "../../network/pool/selector";
@@ -112,7 +113,20 @@ export async function handleProviderProxyRequest(
   const prepared = state.preparedRequest;
   if (!prepared)
     throw new GatewayError("admission_unavailable", 503, "proxy request context unavailable");
-  const canonicalRequest = await applyTenantPreferences(prepared, deps.db);
+  const withPreferences = await applyTenantPreferences(prepared, deps.db);
+  // Token savers (RTK / Headroom / Ponytail / Caveman), configured per combo:
+  // RTK compress -> Headroom -> Caveman inject -> Ponytail inject, applied to
+  // the canonical request before any combo strategy or provider dispatch.
+  // RTK defaults ON for combo requests; explicit `rtk: false` disables it.
+  // Non-combo requests carry no saver config and pass through untouched.
+  const comboTokenSavers = prepared.plan.combo?.config?.tokenSavers;
+  const { request: canonicalRequest, applied: tokenSaversApplied } =
+    prepared.plan.combo
+      ? await applyTokenSavers(withPreferences, comboTokenSavers)
+      : { request: withPreferences, applied: [] as readonly string[] };
+  if (tokenSaversApplied.length > 0) {
+    state.tokenSaversApplied = tokenSaversApplied;
+  }
   const candidates =
     prepared.eligibleRouteCandidates.length > 0 ? prepared.eligibleRouteCandidates : [prepared.candidate];
   // Inbound headers are safe to re-read (only bodies are single-read).

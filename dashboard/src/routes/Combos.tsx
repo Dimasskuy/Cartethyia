@@ -309,6 +309,18 @@ function AliasesSection(): ReactNode {
 
 // ── Combos Section ───────────────────────────────────────────────────────────
 
+const TOKEN_SAVER_INTENSITY_OPTIONS = [
+  { value: "off", label: "Off" },
+  { value: "lite", label: "Lite" },
+  { value: "full", label: "Full" },
+  { value: "ultra", label: "Ultra" },
+] as const;
+
+type TokenSaverIntensity = (typeof TOKEN_SAVER_INTENSITY_OPTIONS)[number]["value"];
+
+const isTokenSaverIntensity = (v: unknown): v is TokenSaverIntensity =>
+  v === "off" || v === "lite" || v === "full" || v === "ultra";
+
 function CombosSection(): ReactNode {
   const combosQuery = useModelCombos();
   const createMutation = useCreateModelCombo();
@@ -334,6 +346,11 @@ function CombosSection(): ReactNode {
   const [swarmStaffModel, setSwarmStaffModel] = useState("");
   const [swarmWorkerModels, setSwarmWorkerModels] = useState("");
   const [swarmWorkerCount, setSwarmWorkerCount] = useState("8");
+  const [tokenSaverRtk, setTokenSaverRtk] = useState(true);
+  const [tokenSaverCaveman, setTokenSaverCaveman] = useState<TokenSaverIntensity>("off");
+  const [tokenSaverPonytail, setTokenSaverPonytail] = useState<TokenSaverIntensity>("off");
+  const [tokenSaverHeadroomEnabled, setTokenSaverHeadroomEnabled] = useState(false);
+  const [tokenSaverHeadroomUrl, setTokenSaverHeadroomUrl] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<ModelComboRow | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -412,6 +429,12 @@ function CombosSection(): ReactNode {
     setSwarmStaffModel(typeof swarm?.staffModel === "string" ? swarm.staffModel : "");
     setSwarmWorkerModels(listToText(swarm?.workerModels));
     setSwarmWorkerCount(typeof swarm?.workerCount === "number" ? String(swarm.workerCount) : "8");
+    const savers = c.config?.tokenSavers;
+    setTokenSaverRtk(typeof savers?.rtk === "boolean" ? savers.rtk : true);
+    setTokenSaverCaveman(isTokenSaverIntensity(savers?.caveman) ? savers.caveman : "off");
+    setTokenSaverPonytail(isTokenSaverIntensity(savers?.ponytail) ? savers.ponytail : "off");
+    setTokenSaverHeadroomEnabled(savers?.headroom?.enabled === true);
+    setTokenSaverHeadroomUrl(typeof savers?.headroom?.url === "string" ? savers.headroom.url : "");
     setDialogOpen(true);
   };
 
@@ -438,7 +461,7 @@ function CombosSection(): ReactNode {
 
     // Per-strategy tuning; cleared when the strategy changes so stale
     // knobs never linger on a repurposed combo.
-    const config =
+    const strategyConfig =
       strategy === "cascade"
         ? {
             cascade: {
@@ -488,6 +511,28 @@ function CombosSection(): ReactNode {
                   },
                 }
               : null;
+
+    // Token savers apply to every strategy (persist across strategy changes).
+    // Omitted entirely when everything is at its default (RTK on, rest off).
+    const headroomUrl = tokenSaverHeadroomUrl.trim();
+    const tokenSaversNonDefault =
+      !tokenSaverRtk ||
+      tokenSaverCaveman !== "off" ||
+      tokenSaverPonytail !== "off" ||
+      (tokenSaverHeadroomEnabled && headroomUrl.length > 0);
+    const config = tokenSaversNonDefault
+      ? {
+          ...(strategyConfig ?? {}),
+          tokenSavers: {
+            rtk: tokenSaverRtk,
+            ...(tokenSaverCaveman !== "off" ? { caveman: tokenSaverCaveman } : {}),
+            ...(tokenSaverPonytail !== "off" ? { ponytail: tokenSaverPonytail } : {}),
+            ...(tokenSaverHeadroomEnabled && headroomUrl.length > 0
+              ? { headroom: { enabled: true, url: headroomUrl } }
+              : {}),
+          },
+        }
+      : strategyConfig;
 
     if (editingCombo) {
       updateMutation.mutate(
@@ -807,6 +852,59 @@ function CombosSection(): ReactNode {
               />
             </div>
           )}
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div
+              style={{
+                fontSize: "12px",
+                fontWeight: 700,
+                color: "var(--text-secondary)",
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+              }}
+            >
+              Token savers
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+              <input
+                type="checkbox"
+                checked={tokenSaverRtk}
+                onChange={(e) => setTokenSaverRtk(e.target.checked)}
+              />
+              RTK — compress tool outputs (diff/grep/ls/tree, dedup, truncate). Default ON.
+            </label>
+            <Select
+              label="Caveman — terse response style (how the model talks)"
+              id="combo-tokensaver-caveman"
+              value={tokenSaverCaveman}
+              onValueChange={(v) => setTokenSaverCaveman(isTokenSaverIntensity(v) ? v : "off")}
+              options={TOKEN_SAVER_INTENSITY_OPTIONS}
+            />
+            <Select
+              label="Ponytail — lazy-senior-dev discipline (what the model builds)"
+              id="combo-tokensaver-ponytail"
+              value={tokenSaverPonytail}
+              onValueChange={(v) => setTokenSaverPonytail(isTokenSaverIntensity(v) ? v : "off")}
+              options={TOKEN_SAVER_INTENSITY_OPTIONS}
+            />
+            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+              <input
+                type="checkbox"
+                checked={tokenSaverHeadroomEnabled}
+                onChange={(e) => setTokenSaverHeadroomEnabled(e.target.checked)}
+              />
+              Headroom — external /v1/compress proxy (fails open when down)
+            </label>
+            {tokenSaverHeadroomEnabled && (
+              <Input
+                label="Headroom base URL"
+                id="combo-tokensaver-headroom-url"
+                type="text"
+                placeholder="https://headroom.example.com"
+                value={tokenSaverHeadroomUrl}
+                onChange={(e) => setTokenSaverHeadroomUrl(e.target.value)}
+              />
+            )}
+          </div>
           <Stack gap="4px">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>

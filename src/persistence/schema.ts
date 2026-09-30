@@ -381,6 +381,29 @@ export interface CascadeComboConfig {
   readonly maxStages?: number;
 }
 
+/** Intensity levels shared by the prompt-injection token savers (caveman, ponytail). */
+export type TokenSaverIntensity = "off" | "lite" | "full" | "ultra";
+
+/** Token-saver tuning for a model combo, adapted from ExtremeRouter's
+ * token savers (RTK / Headroom / Ponytail / Caveman). Applied to the
+ * canonical request before dispatch, in pipeline order:
+ * RTK compress → Headroom → Caveman inject → Ponytail inject. */
+export interface TokenSaverConfig {
+  /** Compress tool-result outputs (diff/grep/ls/tree patterns, dedup,
+   * smart-truncate). Default ON when the section is absent. */
+  readonly rtk?: boolean;
+  /** Terse-response prompt injection; governs *how* the model talks. */
+  readonly caveman?: TokenSaverIntensity;
+  /** "Lazy senior dev" YAGNI-first prompt injection (lite/full/ultra);
+   * governs *what* the model builds. */
+  readonly ponytail?: TokenSaverIntensity;
+  /** Optional external /v1/compress proxy; fails open when down. */
+  readonly headroom?: {
+    readonly enabled?: boolean;
+    readonly url?: string;
+  };
+}
+
 /** Per-strategy tuning for a model combo, stored as JSONB. Strategies that
  * don't read it ignore it; new strategies add their own optional section. */
 export interface ModelComboConfig {
@@ -388,6 +411,7 @@ export interface ModelComboConfig {
   readonly fusion?: FusionComboConfig;
   readonly smartRouting?: SmartRoutingComboConfig;
   readonly swarm?: SwarmComboConfig;
+  readonly tokenSavers?: TokenSaverConfig;
 }
 
 /** Tuning knobs for the `smart_routing` combo strategy. The member pool is
