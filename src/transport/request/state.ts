@@ -3,7 +3,7 @@ import type { CanonicalRequest, UsageRecord } from "../canonical-model";
 import type { ClientIdentity } from "../../security/abuse";
 import type { ResolvedApiKey } from "../../security/api-key-auth";
 import type { PreparedProxyRequest } from "./preparer";
-import { trackInFlight, untrackInFlight, type InFlightDetailUpdate } from "./inflight";
+import { trackInFlight, untrackInFlight, untrackInFlightIfPresent, type InFlightDetailUpdate } from "./inflight";
 import { fastPathname } from "./pathname";
 
 export interface ProxyRequestOutcome {
@@ -164,6 +164,18 @@ export class ProxyRequestStateStore {
   }
 
   /**
+   * Operator kill switch with orphan sweep: aborts the live controller while
+   * the request is still running; when the controller is already gone (or
+   * already aborted) but the Live Activity row lingers — orphaned by a
+   * missed cleanup — the row is removed instead. Returns true when anything
+   * was cancelled or swept, false when there was nothing to act on.
+   */
+  cancelLiveRequest(requestId: string): boolean {
+    if (this.abortLiveRequest(requestId)) return true;
+    return untrackInFlightIfPresent(requestId);
+  }
+
+  /**
    * Creates per-request state with deadline enforcement: the deadline is
    * *enforced by an unref'd timer* that aborts the controller with a
    * `TimeoutError` at `deadlineMs` — unref'd so an idle deadline never keeps
@@ -232,6 +244,10 @@ export class ProxyRequestStateStore {
           request.signal.removeEventListener("abort", onAbort);
         } catch {
         }
+        try {
+          request.signal.removeEventListener("abort", releaseIfOrphaned);
+        } catch {
+        }
         for (const cleanup of cleanups.splice(0)) {
           try {
             cleanup();
@@ -252,6 +268,21 @@ export class ProxyRequestStateStore {
     this.liveControllers.set(state.requestId, abortController);
     this.tracker?.track(state.requestId);
     this.states.set(request, state);
+    // Orphan safety net: the in-flight row is normally removed by
+    // `state.cleanup()` from the `afterResponse` lifecycle hook, but that
+    // hook only fires once the response is flushed. If the client vanishes
+    // first (proxy timeout, network drop), the response can never be
+    // delivered, `afterResponse` never runs, and the Live Activity row leaks
+    // forever. The bridge above already kills the pipeline on disconnect;
+    // for non-streaming requests the row can be released immediately — no
+    // successful response can be produced from an aborted controller.
+    // Streaming requests are excluded: their own completion/cancel path
+    // owns resource release (see dispatch/proxy-request).
+    const releaseIfOrphaned = (): void => {
+      if (!state.streaming) state.cleanup();
+    };
+    if (request.signal.aborted) releaseIfOrphaned();
+    else request.signal.addEventListener("abort", releaseIfOrphaned, { once: true });
     return state;
   }
   require(request: Request): ProxyRequestState {

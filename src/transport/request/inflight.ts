@@ -245,6 +245,20 @@ export function untrackInFlight(requestId: string): void {
   publish();
 }
 
+/**
+ * Removes the flight row only when one is present. Used by the operator
+ * kill switch to sweep rows orphaned by a missed cleanup (the request is
+ * already gone, only the Live Activity row lingers). Returns true when a
+ * row was actually removed.
+ */
+export function untrackInFlightIfPresent(requestId: string): boolean {
+  const existed = flights.delete(requestId);
+  if (!existed) return false;
+  lastDetailPublishAt.delete(requestId);
+  publish();
+  return true;
+}
+
 export function getInFlightCount(): number {
   return flights.size;
 }

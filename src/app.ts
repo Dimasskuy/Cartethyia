@@ -422,8 +422,9 @@ export function createGatewayApp(deps: GatewayAppDeps) {
           trustedProxyBoundary: deps.trustedProxyBoundary,
           // Console kill switch: abort one stuck in-flight request from the
           // Live Activity surface. requestStateStore is the live data plane
-          // here, so the callback reaches the real controllers.
-          cancelInFlightRequest: (requestId) => requestStateStore.abortLiveRequest(requestId),
+          // here, so the callback reaches the real controllers. Orphaned
+          // rows (request already gone, row lingering) are swept too.
+          cancelInFlightRequest: (requestId) => requestStateStore.cancelLiveRequest(requestId),
         }),
       );
     }

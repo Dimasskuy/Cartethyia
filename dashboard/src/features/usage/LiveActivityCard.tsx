@@ -138,10 +138,20 @@ function FlightDetail({
     setCancelling(true);
     setCancelError(null);
     try {
-      await consoleRequest<unknown>(`/live/in-flight/${flight.id}/cancel`, { method: "POST" });
+      const result = await consoleRequest<{ ok?: boolean; cancelled?: boolean }>(
+        `/live/in-flight/${flight.id}/cancel`,
+        { method: "POST" },
+      );
+      // The backend reports whether anything was actually stopped. A 200
+      // with cancelled:false means the request was already gone — say so
+      // instead of looking like a successful kill.
+      if (result && result.cancelled === false) {
+        setCancelError("Request already finished — nothing to cancel.");
+      }
       // The row disappears on the next SSE snapshot — no local state to clear.
     } catch (error) {
       setCancelError(error instanceof Error ? error.message : "Cancel failed");
+    } finally {
       setCancelling(false);
     }
   };

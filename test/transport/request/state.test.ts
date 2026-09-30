@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ProxyRequestStateStore } from "../../../src/transport/request/state";
+import { getInFlightCount } from "../../../src/transport/request/inflight";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -67,5 +68,78 @@ describe("ProxyRequestStateStore deadline", () => {
     expect(state.abortController.signal.aborted).toBe(true);
     await sleep(30);
     expect(state.abortController.signal.aborted).toBe(true);
+  });
+});
+
+describe("ProxyRequestStateStore orphan safety net", () => {
+  function newAbortableState() {
+    const store = new ProxyRequestStateStore();
+    const inbound = new AbortController();
+    const request = new Request("https://gateway.test/v1/chat/completions", {
+      method: "POST",
+      signal: inbound.signal,
+    });
+    const state = store.initialize(request, Date.now(), 30_000);
+    return { store, request, state, inbound };
+  }
+
+  test("inbound abort after a completed non-streaming request untracks the flight row", () => {
+    const { state, inbound } = newAbortableState();
+    state.startProviderFlight(null);
+    expect(getInFlightCount()).toBe(1);
+    // Simulate completeAttempt having run before the response was returned.
+    state.completed = true;
+    // Client vanishes before the response could be flushed: afterResponse
+    // would never fire, so without the safety net the row leaks forever.
+    inbound.abort(new DOMException("client gone", "AbortError"));
+    expect(getInFlightCount()).toBe(0);
+  });
+
+  test("inbound abort never cleans up a streaming request", () => {
+    const { state, inbound } = newAbortableState();
+    state.startProviderFlight(null);
+    state.streaming = true;
+    state.completed = true;
+    inbound.abort(new DOMException("client gone", "AbortError"));
+    // The streaming path owns its own release (releaseStreamResources);
+    // the safety net must not steal it.
+    expect(getInFlightCount()).toBe(1);
+    state.cleanup();
+    expect(getInFlightCount()).toBe(0);
+  });
+
+  test("inbound abort of an in-flight non-streaming request cleans up without throwing", () => {
+    const { state, inbound } = newAbortableState();
+    state.startProviderFlight(null);
+    expect(getInFlightCount()).toBe(1);
+    inbound.abort(new DOMException("client gone", "AbortError"));
+    expect(getInFlightCount()).toBe(0);
+    expect(state.abortController.signal.aborted).toBe(true);
+  });
+});
+
+describe("ProxyRequestStateStore.cancelLiveRequest", () => {
+  test("aborts a live request and reports it", () => {
+    const { store, state } = newState(30_000);
+    expect(store.cancelLiveRequest(state.requestId)).toBe(true);
+    expect(state.abortController.signal.aborted).toBe(true);
+    state.cleanup();
+  });
+
+  test("sweeps an orphaned row when the controller is already gone", () => {
+    const { store, state } = newState(30_000);
+    state.startProviderFlight(null);
+    expect(getInFlightCount()).toBe(1);
+    // Simulate the orphan: the controller died (client went away) but the
+    // flight row was never untracked.
+    state.abortController.abort(new DOMException("gone", "AbortError"));
+    expect(store.cancelLiveRequest(state.requestId)).toBe(true);
+    expect(getInFlightCount()).toBe(0);
+    state.cleanup();
+  });
+
+  test("returns false when there is nothing to cancel or sweep", () => {
+    const { store } = newState(30_000);
+    expect(store.cancelLiveRequest(crypto.randomUUID())).toBe(false);
   });
 });
