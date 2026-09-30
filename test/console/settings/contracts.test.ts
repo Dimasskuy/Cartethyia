@@ -2,6 +2,8 @@ import { ConsoleDomainError } from "../../../src/console/shared/errors";
 import { describe, expect, test } from "bun:test";
 import {
   createRuntimeSettingsOperations,
+  mapTokenSaversResponse,
+  validateTokenSaversPatch,
   type RuntimeSettingsResponse,
   type RuntimeSettingsStore,
   type UpdateRuntimeSettingsRequest,
@@ -38,6 +40,7 @@ function makeStore(): RuntimeSettingsStore {
         responsesReasoningSummary: "detailed",
         telemetryPayloads: "bounded",
         privacyMode: "masked",
+        tokenSavers: mapTokenSaversResponse({}),
         updatedAt: new Date(0).toISOString(),
       };
     },
@@ -87,5 +90,83 @@ describe("runtime settings operations", () => {
     const factory = createRuntimeSettingsOperations({ store: makeStore(), accessResolver: () => access });
     const bad = { telemetryPayloads: "always" } as unknown as UpdateRuntimeSettingsRequest;
     await expect(factory.update(access, bad)).rejects.toMatchObject({ code: "invalid_request" });
+  });
+
+  test("token savers default to RTK on, rest off", async () => {
+    const factory = createRuntimeSettingsOperations({ store: makeStore(), accessResolver: () => access });
+    const result = await factory.get(access);
+    expect(result.tokenSavers).toEqual({
+      rtk: true,
+      caveman: "off",
+      ponytail: "off",
+      headroomEnabled: false,
+      headroomUrl: null,
+    });
+  });
+
+  test("update accepts a valid tokenSavers patch", async () => {
+    const factory = createRuntimeSettingsOperations({ store: makeStore(), accessResolver: () => access });
+    const result = await factory.update(access, {
+      tokenSavers: { rtk: false, ponytail: "full", headroom: { enabled: true, url: "https://hr.example.com" } },
+    } as UpdateRuntimeSettingsRequest);
+    // The fake store echoes the patch; normalization is covered by
+    // mapTokenSaversResponse tests below.
+    expect((result.tokenSavers as unknown as { rtk: boolean }).rtk).toBe(false);
+  });
+
+  test("validateTokenSaversPatch accepts valid shapes", () => {
+    expect(() => validateTokenSaversPatch(undefined)).not.toThrow();
+    expect(() => validateTokenSaversPatch(null)).not.toThrow();
+    expect(() =>
+      validateTokenSaversPatch({
+        rtk: false,
+        caveman: "ultra",
+        ponytail: "lite",
+        headroom: { enabled: true, url: "https://hr.example.com" },
+      }),
+    ).not.toThrow();
+    expect(() => validateTokenSaversPatch({ headroom: { enabled: false } })).not.toThrow();
+  });
+
+  test("validateTokenSaversPatch rejects malformed shapes", () => {
+    for (const bad of [
+      "yes",
+      42,
+      [],
+      { rtk: "on" },
+      { caveman: "extreme" },
+      { ponytail: 3 },
+      { headroom: "https://hr.example.com" },
+      { headroom: { enabled: "yes" } },
+      { headroom: { url: 42 } },
+      { headroom: { url: "x".repeat(501) } },
+    ]) {
+      expect(() => validateTokenSaversPatch(bad), JSON.stringify(bad)).toThrow(ConsoleDomainError);
+    }
+  });
+
+  test("update rejects malformed tokenSavers", async () => {
+    const factory = createRuntimeSettingsOperations({ store: makeStore(), accessResolver: () => access });
+    const bad = { tokenSavers: { caveman: "extreme" } } as unknown as UpdateRuntimeSettingsRequest;
+    await expect(factory.update(access, bad)).rejects.toMatchObject({ code: "invalid_request" });
+  });
+
+  test("mapTokenSaversResponse normalizes partial prefs", () => {
+    expect(mapTokenSaversResponse({})).toEqual({
+      rtk: true,
+      caveman: "off",
+      ponytail: "off",
+      headroomEnabled: false,
+      headroomUrl: null,
+    });
+    expect(
+      mapTokenSaversResponse({ tokenSavers: { ponytail: "ultra", headroom: { enabled: true, url: " https://h.example " } } }),
+    ).toEqual({
+      rtk: true,
+      caveman: "off",
+      ponytail: "ultra",
+      headroomEnabled: true,
+      headroomUrl: "https://h.example",
+    });
   });
 });

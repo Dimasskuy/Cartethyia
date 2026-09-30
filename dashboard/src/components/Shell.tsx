@@ -13,6 +13,7 @@ import {
   Rocket,
   Search,
   ScrollText,
+  Scissors,
   Server,
   Settings as SettingsIcon,
   ShieldAlert,
@@ -61,6 +62,7 @@ export const navigationGroups: readonly NavGroupDef[] = [
       { label: "Usage", path: "/usage", icon: Activity },
       { label: "Providers", path: "/providers", icon: Server },
       { label: "Model Lab", path: "/model-lab", icon: FlaskConical },
+      { label: "Token Saver", path: "/token-saver", icon: Scissors },
     ],
   },
   {
@@ -90,6 +92,10 @@ const titlesMap: Record<string, { title: string; sub: string }> = {
   "/combos": {
     title: "Combos & Routing",
     sub: "Failover policies, model aliases, and weighted routes",
+  },
+  "/token-saver": {
+    title: "Token Saver",
+    sub: "RTK, Headroom, Caveman, and Ponytail — trim tokens on every request",
   },
   "/quota": { title: "Quota Management", sub: "Rate limits, leases, and tenant quotas" },
   "/proxy": {

@@ -411,7 +411,6 @@ export interface ModelComboConfig {
   readonly fusion?: FusionComboConfig;
   readonly smartRouting?: SmartRoutingComboConfig;
   readonly swarm?: SwarmComboConfig;
-  readonly tokenSavers?: TokenSaverConfig;
 }
 
 /** Tuning knobs for the `smart_routing` combo strategy. The member pool is
@@ -807,6 +806,12 @@ export interface ConsoleSettingsPreferences {
   responsesReasoningSummary?: "auto" | "concise" | "detailed";
   telemetryPayloads?: "bounded" | "none";
   privacyMode?: "masked" | "full";
+  /**
+   * Global token-saver configuration (RTK / Caveman / Ponytail / Headroom),
+   * managed from the console's Token Saver page. Applies to every proxied
+   * request; RTK defaults ON when the section is absent.
+   */
+  tokenSavers?: TokenSaverConfig;
 }
 
 export const consoleSettings = pgTable("console_settings", {

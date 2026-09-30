@@ -24,7 +24,9 @@ import { runSmartRoutingCombo } from "./smart-routing";
 import { runSwarmCombo } from "./swarm";
 import { shouldCooldownPool } from "./retry-policy";
 import { applyTenantPreferences } from "./tenant-preferences";
+import { preferencesReaderFor } from "./attempt-finalize";
 import { applyTokenSavers } from "../../tokensaver";
+import type { TokenSaverConfig } from "../../persistence/schema";
 import { metrics } from "../../observability/metrics";
 import { flagPoolCooldown } from "../../network/pool-health";
 import type { NetworkPoolSelector } from "../../network/pool/selector";
@@ -114,16 +116,22 @@ export async function handleProviderProxyRequest(
   if (!prepared)
     throw new GatewayError("admission_unavailable", 503, "proxy request context unavailable");
   const withPreferences = await applyTenantPreferences(prepared, deps.db);
-  // Token savers (RTK / Headroom / Ponytail / Caveman), configured per combo:
-  // RTK compress -> Headroom -> Caveman inject -> Ponytail inject, applied to
-  // the canonical request before any combo strategy or provider dispatch.
-  // RTK defaults ON for combo requests; explicit `rtk: false` disables it.
-  // Non-combo requests carry no saver config and pass through untouched.
-  const comboTokenSavers = prepared.plan.combo?.config?.tokenSavers;
-  const { request: canonicalRequest, applied: tokenSaversApplied } =
-    prepared.plan.combo
-      ? await applyTokenSavers(withPreferences, comboTokenSavers)
-      : { request: withPreferences, applied: [] as readonly string[] };
+  // Token savers (RTK / Headroom / Ponytail / Caveman), configured globally on
+  // the console's Token Saver page: RTK compress -> Headroom -> Caveman inject
+  // -> Ponytail inject, applied to the canonical request before any combo
+  // strategy or provider dispatch. RTK defaults ON; the other savers default
+  // OFF. Applies to every request, combo or direct-model.
+  let globalTokenSavers: TokenSaverConfig | undefined;
+  try {
+    globalTokenSavers = (await preferencesReaderFor(deps.db).readPreferences(prepared.authorization.snapshot.tenant_id))
+      ?.tokenSavers;
+  } catch {
+    // Non-fatal: saver defaults apply.
+  }
+  const { request: canonicalRequest, applied: tokenSaversApplied } = await applyTokenSavers(
+    withPreferences,
+    globalTokenSavers,
+  );
   if (tokenSaversApplied.length > 0) {
     state.tokenSaversApplied = tokenSaversApplied;
   }

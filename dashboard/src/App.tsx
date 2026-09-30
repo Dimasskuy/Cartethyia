@@ -52,6 +52,7 @@ const CliToolDetail = lazyWithRetry(() => import("./routes/CliToolDetail"), "cli
 const ConsoleLogPage = lazyWithRetry(() => import("./features/logs/ConsoleLogPage"), "console-log");
 const Customization = lazyWithRetry(() => import("./routes/Customization"), "customization");
 const Studio = lazyWithRetry(() => import("./routes/Studio"), "studio");
+const TokenSaver = lazyWithRetry(() => import("./routes/TokenSaver"), "token-saver");
 
 /**
  * Forwards shell-wide session transitions into router navigation. A 401 means
@@ -179,6 +180,7 @@ function ProtectedRoutes(): ReactNode {
           <Route path="/providers" element={<Providers />} />
           <Route path="/providers/:providerId" element={<ProviderDetail />} />
           <Route path="/combos" element={<Combos />} />
+          <Route path="/token-saver" element={<TokenSaver />} />
           <Route path="/quota" element={<Quota />} />
           <Route path="/proxy" element={<Proxy />} />
           <Route path="/customization" element={<Customization />} />

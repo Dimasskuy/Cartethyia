@@ -6,6 +6,7 @@ import { resolveRedisMode } from "../../persistence/readiness";
 import { bumpSettingsRevision } from "../../persistence/tenant-preferences";
 import {
   RESPONSES_REASONING_SUMMARIES,
+  mapTokenSaversResponse,
   type ResponsesReasoningSummary,
   type RuntimeSettingsResponse,
   type RuntimeSettingsStore,
@@ -32,6 +33,7 @@ function mapRuntimeSettingsRow(row: typeof consoleSettings.$inferSelect | undefi
       : "detailed",
     telemetryPayloads: prefs.telemetryPayloads === "bounded" ? "bounded" : "none",
     privacyMode: prefs.privacyMode === "full" ? "full" : "masked",
+    tokenSavers: mapTokenSaversResponse(prefs),
     updatedAt,
   };
 }
@@ -62,6 +64,37 @@ export class DrizzleRuntimeSettingsStore implements RuntimeSettingsStore {
       patchPrefs.responsesReasoningSummary = patch.responsesReasoningSummary;
     if (patch.telemetryPayloads !== undefined) patchPrefs.telemetryPayloads = patch.telemetryPayloads;
     if (patch.privacyMode !== undefined) patchPrefs.privacyMode = patch.privacyMode;
+    let resetTokenSavers = false;
+    if (patch.tokenSavers !== undefined) {
+      if (patch.tokenSavers === null) {
+        // `null` resets the whole section back to defaults; the `||` merge
+        // below can't delete keys, so handle it with a `-` removal instead.
+        resetTokenSavers = true;
+      } else {
+        // Deep-merge with the existing section so a partial PATCH (e.g. only
+        // `{ rtk: false }`) doesn't wipe the other saver settings.
+        const prevRows = await this.db
+          .select({ preferences: consoleSettings.preferences })
+          .from(consoleSettings)
+          .where(eq(consoleSettings.tenantId, tenantId))
+          .limit(1);
+        const prev = prevRows[0]?.preferences?.tokenSavers;
+        const prevHeadroom = prev?.headroom;
+        const nextHeadroom = patch.tokenSavers.headroom;
+        const mergedHeadroom =
+          nextHeadroom === undefined
+            ? prevHeadroom
+            : nextHeadroom === null
+              ? undefined
+              : { ...prevHeadroom, ...nextHeadroom };
+        const { headroom: _dropped, ...restPatch } = patch.tokenSavers;
+        patchPrefs.tokenSavers = {
+          ...prev,
+          ...restPatch,
+          ...(mergedHeadroom === undefined ? {} : { headroom: mergedHeadroom }),
+        };
+      }
+    }
 
     const rows = await this.db
       .insert(consoleSettings)
@@ -70,7 +103,9 @@ export class DrizzleRuntimeSettingsStore implements RuntimeSettingsStore {
         target: consoleSettings.tenantId,
         set: {
           // preferences, everything else on the row is left untouched.
-          preferences: sql`${consoleSettings.preferences} || ${JSON.stringify(patchPrefs)}::jsonb`,
+          preferences: resetTokenSavers
+            ? sql`(${consoleSettings.preferences} || ${JSON.stringify(patchPrefs)}::jsonb) - 'tokenSavers'`
+            : sql`${consoleSettings.preferences} || ${JSON.stringify(patchPrefs)}::jsonb`,
           updatedAt: now,
         },
       })

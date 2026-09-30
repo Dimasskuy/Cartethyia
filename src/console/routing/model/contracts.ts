@@ -515,31 +515,13 @@ const swarmComboConfigSchema = t.Object({
   workerHardTimeoutMs: t.Optional(t.Integer({ minimum: 1000, maximum: 600000 })),
   managerTimeoutMs: t.Optional(t.Integer({ minimum: 1000, maximum: 600000 })),
 });
-const tokenSaverIntensitySchema = t.Union([
-  t.Literal("off"),
-  t.Literal("lite"),
-  t.Literal("full"),
-  t.Literal("ultra"),
-]);
-/** Token savers (RTK / Headroom / Ponytail / Caveman), applied per combo
- * before dispatch. RTK defaults ON when the section is absent. */
-const tokenSaverComboConfigSchema = t.Object({
-  rtk: t.Optional(t.Boolean()),
-  caveman: t.Optional(tokenSaverIntensitySchema),
-  ponytail: t.Optional(tokenSaverIntensitySchema),
-  headroom: t.Optional(
-    t.Object({
-      enabled: t.Optional(t.Boolean()),
-      url: t.Optional(t.String({ maxLength: 500 })),
-    }),
-  ),
-});
+/** Token savers (RTK / Headroom / Ponytail / Caveman) are configured globally
+ * on the console's Token Saver page, not per combo. */
 const comboConfigSchema = t.Object({
   cascade: t.Optional(cascadeComboConfigSchema),
   fusion: t.Optional(fusionComboConfigSchema),
   smartRouting: t.Optional(smartRoutingComboConfigSchema),
   swarm: t.Optional(swarmComboConfigSchema),
-  tokenSavers: t.Optional(tokenSaverComboConfigSchema),
 });
 /** The combo-strategy enum's own values; see `ComboSchemaParity` above. */
 const comboStrategySchema = literalUnion(modelComboStrategy.enumValues);

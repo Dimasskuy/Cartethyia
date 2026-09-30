@@ -6,7 +6,8 @@ import { literalUnion } from "../shared/elysia-schema";
 import { Elysia, t } from "elysia";
 import type { AccessDecision } from "../../security/access-control";
 import type { RedisMode } from "../../persistence/readiness";
-import type { ConsoleSettingsPreferences } from "../../persistence/schema";
+import type { ConsoleSettingsPreferences, TokenSaverIntensity } from "../../persistence/schema";
+import { normalizeTokenSaverConfig } from "../../tokensaver/config";
 
 export interface RuntimeSettingsResponse {
   readonly redisModeActual: RedisMode;
@@ -16,7 +17,66 @@ export interface RuntimeSettingsResponse {
   readonly responsesReasoningSummary: ResponsesReasoningSummary;
   readonly telemetryPayloads: TelemetryPayloadMode;
   readonly privacyMode: PrivacyMode;
+  /** Global token-saver configuration, normalized (RTK defaults ON). */
+  readonly tokenSavers: RuntimeTokenSaverSettings;
   readonly updatedAt: string;
+}
+
+/** Token-saver settings as exposed on the console Token Saver page. */
+export interface RuntimeTokenSaverSettings {
+  readonly rtk: boolean;
+  readonly caveman: TokenSaverIntensity;
+  readonly ponytail: TokenSaverIntensity;
+  readonly headroomEnabled: boolean;
+  readonly headroomUrl: string | null;
+}
+
+const TOKEN_SAVER_INTENSITIES: readonly TokenSaverIntensity[] = ["off", "lite", "full", "ultra"];
+
+/** Throws a 400 ConsoleDomainError when the token-saver patch is malformed. */
+export function validateTokenSaversPatch(value: unknown): void {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new ConsoleDomainError("invalid_request", 400, "Invalid tokenSavers");
+  }
+  const patch = value as Record<string, unknown>;
+  if (patch.rtk !== undefined && typeof patch.rtk !== "boolean") {
+    throw new ConsoleDomainError("invalid_request", 400, "tokenSavers.rtk must be a boolean");
+  }
+  for (const key of ["caveman", "ponytail"] as const) {
+    const v = patch[key];
+    if (v !== undefined && !(typeof v === "string" && (TOKEN_SAVER_INTENSITIES as readonly string[]).includes(v))) {
+      throw new ConsoleDomainError("invalid_request", 400, `tokenSavers.${key} must be off|lite|full|ultra`);
+    }
+  }
+  const headroom = patch.headroom;
+  if (headroom !== undefined && headroom !== null) {
+    if (typeof headroom !== "object" || Array.isArray(headroom)) {
+      throw new ConsoleDomainError("invalid_request", 400, "Invalid tokenSavers.headroom");
+    }
+    const hr = headroom as Record<string, unknown>;
+    if (hr.enabled !== undefined && typeof hr.enabled !== "boolean") {
+      throw new ConsoleDomainError("invalid_request", 400, "tokenSavers.headroom.enabled must be a boolean");
+    }
+    if (hr.url !== undefined && hr.url !== null && typeof hr.url !== "string") {
+      throw new ConsoleDomainError("invalid_request", 400, "tokenSavers.headroom.url must be a string");
+    }
+    if (typeof hr.url === "string" && hr.url.length > 500) {
+      throw new ConsoleDomainError("invalid_request", 400, "tokenSavers.headroom.url is too long");
+    }
+  }
+}
+
+/** Normalizes the persisted token-saver preferences for the API response. */
+export function mapTokenSaversResponse(prefs: ConsoleSettingsPreferences): RuntimeTokenSaverSettings {
+  const normalized = normalizeTokenSaverConfig(prefs.tokenSavers);
+  return {
+    rtk: normalized.rtk,
+    caveman: normalized.caveman,
+    ponytail: normalized.ponytail,
+    headroomEnabled: normalized.headroomEnabled,
+    headroomUrl: normalized.headroomUrl ?? null,
+  };
 }
 
 /**
@@ -88,6 +148,7 @@ export function createRuntimeSettingsOperations(deps: RuntimeSettingsConfig) {
         if (patch.privacyMode !== undefined && !PRIVACY_MODES.includes(patch.privacyMode)) {
           throw new ConsoleDomainError("invalid_request", 400, "Invalid privacyMode");
         }
+        validateTokenSaversPatch(patch.tokenSavers);
         const updated = await deps.store.update(a.tenantId, patch);
         await deps.auditSink?.record({
           access: a,
@@ -107,12 +168,25 @@ function runtimeSettingsErrorResponse(error: unknown, set: { status?: number | s
   });
 }
 
+const tokenSaverUpdateBody = t.Object({
+  rtk: t.Optional(t.Boolean()),
+  caveman: t.Optional(literalUnion(TOKEN_SAVER_INTENSITIES)),
+  ponytail: t.Optional(literalUnion(TOKEN_SAVER_INTENSITIES)),
+  headroom: t.Optional(
+    t.Object({
+      enabled: t.Optional(t.Boolean()),
+      url: t.Optional(t.Union([t.String(), t.Null()])),
+    }),
+  ),
+});
+
 const runtimeUpdateBody = t.Object({
   responsesReasoningSummary: t.Optional(literalUnion(RESPONSES_REASONING_SUMMARIES)),
   telemetryPayloads: t.Optional(literalUnion(TELEMETRY_PAYLOAD_MODES)),
   privacyMode: t.Optional(literalUnion(PRIVACY_MODES)),
   tenantConcurrencyLimit: t.Optional(t.Union([t.Null(), t.Number()])),
   thinkingNormalizationEnabled: t.Optional(t.Boolean()),
+  tokenSavers: t.Optional(t.Union([tokenSaverUpdateBody, t.Null()])),
 });
 
 export function createRuntimeSettingsRoutes(config: RuntimeSettingsConfig): Elysia {

@@ -120,6 +120,7 @@ export type {
 
 export type {
   RuntimeSettingsResponse,
+  RuntimeTokenSaverSettings,
   UpdateRuntimeSettingsRequest,
 } from "../../../src/console/settings/contracts";
 
