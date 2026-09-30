@@ -17,6 +17,7 @@ import type { CanonicalRequest, ContentPart } from "../canonical-model";
 import { GatewayError } from "../gateway-error";
 import type { ComboDefinition, RouteCandidate } from "../routing/route-model";
 import { extractSurfaceText, groupCandidatesByModel } from "./cascade";
+import { throwIfAborted } from "./abort";
 import { updateInFlightDetail } from "../request/inflight";
 
 /** Fusion tuning defaults (mirrors ExtremeRouter's FUSION_DEFAULTS). */
@@ -252,6 +253,12 @@ export interface FusionRunInput {
   readonly requestId: string;
   /** Single-model dispatch: runs the attempt loop over one member's group. */
   readonly dispatch: FusionDispatch;
+  /**
+   * Owning request's abort signal. Checked around the panel fan-out and the
+   * judge call so a cancelled request stops instead of judging answers
+   * nobody will ever read.
+   */
+  readonly signal: AbortSignal;
   readonly log?: (message: string) => void;
 }
 
@@ -260,7 +267,8 @@ export interface FusionRunInput {
  * then have the judge synthesize one final answer.
  */
 export async function runFusionCombo(input: FusionRunInput): Promise<Response> {
-  const { combo, comboName, canonicalRequest, candidates, dispatch } = input;
+  const { combo, comboName, canonicalRequest, candidates, dispatch, signal } = input;
+  throwIfAborted(signal);
   const groups = groupCandidatesByModel(candidates);
   if (groups.length === 0) {
     throw new GatewayError("admission_unavailable", 503, "fusion combo has no candidates");
@@ -293,6 +301,9 @@ export async function runFusionCombo(input: FusionRunInput): Promise<Response> {
   updateInFlightDetail(input.requestId, { stage: `fusion · panel ×${groups.length}` });
   const legs = groups.map((group) => dispatch(panelRequest, group));
   const settled = await collectPanel(legs, cfg);
+  // A cancelled request must stop here — every leg already failed fast, and
+  // judging an empty panel would misreport the cancellation as a 503.
+  throwIfAborted(signal);
 
   // 2. Collect successful answers.
   const answers: { model: string; text: string; response: Response }[] = [];
@@ -347,6 +358,7 @@ export async function runFusionCombo(input: FusionRunInput): Promise<Response> {
   const judgeGroup = groups[panelModels.indexOf(judgeModel)]!;
   const judgeRequest = withJudgePrompt(canonicalRequest, answers, cfg);
   input.log?.(`fusion ${comboName}: judging ${answers.length} answers with ${judgeModel}`);
+  throwIfAborted(signal);
   updateInFlightDetail(input.requestId, { stage: "fusion · judging" });
   return withLegTimeout(
     dispatch(judgeRequest, judgeGroup),

@@ -201,6 +201,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest(),
         candidates,
         requestId: "req-1",
+        signal: new AbortController().signal,
         dispatch,
       });
       expect(seen).toHaveLength(1);
@@ -224,6 +225,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest(),
         candidates,
         requestId: "req-2",
+        signal: new AbortController().signal,
         dispatch,
       });
       expect(calls).toEqual([["cheap/model"], ["mid/model"]]);
@@ -251,6 +253,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest(),
         candidates,
         requestId: "req-3",
+        signal: new AbortController().signal,
         dispatch,
       });
       expect(calls).toBe(2);
@@ -270,6 +273,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest(),
         candidates,
         requestId: "req-4",
+        signal: new AbortController().signal,
         dispatch,
       });
       expect(calls).toBe(3);
@@ -290,6 +294,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest(),
         candidates,
         requestId: "req-5",
+        signal: new AbortController().signal,
         dispatch,
       });
       expect(calls).toEqual([["cheap/model"], ["mid/model"]]);
@@ -307,6 +312,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest(),
         candidates,
         requestId: "req-6",
+        signal: new AbortController().signal,
         dispatch,
       });
       expect(calls).toBe(2);
@@ -320,6 +326,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest({ stream: true }),
         candidates,
         requestId: "req-7",
+        signal: new AbortController().signal,
         dispatch,
       });
       expect(response.headers.get("content-type")).toBe("text/event-stream");
@@ -340,6 +347,7 @@ describe("cascade strategy", () => {
           canonicalRequest: makeRequest(),
           candidates: [],
           requestId: "req-8",
+          signal: new AbortController().signal,
           dispatch: async () => jsonResponse(chatBody("x")),
         }),
       ).rejects.toThrow();
@@ -353,6 +361,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest(),
         candidates,
         requestId: "req-9",
+        signal: new AbortController().signal,
         dispatch: async () => {
           zero.push(1);
           return jsonResponse(chatBody("Barely. CONFIDENCE: 1"));
@@ -367,6 +376,7 @@ describe("cascade strategy", () => {
         canonicalRequest: makeRequest(),
         candidates,
         requestId: "req-10",
+        signal: new AbortController().signal,
         dispatch: async () => {
           hundred.push(1);
           return jsonResponse(chatBody(`Try ${hundred.length}. CONFIDENCE: 99`));

@@ -147,6 +147,23 @@ export class ProxyRequestStateStore {
   }
 
   /**
+   * Abort a single in-flight request by its gateway request id. Used by the
+   * console kill switch so an operator can stop a request that is stuck in
+   * Live Activity (hung upstream, abandoned client, runaway combo stage).
+   * Returns true when a live controller was found and aborted.
+   */
+  abortLiveRequest(requestId: string): boolean {
+    const controller = this.liveControllers.get(requestId);
+    if (!controller || controller.signal.aborted) return false;
+    try {
+      controller.abort(new DOMException("request cancelled by operator", "AbortError"));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Creates per-request state with deadline enforcement: the deadline is
    * *enforced by an unref'd timer* that aborts the controller with a
    * `TimeoutError` at `deadlineMs` — unref'd so an idle deadline never keeps

@@ -24,8 +24,18 @@ export function createUpstreamDeadlineLifecycle(
     release: () => {
       if (released) return;
       released = true;
+      // Disarm the fixed upstream deadline only. Once the upstream has sent
+      // headers, a healthy long body must not be killed by the pre-stream
+      // wall clock — the outer request watchdog (stall detection) owns it
+      // from here.
+      //
+      // Abort propagation is deliberately KEPT: client disconnect, the stall
+      // watchdog, the request deadline, or an operator cancel must still tear
+      // down the upstream fetch. Removing the listener here used to detach
+      // the fetch permanently — a body that stalled after headers would then
+      // hang forever, outliving every timeout and sitting in Live Activity
+      // for tens of minutes with no way to stop it.
       clearTimeout(timeoutId);
-      context.abort_signal.removeEventListener("abort", onAbort);
     },
   };
 }

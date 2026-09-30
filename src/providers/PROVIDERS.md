@@ -620,6 +620,11 @@ deadlines. Routing, console, and discovery consume providers through these servi
   truncates slow streams — `decodeSseEvents` cancels its reader on abort, the read resolves as *done*, and
   the decoder then synthesizes a `complete` terminal for a body it never finished reading.
 
+  `release()` disarms the fixed deadline timer **only** — abort propagation stays wired for the whole
+  body, so the stall watchdog, client disconnect, request deadline, and operator cancel can still tear
+  down a hung fetch. Removing the listener as well (the old behavior) detached the fetch permanently:
+  a body that stalled after headers hung forever, outliving every timeout.
+
 Rules: only successful, non-empty values are ever cached — every failure path retries instead of pinning a
 miss. `liveProviderUpstreamHosts` is the single source of upstream origins for SSRF binding; no second host map. Health cooldowns are parser-driven with short deliberate fallbacks; unknown
 quota cadence parks an account for 1h, not 24h, and self-corrects on re-probe. Credential ciphertext is

@@ -5,6 +5,32 @@
 > All changes below are pre-release. Cartethyia has not been tagged or
 > released; this document reflects the current production codebase architecture and capabilities.
 
+### Hung upstream bodies are abortable again; combo pipelines stop on cancellation; Live Activity gains a cancel button
+
+The upstream deadline lifecycle detached the request abort signal the moment an
+adapter released it after response headers. That release is meant to disarm
+only the TTFB-only deadline timer (a healthy long body must not die on the
+pre-stream wall clock), but it also removed the abort listener — so the stall
+watchdog, client disconnect, request deadline, and operator cancel could no
+longer reach a body that stalled after headers. The fetch hung forever,
+`iterator.next()` never settled, cleanup never ran, and the request sat in Live
+Activity for tens of minutes past every configured timeout. `release()` now
+disarms the timer only; abort propagation stays wired for the whole body.
+
+Combo orchestrators consult the request's abort signal between stages. Swarm,
+cascade, and fusion previously started the next stage (or degraded to a direct
+answer / escalated to the next member) even after the request was cancelled,
+burning upstream calls nobody would ever read. They now throw `transport_closed`
+(499) instead: no fallback dispatch after cancellation, and cascade/fusion no
+longer misreport an empty cancelled panel as a 503. The Live Activity detail
+panel shows the true fallback stage (`fallback · direct answer`) instead of the
+last combo stage label.
+
+New console endpoint `POST /console/api/live/in-flight/:id/cancel`
+(`dashboard:read`, tenant-scoped to the caller's own flights): aborts one live
+gateway request immediately. The Live Activity detail panel exposes it as a
+"Cancel request" button on every active row.
+
 ### Reasoning effort is recorded on every surface, and the Usage table names a provider
 
 The Messages surface read effort only from Anthropic's own `thinking` and

@@ -102,6 +102,67 @@ describe("live in-flight routes", () => {
     expect(response.status).toBe(401);
     expect(response.headers.get("content-type")).not.toBe("text/event-stream");
   });
+
+  test("cancel aborts the caller's own flight and reports it", async () => {
+    trackInFlight("abcdefgh-0000-1111-2222-333333333333", "1.1.1.1", "tenant-1");
+    const cancelled: string[] = [];
+    const app = createLiveRoutes({
+      accessResolver: () => readerAccess,
+      cancelInFlightRequest: (id) => {
+        cancelled.push(id);
+        return true;
+      },
+    });
+    const response = await app.handle(
+      new Request("http://localhost/live/in-flight/abcdefgh/cancel", { method: "POST" }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, cancelled: true });
+    expect(cancelled).toEqual(["abcdefgh-0000-1111-2222-333333333333"]);
+  });
+
+  test("cancel cannot touch another tenant's flight", async () => {
+    trackInFlight("ijklmnop-0000-1111-2222-333333333333", "2.2.2.2", "tenant-2");
+    let calls = 0;
+    const app = createLiveRoutes({
+      accessResolver: () => readerAccess,
+      cancelInFlightRequest: () => {
+        calls += 1;
+        return true;
+      },
+    });
+    const response = await app.handle(
+      new Request("http://localhost/live/in-flight/ijklmnop/cancel", { method: "POST" }),
+    );
+    expect(response.status).toBe(404);
+    expect(calls).toBe(0);
+  });
+
+  test("cancel 404s for an unknown id", async () => {
+    const app = createLiveRoutes({
+      accessResolver: () => readerAccess,
+      cancelInFlightRequest: () => true,
+    });
+    const response = await app.handle(
+      new Request("http://localhost/live/in-flight/deadbeef/cancel", { method: "POST" }),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  test("cancel 503s when no cancellation hook is wired", async () => {
+    trackInFlight("qrstuvwx-0000-1111-2222-333333333333", "1.1.1.1", "tenant-1");
+    const response = await appWith(readerAccess).handle(
+      new Request("http://localhost/live/in-flight/qrstuvwx/cancel", { method: "POST" }),
+    );
+    expect(response.status).toBe(503);
+  });
+
+  test("cancel rejects unauthenticated callers", async () => {
+    const response = await appWith(undefined).handle(
+      new Request("http://localhost/live/in-flight/abcdefgh/cancel", { method: "POST" }),
+    );
+    expect(response.status).toBe(401);
+  });
 });
 
 describe("live pool usage routes", () => {

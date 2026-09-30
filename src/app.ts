@@ -420,6 +420,10 @@ export function createGatewayApp(deps: GatewayAppDeps) {
           ...deps.consoleApi,
           resolvePeerAddress: (request) => peerAddresses.get(request) ?? null,
           trustedProxyBoundary: deps.trustedProxyBoundary,
+          // Console kill switch: abort one stuck in-flight request from the
+          // Live Activity surface. requestStateStore is the live data plane
+          // here, so the callback reaches the real controllers.
+          cancelInFlightRequest: (requestId) => requestStateStore.abortLiveRequest(requestId),
         }),
       );
     }

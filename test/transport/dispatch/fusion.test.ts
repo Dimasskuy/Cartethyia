@@ -171,6 +171,7 @@ describe("fusion strategy", () => {
       canonicalRequest: makeRequest(),
       candidates,
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     const body = await response.json();
@@ -205,6 +206,7 @@ describe("fusion strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: ["a/model", "b/model", "c/model"].map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     expect(judges).toEqual(["c/model"]);
@@ -226,6 +228,7 @@ describe("fusion strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: ["a/model", "b/model"].map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     expect(judges).toEqual(["a/model"]);
@@ -241,6 +244,7 @@ describe("fusion strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: ["a/model", "b/model"].map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     await expect(run).rejects.toMatchObject({ status: 503 });
@@ -257,6 +261,7 @@ describe("fusion strategy", () => {
       canonicalRequest: makeRequest({ stream: false }),
       candidates: ["a/model", "b/model"].map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     const body = await response.json();
@@ -276,6 +281,7 @@ describe("fusion strategy", () => {
       canonicalRequest: makeRequest({ stream: true }),
       candidates: ["a/model", "b/model"].map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     // Panel legs forced non-streaming; the survivor re-run honors stream:true.
@@ -299,6 +305,7 @@ describe("fusion strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: [makeCandidate("solo/model")],
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     const body = await response.json();

@@ -161,6 +161,7 @@ describe("swarm strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: makeCombo().members.map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     const body = await response.json();
@@ -180,6 +181,7 @@ describe("swarm strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: makeCombo().members.map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
       log: (m) => logs.push(m),
     });
@@ -220,6 +222,7 @@ describe("swarm strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: makeCombo().members.map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     expect(calls.some((c) => c.text.includes("SWARM STAFF (AUDIT)"))).toBe(false);
@@ -234,6 +237,7 @@ describe("swarm strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: makeCombo().members.map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     const body = await response.json();
@@ -249,6 +253,7 @@ describe("swarm strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: makeCombo().members.map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     const body = await response.json();
@@ -263,6 +268,7 @@ describe("swarm strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: makeCombo().members.map(makeCandidate),
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     expect(calls.filter((c) => c.text.includes("SWARM WORKER DIRECTIVE"))).toHaveLength(2);
@@ -277,6 +283,7 @@ describe("swarm strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: [makeCandidate("a/model")],
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     expect(calls).toHaveLength(1);
@@ -291,6 +298,7 @@ describe("swarm strategy", () => {
       canonicalRequest: makeRequest(),
       candidates: [],
       requestId: "req-1",
+      signal: new AbortController().signal,
       dispatch,
     });
     await expect(run).rejects.toMatchObject({ status: 503 });

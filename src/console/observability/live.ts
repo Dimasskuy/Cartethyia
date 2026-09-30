@@ -12,7 +12,7 @@
 import { Elysia } from "elysia";
 import { errorResponse, requireScope } from "../shared/errors";
 import type { ConsoleAccessResolver } from "../auth/access";
-import { getInFlightSnapshot, subscribeInFlight } from "../../transport/request/inflight";
+import { getInFlightSnapshot, resolveInFlightRequestId, subscribeInFlight } from "../../transport/request/inflight";
 import type { NetworkPoolSelector } from "../../network/pool/selector";
 import { eq } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
@@ -24,6 +24,11 @@ export interface LiveConfig {
   readonly accessResolver: ConsoleAccessResolver;
   readonly poolSelector?: NetworkPoolSelector;
   readonly db?: CartethyiaDatabase;
+  /**
+   * Aborts one in-flight gateway request by full request id. Absent in
+   * compositions without a live data plane — the cancel endpoint then 503s.
+   */
+  readonly cancelInFlightRequest?: ((requestId: string) => boolean) | undefined;
 }
 
 async function tenantPoolIds(
@@ -41,6 +46,27 @@ export function createLiveRoutes(config: LiveConfig): Elysia {
       try {
         const access = requireScope(config.accessResolver(request), "dashboard:read");
         return getInFlightSnapshot(access.tenantId);
+      } catch (e) {
+        return errorResponse(e, set, "Live operation failed");
+      }
+    })
+    // Kill switch: abort one stuck in-flight request from Live Activity.
+    // Requires dashboard:read (same surface that displays the rows); the id
+    // is resolved tenant-scoped, so a tenant can only cancel its own flight.
+    .post("/live/in-flight/:id/cancel", ({ request, params, set }) => {
+      try {
+        const access = requireScope(config.accessResolver(request), "dashboard:read");
+        if (!config.cancelInFlightRequest) {
+          set.status = 503;
+          return { error: "request cancellation is unavailable in this composition", code: "unavailable" };
+        }
+        const requestId = resolveInFlightRequestId(params.id, access.tenantId);
+        if (!requestId) {
+          set.status = 404;
+          return { error: "no live request with that id", code: "not_found" };
+        }
+        const cancelled = config.cancelInFlightRequest(requestId);
+        return { ok: true, cancelled };
       } catch (e) {
         return errorResponse(e, set, "Live operation failed");
       }

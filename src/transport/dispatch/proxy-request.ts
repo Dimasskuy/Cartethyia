@@ -1016,6 +1016,7 @@ export async function handleProviderProxyRequest(
       candidates,
       requestId: state.requestId,
       dispatch: dispatchCandidates,
+      signal: state.abortController.signal,
     });
   }
   if (combo?.strategy === "fusion") {
@@ -1026,6 +1027,7 @@ export async function handleProviderProxyRequest(
       candidates,
       requestId: state.requestId,
       dispatch: dispatchCandidates,
+      signal: state.abortController.signal,
     });
   }
   if (combo?.strategy === "smart_routing") {
@@ -1046,6 +1048,7 @@ export async function handleProviderProxyRequest(
       candidates,
       requestId: state.requestId,
       dispatch: dispatchCandidates,
+      signal: state.abortController.signal,
     });
   }
   return dispatchCandidates(canonicalRequest, candidates);

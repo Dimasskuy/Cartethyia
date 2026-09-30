@@ -22,6 +22,7 @@ import type {
 import { GatewayError } from "../gateway-error";
 import type { ComboDefinition, RouteCandidate } from "../routing/route-model";
 import { createDispatchStreamEncoder } from "./stream-bridge";
+import { throwIfAborted } from "./abort";
 import { updateInFlightDetail } from "../request/inflight";
 
 /** Cascade tuning defaults. */
@@ -289,6 +290,11 @@ export interface CascadeRunInput {
   readonly requestId: string;
   /** Single-stage dispatch: runs the attempt loop over one member's group. */
   readonly dispatch: CascadeDispatch;
+  /**
+   * Owning request's abort signal. Checked before each stage so a cancelled
+   * request stops instead of escalating through more members.
+   */
+  readonly signal: AbortSignal;
   readonly log?: (message: string) => void;
 }
 
@@ -297,7 +303,8 @@ export interface CascadeRunInput {
  * converted to SSE when the client asked for streaming.
  */
 export async function runCascadeCombo(input: CascadeRunInput): Promise<Response> {
-  const { combo, comboName, canonicalRequest, candidates, dispatch } = input;
+  const { combo, comboName, canonicalRequest, candidates, dispatch, signal } = input;
+  throwIfAborted(signal);
   const cfg = resolveCascadeConfig(combo);
   const groups = groupCandidatesByModel(candidates);
   if (groups.length === 0) {
@@ -311,6 +318,7 @@ export async function runCascadeCombo(input: CascadeRunInput): Promise<Response>
   for (let stage = 0; stage < maxStages; stage += 1) {
     const group = groups[stage]!;
     const modelId = group[0]!.model_id;
+    throwIfAborted(signal);
     updateInFlightDetail(input.requestId, { stage: `cascade · stage ${stage + 1}/${maxStages}` });
     const isFinal = stage === maxStages - 1;
     const stageRequest = withCascadePrompt(canonicalRequest, prior, cfg);
@@ -320,6 +328,8 @@ export async function runCascadeCombo(input: CascadeRunInput): Promise<Response>
     try {
       response = await dispatch(stageRequest, group);
     } catch (error) {
+      // A cancelled request must stop here, not escalate to the next member.
+      if (signal.aborted) throw error;
       // Stage failed (provider down, no eligible account...): escalate to the
       // next member, keeping the last successful stage's answer as context.
       input.log?.(`cascade ${comboName}: stage ${stage + 1} failed, escalating`);

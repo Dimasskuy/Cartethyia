@@ -88,6 +88,11 @@ export interface ConsoleDomainContext {
   readonly loadConsoleUser: (request: Request) => Promise<{ readonly passwordHash: string } | null>;
   /** Password verification against the console user's stored hash. */
   readonly credentialService: Pick<ConsoleCredentialService, "verifyPassword">;
+  /**
+   * Aborts one in-flight gateway request by id (console kill switch).
+   * Optional: compositions without a live data plane leave it unset.
+   */
+  readonly cancelInFlightRequest?: ((requestId: string) => boolean) | undefined;
 }
 import { and, eq, isNull, or } from "drizzle-orm";
 import { networkPools, providerRoutingSettings } from "../persistence/schema";
@@ -205,6 +210,7 @@ export function registerConsoleDomains(
     accessResolver: ctx.accessResolver,
     poolSelector: ctx.poolSelector,
     db: ctx.db,
+    cancelInFlightRequest: ctx.cancelInFlightRequest,
   }));
   console.use(createStudioRoutes({
     sessionStore: new DrizzleStudioSessionStore(ctx.db),

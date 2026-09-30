@@ -248,7 +248,9 @@ prefix-length hints leave the store.
   bypass.
 - **Live** (`observability/live.ts`) reads the process-local in-flight count and per-pool usage
   (`/live/in-flight`, `/live/in-flight/stream`, `/live/pools`, `/live/pools/stream`) —
-  `dashboard:read` guard. The global count is process-level; pool usage is filtered by tenant
+  `dashboard:read` guard. `POST /live/in-flight/:id/cancel` aborts one live request by its
+  short flight id (tenant-scoped: a tenant can only cancel its own flights; 404 when the id
+  is unknown, 503 when the composition has no live data plane). The global count is process-level; pool usage is filtered by tenant
   ownership. The pool stream emits `pools` inflight snapshots and tenant-filtered `health`
   status/error transitions for the Proxy page.
   **Logs** (`observability/logs.ts`) tail `observability/log-ring` with a `level`/`limit` read (cap 500), an

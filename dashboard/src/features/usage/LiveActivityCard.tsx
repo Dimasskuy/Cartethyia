@@ -5,6 +5,7 @@ import { EmptyState } from "../../components/ui/state";
 import { Inline } from "../../components/ui/inline";
 import { useInFlight, type LiveFlight } from "../../hooks/live";
 import { providerDisplayName } from "../../shared/provider-names";
+import { consoleRequest } from "../../data/api";
 
 function formatElapsed(ms: number): string {
   if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
@@ -129,6 +130,22 @@ function FlightDetail({
     !done && flight.status === "streaming" && flight.outputTokens !== null
       ? Math.round(flight.outputTokens / elapsedSec)
       : null;
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const cancelRequest = async () => {
+    if (cancelling) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await consoleRequest<unknown>(`/live/in-flight/${flight.id}/cancel`, { method: "POST" });
+      // The row disappears on the next SSE snapshot — no local state to clear.
+    } catch (error) {
+      setCancelError(error instanceof Error ? error.message : "Cancel failed");
+      setCancelling(false);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "14px", padding: "4px 2px" }}>
       <Inline gap="16px" align="center" wrap>
@@ -154,6 +171,35 @@ function FlightDetail({
             {done ? "✓ Done" : flight.status === "streaming" ? "● Streaming" : "○ Waiting for first token"}
           </span>
         </Inline>
+        {!done && (
+          <Inline gap="8px" align="center">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void cancelRequest();
+              }}
+              disabled={cancelling}
+              title="Abort this request immediately — stops the upstream call and any combo stage"
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                padding: "4px 12px",
+                borderRadius: "999px",
+                border: "1px solid var(--status-danger)",
+                background: "transparent",
+                color: "var(--status-danger)",
+                cursor: cancelling ? "wait" : "pointer",
+                opacity: cancelling ? 0.6 : 1,
+              }}
+            >
+              {cancelling ? "Cancelling…" : "Cancel request"}
+            </button>
+            {cancelError && (
+              <span style={{ fontSize: "11px", color: "var(--status-danger)" }}>{cancelError}</span>
+            )}
+          </Inline>
+        )}
         {flight.stage && (
           <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
             Stage: <strong style={{ color: "var(--text-primary)" }}>{flight.stage}</strong>

@@ -253,6 +253,23 @@ export function getInFlightSnapshot(tenantId: string | null = null): InFlightSna
   return snapshot(tenantId);
 }
 
+/**
+ * Resolve a dashboard-visible short flight id (first 8 chars of the gateway
+ * request id) to the full request id, honoring tenant isolation: a tenant
+ * caller only resolves its own flights, platform admins (null) any flight.
+ * Returns null when no live flight matches.
+ */
+export function resolveInFlightRequestId(
+  shortId: string,
+  tenantId: string | null = null,
+): string | null {
+  for (const [requestId, entry] of flights) {
+    if (tenantId !== null && entry.tenantId !== tenantId) continue;
+    if (requestId.slice(0, 8) === shortId) return requestId;
+  }
+  return null;
+}
+
 export function subscribeInFlight(
   listener: (snapshot: InFlightSnapshot) => void,
   tenantId: string | null = null,

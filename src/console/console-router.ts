@@ -51,6 +51,12 @@ export interface ConsoleApiCompositionDeps {
     | undefined;
   readonly resolvePeerAddress?: (request: Request) => string | null;
   readonly trustedProxyBoundary?: TrustedProxyBoundary;
+  /**
+   * Aborts one in-flight gateway request by id (console kill switch).
+   * Wired by the app shell from the proxy request-state store; absent in
+   * compositions without a live data plane (tests, isolated console).
+   */
+  readonly cancelInFlightRequest?: ((requestId: string) => boolean) | undefined;
 }
 /**
  * Extracts a bearer API key from a console request, or `undefined`.
@@ -154,6 +160,7 @@ export function createConsoleRouter(deps: ConsoleApiCompositionDeps): Elysia {
     admissionService: deps.admissionService,
     readRoutingAccountInflight: deps.readRoutingAccountInflight,
     credentialService,
+    cancelInFlightRequest: deps.cancelInFlightRequest,
     // The backup surface re-authenticates the operator, so it needs the current
     // user's hash. Read from the session on the request that asks for it, never
     // cached in a field, so a password change or a deactivated user takes

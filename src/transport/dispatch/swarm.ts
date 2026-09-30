@@ -24,6 +24,7 @@
 import type { CanonicalRequest } from "../canonical-model";
 import { GatewayError } from "../gateway-error";
 import type { ComboDefinition, RouteCandidate } from "../routing/route-model";
+import { throwIfAborted } from "./abort";
 import { extractSurfaceText, groupCandidatesByModel } from "./cascade";
 import { withPanelRequest } from "./fusion";
 import { updateInFlightDetail } from "../request/inflight";
@@ -598,12 +599,18 @@ export interface SwarmRunInput {
   readonly requestId: string;
   /** Single dispatch over a candidate list; fails over across candidates. */
   readonly dispatch: SwarmDispatch;
+  /**
+   * Owning request's abort signal. Checked between stages so a cancelled
+   * request stops the pipeline instead of burning more upstream calls.
+   */
+  readonly signal: AbortSignal;
   readonly log?: (message: string) => void;
 }
 
 /** Run the hierarchical swarm pipeline for one request. */
 export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
-  const { combo, comboName, canonicalRequest, candidates, dispatch } = input;
+  const { combo, comboName, canonicalRequest, candidates, dispatch, signal } = input;
+  throwIfAborted(signal);
   const groups = groupCandidatesByModel(candidates);
   if (groups.length === 0) {
     throw new GatewayError("admission_unavailable", 503, "swarm combo has no candidates");
@@ -638,10 +645,12 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
     });
     if (verdict === "simple") {
       log("gatekeeper bypass — simple request, direct answer");
+      throwIfAborted(signal);
       return dispatch(canonicalRequest, managerGroup);
     }
 
     // ── Stage 1: Manager strategy ──
+    throwIfAborted(signal);
     stage("manager decomposing");
     const strategy = await runManagerStrategy({
       base: canonicalRequest,
@@ -652,12 +661,15 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
     });
     if (!strategy || strategy.subtasks.length === 0) {
       log("strategy decomposition failed — falling back to direct answer");
+      throwIfAborted(signal);
+      stage("fallback · direct answer");
       return dispatch(canonicalRequest, managerGroup);
     }
 
     // ── Stage 2: Dispatch workers (parallel) ──
     const effectiveCount = Math.min(config.workerCount, config.maxWorkers);
     const effectiveSubtasks = strategy.subtasks.slice(0, effectiveCount);
+    throwIfAborted(signal);
     stage(`workers ×${effectiveSubtasks.length}`);
     const workerOutputs = await dispatchWorkers({
       base: canonicalRequest,
@@ -669,6 +681,8 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
     });
     if (workerOutputs.length < config.minWorkers) {
       log(`only ${workerOutputs.length}/${effectiveSubtasks.length} workers succeeded — fallback`);
+      throwIfAborted(signal);
+      stage("fallback · direct answer");
       if (workerOutputs.length === 1) {
         const single = workerOutputs[0]!;
         const presentRequest = buildSynthesisRequest(
@@ -681,6 +695,7 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
     }
 
     // ── Stage 3: Staff audit ──
+    throwIfAborted(signal);
     if (staffGroup) stage("staff audit");
     const auditReport = await runStaffAudit({
       base: canonicalRequest,
@@ -699,9 +714,13 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
       buildManagerSynthesisPrompt(synthesisSource, lastUserText(canonicalRequest)),
     );
     log(`synthesizing final answer from ${workerOutputs.length} worker outputs`);
+    throwIfAborted(signal);
     stage("synthesis");
     return dispatch(synthesisRequest, managerGroup);
   } catch (error) {
+    // A cancelled request must stop here — degrading to a direct answer would
+    // launch another full upstream call nobody will ever read.
+    if (signal.aborted) throw error;
     // Graceful degradation: fall back to a direct answer on any uncaught error.
     log(`swarm failed (${error instanceof Error ? error.message : String(error)}) — direct answer`);
     return dispatch(canonicalRequest, managerGroup);
