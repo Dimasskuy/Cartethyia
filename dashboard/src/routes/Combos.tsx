@@ -357,8 +357,13 @@ function CombosSection(): ReactNode {
   const [swarmWorkerModels, setSwarmWorkerModels] = useState("");
   const [swarmWorkerCount, setSwarmWorkerCount] = useState("8");
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [rolePickerTarget, setRolePickerTarget] = useState<"manager" | "staff" | "classifier" | null>(null);
+  const [rolePickerTarget, setRolePickerTarget] = useState<
+    "manager" | "staff" | "classifier" | "judge" | null
+  >(null);
   const [workerPickerOpen, setWorkerPickerOpen] = useState(false);
+  const [listPickerTarget, setListPickerTarget] = useState<"tool" | "noTool" | "research" | null>(
+    null,
+  );
   const [deleteConfirm, setDeleteConfirm] = useState<ModelComboRow | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const { copy } = useClipboard();
@@ -376,6 +381,17 @@ function CombosSection(): ReactNode {
     if (selectedMembers.includes(q))
       setMembersText(selectedMembers.filter((m) => m !== q).join("\n"));
     else setMembersText([...selectedMembers, q].join("\n"));
+  };
+  /** Toggle one model inside a one-per-line textarea list (smart-routing member subsets). */
+  const toggleListEntry = (
+    text: string,
+    setText: (v: string) => void,
+    value: string,
+  ): void => {
+    const list = parseMemberList(text);
+    setText(
+      list.includes(value) ? list.filter((m) => m !== value).join("\n") : [...list, value].join("\n"),
+    );
   };
 
   const combos = combosQuery.data ?? [];
@@ -719,14 +735,19 @@ function CombosSection(): ReactNode {
           )}
           {strategy === "fusion" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <Input
-                label="Judge model (optional, default: first panel member)"
-                id="combo-fusion-judge"
-                type="text"
-                placeholder="e.g. provider/model-name"
-                value={fusionJudgeModel}
-                onChange={(e) => setFusionJudgeModel(e.target.value)}
-              />
+              <div>
+                <BrowseLabel htmlFor="combo-fusion-judge" onBrowse={() => setRolePickerTarget("judge")}>
+                  Judge model (optional, default: first panel member)
+                </BrowseLabel>
+                <Input
+                  id="combo-fusion-judge"
+                  type="text"
+                  placeholder="e.g. provider/model-name"
+                  aria-label="Judge model"
+                  value={fusionJudgeModel}
+                  onChange={(e) => setFusionJudgeModel(e.target.value)}
+                />
+              </div>
               <div style={{ display: "flex", gap: "12px" }}>
                 <Input
                   label="Min panel answers (1-8)"
@@ -763,30 +784,54 @@ function CombosSection(): ReactNode {
           )}
           {strategy === "smart_routing" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <Textarea
-                label="Tool-capable members (one per line, optional — default: all members)"
-                id="combo-smart-tool-members"
-                rows={3}
-                placeholder="provider/model"
-                value={smartToolMembers}
-                onChange={(e) => setSmartToolMembers(e.target.value)}
-              />
-              <Textarea
-                label="Members without tool support (excluded for tool requests)"
-                id="combo-smart-no-tool-members"
-                rows={2}
-                placeholder="provider/model"
-                value={smartNoToolMembers}
-                onChange={(e) => setSmartNoToolMembers(e.target.value)}
-              />
-              <Textarea
-                label="Research-preferred members (tried first for research intent)"
-                id="combo-smart-research-members"
-                rows={2}
-                placeholder="provider/model"
-                value={smartResearchMembers}
-                onChange={(e) => setSmartResearchMembers(e.target.value)}
-              />
+              <div>
+                <BrowseLabel
+                  htmlFor="combo-smart-tool-members"
+                  onBrowse={() => setListPickerTarget("tool")}
+                >
+                  Tool-capable members (one per line, optional — default: all members)
+                </BrowseLabel>
+                <Textarea
+                  id="combo-smart-tool-members"
+                  rows={3}
+                  placeholder="provider/model"
+                  aria-label="Tool-capable members"
+                  value={smartToolMembers}
+                  onChange={(e) => setSmartToolMembers(e.target.value)}
+                />
+              </div>
+              <div>
+                <BrowseLabel
+                  htmlFor="combo-smart-no-tool-members"
+                  onBrowse={() => setListPickerTarget("noTool")}
+                >
+                  Members without tool support (excluded for tool requests)
+                </BrowseLabel>
+                <Textarea
+                  id="combo-smart-no-tool-members"
+                  rows={2}
+                  placeholder="provider/model"
+                  aria-label="Members without tool support"
+                  value={smartNoToolMembers}
+                  onChange={(e) => setSmartNoToolMembers(e.target.value)}
+                />
+              </div>
+              <div>
+                <BrowseLabel
+                  htmlFor="combo-smart-research-members"
+                  onBrowse={() => setListPickerTarget("research")}
+                >
+                  Research-preferred members (tried first for research intent)
+                </BrowseLabel>
+                <Textarea
+                  id="combo-smart-research-members"
+                  rows={2}
+                  placeholder="provider/model"
+                  aria-label="Research-preferred members"
+                  value={smartResearchMembers}
+                  onChange={(e) => setSmartResearchMembers(e.target.value)}
+                />
+              </div>
               <div>
                 <BrowseLabel htmlFor="combo-smart-classifier" onBrowse={() => setRolePickerTarget("classifier")}>
                   Intent classifier model (optional — enables LLM fallback)
@@ -952,13 +997,16 @@ function CombosSection(): ReactNode {
               if (rolePickerTarget === "manager") setSwarmManagerModel(value);
               else if (rolePickerTarget === "staff") setSwarmStaffModel(value);
               else if (rolePickerTarget === "classifier") setSmartClassifierModel(value);
+              else if (rolePickerTarget === "judge") setFusionJudgeModel(value);
             }}
             title={
               rolePickerTarget === "staff"
                 ? "Select staff/audit model"
                 : rolePickerTarget === "classifier"
                   ? "Select intent classifier model"
-                  : "Select manager model"
+                  : rolePickerTarget === "judge"
+                    ? "Select judge model"
+                    : "Select manager model"
             }
             multi={false}
           />
@@ -973,6 +1021,35 @@ function CombosSection(): ReactNode {
               );
             }}
             title="Select worker models"
+            multi
+          />
+          <ModelPickerModal
+            open={listPickerTarget !== null}
+            onClose={() => setListPickerTarget(null)}
+            selected={
+              listPickerTarget === null ? [] : parseMemberList(
+                listPickerTarget === "tool"
+                  ? smartToolMembers
+                  : listPickerTarget === "noTool"
+                    ? smartNoToolMembers
+                    : smartResearchMembers,
+              )
+            }
+            onToggle={(value) => {
+              if (listPickerTarget === "tool")
+                toggleListEntry(smartToolMembers, setSmartToolMembers, value);
+              else if (listPickerTarget === "noTool")
+                toggleListEntry(smartNoToolMembers, setSmartNoToolMembers, value);
+              else if (listPickerTarget === "research")
+                toggleListEntry(smartResearchMembers, setSmartResearchMembers, value);
+            }}
+            title={
+              listPickerTarget === "tool"
+                ? "Select tool-capable members"
+                : listPickerTarget === "noTool"
+                  ? "Select members without tool support"
+                  : "Select research-preferred members"
+            }
             multi
           />
           <div
