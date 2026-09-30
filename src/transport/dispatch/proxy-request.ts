@@ -19,6 +19,7 @@ import { forwardedRequestHeaders, proxySuccessHeaders, buildUpstreamDispatchCont
 import { resolvePromptCacheKey } from "../../providers/operations/session-resolution";
 import { createDispatchStreamEncoder } from "./stream-bridge";
 import { runCascadeCombo } from "./cascade";
+import { runFusionCombo } from "./fusion";
 import { shouldCooldownPool } from "./retry-policy";
 import { applyTenantPreferences } from "./tenant-preferences";
 import { metrics } from "../../observability/metrics";
@@ -908,6 +909,16 @@ export async function handleProviderProxyRequest(
   const combo = prepared.plan.combo;
   if (combo?.strategy === "cascade") {
     return runCascadeCombo({
+      combo,
+      comboName: prepared.plan.requested_model,
+      canonicalRequest,
+      candidates,
+      requestId: state.requestId,
+      dispatch: dispatchCandidates,
+    });
+  }
+  if (combo?.strategy === "fusion") {
+    return runFusionCombo({
       combo,
       comboName: prepared.plan.requested_model,
       canonicalRequest,

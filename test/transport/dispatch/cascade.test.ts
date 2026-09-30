@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { CanonicalRequest, SourceSurface } from "../../../src/transport/canonical-model";
+import type { CanonicalRequest } from "../../../src/transport/canonical-model";
 import type { ComboDefinition, RouteCandidate } from "../../../src/transport/routing/route-model";
 import {
   CASCADE_DEFAULTS,
@@ -36,7 +36,7 @@ function makeCandidate(modelId: string): RouteCandidate {
     account_id: null,
     provider_account_id: null,
     endpoint_path: "/v1/chat/completions",
-  } as RouteCandidate;
+  } as unknown as RouteCandidate;
 }
 
 const jsonResponse = (body: unknown) =>

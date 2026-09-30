@@ -399,8 +399,8 @@ function modelRoutingErrorResponse(error: unknown, set: { status?: number | stri
 // without updating these literals fails here.
 type ExpectComboParity<T extends true> = T;
 export type ComboSchemaParity = ExpectComboParity<
-  [ComboStrategy] extends ["fallback" | "round_robin" | "cascade"]
-    ? (["fallback" | "round_robin" | "cascade"] extends [ComboStrategy] ? true : false)
+  [ComboStrategy] extends ["fallback" | "round_robin" | "cascade" | "fusion"]
+    ? (["fallback" | "round_robin" | "cascade" | "fusion"] extends [ComboStrategy] ? true : false)
     : false
 >;
 
@@ -415,8 +415,17 @@ const cascadeComboConfigSchema = t.Object({
 });
 /** Per-strategy combo tuning. Sections for strategies that don't read them
  * are stored but ignored; new strategies add their own optional section. */
+/** Bounds for fusion tuning; the dispatch layer clamps defensively too. */
+const fusionComboConfigSchema = t.Object({
+  judgeModel: t.Optional(t.String({ maxLength: 200 })),
+  minPanel: t.Optional(t.Integer({ minimum: 1, maximum: 8 })),
+  stragglerGraceMs: t.Optional(t.Integer({ minimum: 0, maximum: 60000 })),
+  panelTimeoutMs: t.Optional(t.Integer({ minimum: 1000, maximum: 600000 })),
+  judgePrompt: t.Optional(t.String({ maxLength: 8000 })),
+});
 const comboConfigSchema = t.Object({
   cascade: t.Optional(cascadeComboConfigSchema),
+  fusion: t.Optional(fusionComboConfigSchema),
 });
 /** The combo-strategy enum's own values; see `ComboSchemaParity` above. */
 const comboStrategySchema = literalUnion(modelComboStrategy.enumValues);

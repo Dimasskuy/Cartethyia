@@ -351,11 +351,12 @@ export const healthEvents = pgTable(
 // Model aliasing & combos: replaces the dormant, disconnected
 // `routing_policies` scaffolding. Aliases resolve a client-facing name to a
 // real model; combos back a client-facing name with >=1 real models,
-// auto-selected via `fallback`, `round_robin`, or `cascade`.
+// auto-selected via `fallback`, `round_robin`, `cascade`, or `fusion`.
 export const modelComboStrategy = pgEnum("model_combo_strategy", [
   "fallback",
   "round_robin",
   "cascade",
+  "fusion",
 ]);
 
 /** Canonical `ComboStrategy` union, derived from the enum above. Console
@@ -382,6 +383,24 @@ export interface CascadeComboConfig {
  * don't read it ignore it; new strategies add their own optional section. */
 export interface ModelComboConfig {
   readonly cascade?: CascadeComboConfig;
+  readonly fusion?: FusionComboConfig;
+}
+
+/** Tuning knobs for the `fusion` combo strategy. Every panel member answers
+ * in parallel; a judge model then synthesizes one final answer from the
+ * panel responses. */
+export interface FusionComboConfig {
+  /** Judge model ref; defaults to the first panel member. Must name a panel
+   * member, otherwise the first member judges. */
+  readonly judgeModel?: string;
+  /** Answers needed before stragglers get a grace window (default 2). */
+  readonly minPanel?: number;
+  /** Ms to wait for laggards once quorum is reached (default 8000). */
+  readonly stragglerGraceMs?: number;
+  /** Hard cap per panel leg and the judge call, in ms (default 90000). */
+  readonly panelTimeoutMs?: number;
+  /** Override for the judge synthesis directive header. */
+  readonly judgePrompt?: string;
 }
 
 export const modelAliases = pgTable(

@@ -322,6 +322,10 @@ function CombosSection(): ReactNode {
   const [strategy, setStrategy] = useState<ComboStrategy>("fallback");
   const [cascadeThreshold, setCascadeThreshold] = useState("70");
   const [cascadeMaxStages, setCascadeMaxStages] = useState("3");
+  const [fusionJudgeModel, setFusionJudgeModel] = useState("");
+  const [fusionMinPanel, setFusionMinPanel] = useState("2");
+  const [fusionPanelTimeoutMs, setFusionPanelTimeoutMs] = useState("90000");
+  const [fusionStragglerGraceMs, setFusionStragglerGraceMs] = useState("8000");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<ModelComboRow | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -351,6 +355,10 @@ function CombosSection(): ReactNode {
     setStrategy("fallback");
     setCascadeThreshold("70");
     setCascadeMaxStages("3");
+    setFusionJudgeModel("");
+    setFusionMinPanel("2");
+    setFusionPanelTimeoutMs("90000");
+    setFusionStragglerGraceMs("8000");
     setDialogOpen(true);
   };
 
@@ -364,6 +372,15 @@ function CombosSection(): ReactNode {
       typeof cascade?.confidenceThreshold === "number" ? String(cascade.confidenceThreshold) : "70",
     );
     setCascadeMaxStages(typeof cascade?.maxStages === "number" ? String(cascade.maxStages) : "3");
+    const fusion = c.config?.fusion;
+    setFusionJudgeModel(typeof fusion?.judgeModel === "string" ? fusion.judgeModel : "");
+    setFusionMinPanel(typeof fusion?.minPanel === "number" ? String(fusion.minPanel) : "2");
+    setFusionPanelTimeoutMs(
+      typeof fusion?.panelTimeoutMs === "number" ? String(fusion.panelTimeoutMs) : "90000",
+    );
+    setFusionStragglerGraceMs(
+      typeof fusion?.stragglerGraceMs === "number" ? String(fusion.stragglerGraceMs) : "8000",
+    );
     setDialogOpen(true);
   };
 
@@ -382,8 +399,8 @@ function CombosSection(): ReactNode {
 
     if (!comboName.trim() || members.length === 0) return;
 
-    // Cascade tuning; cleared when the strategy is not cascade so stale
-    // thresholds never linger on a repurposed combo.
+    // Per-strategy tuning; cleared when the strategy changes so stale
+    // knobs never linger on a repurposed combo.
     const config =
       strategy === "cascade"
         ? {
@@ -392,7 +409,16 @@ function CombosSection(): ReactNode {
               maxStages: clampInt(cascadeMaxStages, 1, 8, 3),
             },
           }
-        : null;
+        : strategy === "fusion"
+          ? {
+              fusion: {
+                ...(fusionJudgeModel.trim() ? { judgeModel: fusionJudgeModel.trim() } : {}),
+                minPanel: clampInt(fusionMinPanel, 1, 8, 2),
+                panelTimeoutMs: clampInt(fusionPanelTimeoutMs, 1000, 600000, 90000),
+                stragglerGraceMs: clampInt(fusionStragglerGraceMs, 0, 60000, 8000),
+              },
+            }
+          : null;
 
     if (editingCombo) {
       updateMutation.mutate(
@@ -593,6 +619,50 @@ function CombosSection(): ReactNode {
                 onChange={(e) => setCascadeMaxStages(e.target.value)}
                 style={{ flex: 1 }}
               />
+            </div>
+          )}
+          {strategy === "fusion" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <Input
+                label="Judge model (optional, default: first panel member)"
+                id="combo-fusion-judge"
+                type="text"
+                placeholder="e.g. provider/model-name"
+                value={fusionJudgeModel}
+                onChange={(e) => setFusionJudgeModel(e.target.value)}
+              />
+              <div style={{ display: "flex", gap: "12px" }}>
+                <Input
+                  label="Min panel answers (1-8)"
+                  id="combo-fusion-minpanel"
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={fusionMinPanel}
+                  onChange={(e) => setFusionMinPanel(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <Input
+                  label="Panel timeout (ms)"
+                  id="combo-fusion-timeout"
+                  type="number"
+                  min={1000}
+                  max={600000}
+                  value={fusionPanelTimeoutMs}
+                  onChange={(e) => setFusionPanelTimeoutMs(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <Input
+                  label="Straggler grace (ms)"
+                  id="combo-fusion-grace"
+                  type="number"
+                  min={0}
+                  max={60000}
+                  value={fusionStragglerGraceMs}
+                  onChange={(e) => setFusionStragglerGraceMs(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+              </div>
             </div>
           )}
           <Stack gap="4px">
