@@ -27,6 +27,22 @@ export interface LiveFlight {
   readonly modelId: string | null;
   readonly attempt: number;
   readonly failovers: readonly LiveFailover[];
+  readonly route: string | null;
+  readonly status: "waiting" | "streaming";
+  readonly promptPreview: string | null;
+  readonly responsePreview: string | null;
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly stage: string | null;
+  readonly tokenSavers: readonly string[];
+}
+
+function readStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function readFlights(payload: unknown): readonly LiveFlight[] | null {
@@ -52,6 +68,16 @@ function readFlights(payload: unknown): readonly LiveFlight[] | null {
       modelId: typeof raw.modelId === "string" ? raw.modelId : null,
       attempt: typeof raw.attempt === "number" && Number.isFinite(raw.attempt) ? Math.max(0, Math.floor(raw.attempt)) : 0,
       failovers,
+      route: readStringOrNull(raw.route),
+      status: raw.status === "streaming" ? "streaming" : "waiting",
+      promptPreview: readStringOrNull(raw.promptPreview),
+      responsePreview: readStringOrNull(raw.responsePreview),
+      inputTokens: readNumberOrNull(raw.inputTokens),
+      outputTokens: readNumberOrNull(raw.outputTokens),
+      stage: readStringOrNull(raw.stage),
+      tokenSavers: Array.isArray(raw.tokenSavers)
+        ? raw.tokenSavers.filter((s): s is string => typeof s === "string")
+        : [],
     });
   }
   return flights;

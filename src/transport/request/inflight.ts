@@ -45,6 +45,34 @@ export interface InFlightFlight {
   /** Zero-based index of the candidate currently serving (also failover count). */
   readonly attempt: number;
   readonly failovers: readonly InFlightFailover[];
+  /** Human route label, e.g. "combo my-swarm" or "direct clouvia/coding-high". */
+  readonly route: string | null;
+  /** waiting = no content yet, streaming = first content token seen. */
+  readonly status: "waiting" | "streaming";
+  /** First ~160 chars of the last user turn (plain text parts only). */
+  readonly promptPreview: string | null;
+  /** Last ~300 chars of streamed output so far. */
+  readonly responsePreview: string | null;
+  /** Estimated input tokens (admission estimate), when known. */
+  readonly inputTokens: number | null;
+  /** Output tokens so far, approximated from streamed characters. */
+  readonly outputTokens: number | null;
+  /** Combo strategy stage, e.g. "swarm · workers 3/5". Set by strategies. */
+  readonly stage: string | null;
+  /** Token saver names applied to this request (rtk, headroom, …). */
+  readonly tokenSavers: readonly string[];
+}
+
+/** Detail fields accepted at registration and on partial updates. */
+export interface InFlightDetailUpdate {
+  readonly route?: string | null;
+  readonly status?: "waiting" | "streaming";
+  readonly promptPreview?: string | null;
+  readonly responsePreview?: string | null;
+  readonly inputTokens?: number | null;
+  readonly outputTokens?: number | null;
+  readonly stage?: string | null;
+  readonly tokenSavers?: readonly string[];
 }
 
 export interface InFlightSnapshot {
@@ -61,6 +89,14 @@ interface FlightEntry {
   modelId: string | null;
   attempt: number;
   failovers: InFlightFailover[];
+  route: string | null;
+  status: "waiting" | "streaming";
+  promptPreview: string | null;
+  responsePreview: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  stage: string | null;
+  tokenSavers: string[];
 }
 
 interface FlightListener {
@@ -95,6 +131,14 @@ function snapshot(tenantId: string | null = null): InFlightSnapshot {
       modelId: entry.modelId,
       attempt: entry.attempt,
       failovers: entry.failovers,
+      route: entry.route,
+      status: entry.status,
+      promptPreview: entry.promptPreview,
+      responsePreview: entry.responsePreview,
+      inputTokens: entry.inputTokens,
+      outputTokens: entry.outputTokens,
+      stage: entry.stage,
+      tokenSavers: entry.tokenSavers,
     });
   }
   // Newest first — the operator cares about what just started.
@@ -107,7 +151,12 @@ function publish(): void {
   for (const { listener, tenantId } of listeners) listener(snapshot(tenantId));
 }
 
-export function trackInFlight(requestId: string, clientIp: string, tenantId: string | null = null): void {
+export function trackInFlight(
+  requestId: string,
+  clientIp: string,
+  tenantId: string | null = null,
+  detail?: InFlightDetailUpdate,
+): void {
   flights.set(requestId, {
     clientIp: clientIp.length > 0 ? clientIp : "unknown",
     tenantId,
@@ -116,7 +165,53 @@ export function trackInFlight(requestId: string, clientIp: string, tenantId: str
     modelId: null,
     attempt: 0,
     failovers: [],
+    route: detail?.route ?? null,
+    status: detail?.status ?? "waiting",
+    promptPreview: detail?.promptPreview ?? null,
+    responsePreview: detail?.responsePreview ?? null,
+    inputTokens: detail?.inputTokens ?? null,
+    outputTokens: detail?.outputTokens ?? null,
+    stage: detail?.stage ?? null,
+    tokenSavers: detail?.tokenSavers ? [...detail.tokenSavers] : [],
   });
+  publish();
+}
+
+/**
+ * Merges live detail into a flight. Streaming chunk updates are throttled to
+ * at most one SSE publish per second per flight so a fast token stream does
+ * not spam subscribers; status/stage transitions always publish immediately
+ * because the operator wants to see phase changes without delay.
+ */
+const lastDetailPublishAt = new Map<string, number>();
+const DETAIL_PUBLISH_INTERVAL_MS = 1000;
+
+export function updateInFlightDetail(requestId: string, update: InFlightDetailUpdate): void {
+  const entry = flights.get(requestId);
+  if (!entry) return;
+  let phaseChanged = false;
+  if (update.route !== undefined) entry.route = update.route;
+  if (update.status !== undefined && update.status !== entry.status) {
+    entry.status = update.status;
+    phaseChanged = true;
+  }
+  if (update.promptPreview !== undefined) entry.promptPreview = update.promptPreview;
+  if (update.responsePreview !== undefined) entry.responsePreview = update.responsePreview;
+  if (update.inputTokens !== undefined) entry.inputTokens = update.inputTokens;
+  if (update.outputTokens !== undefined) entry.outputTokens = update.outputTokens;
+  if (update.stage !== undefined && update.stage !== entry.stage) {
+    entry.stage = update.stage;
+    phaseChanged = true;
+  }
+  if (update.tokenSavers !== undefined) entry.tokenSavers = [...update.tokenSavers];
+  if (phaseChanged) {
+    lastDetailPublishAt.set(requestId, Date.now());
+    publish();
+    return;
+  }
+  const last = lastDetailPublishAt.get(requestId) ?? 0;
+  if (Date.now() - last < DETAIL_PUBLISH_INTERVAL_MS) return;
+  lastDetailPublishAt.set(requestId, Date.now());
   publish();
 }
 
@@ -146,6 +241,7 @@ export function recordInFlightFailover(
 
 export function untrackInFlight(requestId: string): void {
   flights.delete(requestId);
+  lastDetailPublishAt.delete(requestId);
   publish();
 }
 
@@ -172,4 +268,5 @@ export function subscribeInFlight(
 export function resetInFlightForTests(): void {
   flights.clear();
   listeners.clear();
+  lastDetailPublishAt.clear();
 }

@@ -26,6 +26,7 @@ import { GatewayError } from "../gateway-error";
 import type { ComboDefinition, RouteCandidate } from "../routing/route-model";
 import { extractSurfaceText, groupCandidatesByModel } from "./cascade";
 import { withPanelRequest } from "./fusion";
+import { updateInFlightDetail } from "../request/inflight";
 
 /** Tuning defaults. Overridable per combo. */
 export const SWARM_DEFAULTS = {
@@ -621,9 +622,12 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
   const managerGroup = byModel.get(config.managerModel) ?? groups[0]!;
   const staffGroup = config.staffModel ? (byModel.get(config.staffModel) ?? null) : null;
   const log = (message: string): void => input.log?.(`swarm ${comboName}: ${message}`);
+  const stage = (label: string): void =>
+    updateInFlightDetail(input.requestId, { stage: `swarm · ${label}` });
 
   try {
     // ── Stage 0: Gatekeeper ──
+    stage("gatekeeper");
     const verdict = await runGatekeeper({
       base: canonicalRequest,
       managerGroup,
@@ -638,6 +642,7 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
     }
 
     // ── Stage 1: Manager strategy ──
+    stage("manager decomposing");
     const strategy = await runManagerStrategy({
       base: canonicalRequest,
       managerGroup,
@@ -653,6 +658,7 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
     // ── Stage 2: Dispatch workers (parallel) ──
     const effectiveCount = Math.min(config.workerCount, config.maxWorkers);
     const effectiveSubtasks = strategy.subtasks.slice(0, effectiveCount);
+    stage(`workers ×${effectiveSubtasks.length}`);
     const workerOutputs = await dispatchWorkers({
       base: canonicalRequest,
       subtasks: effectiveSubtasks,
@@ -675,6 +681,7 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
     }
 
     // ── Stage 3: Staff audit ──
+    if (staffGroup) stage("staff audit");
     const auditReport = await runStaffAudit({
       base: canonicalRequest,
       subtasks: effectiveSubtasks,
@@ -692,6 +699,7 @@ export async function runSwarmCombo(input: SwarmRunInput): Promise<Response> {
       buildManagerSynthesisPrompt(synthesisSource, lastUserText(canonicalRequest)),
     );
     log(`synthesizing final answer from ${workerOutputs.length} worker outputs`);
+    stage("synthesis");
     return dispatch(synthesisRequest, managerGroup);
   } catch (error) {
     // Graceful degradation: fall back to a direct answer on any uncaught error.

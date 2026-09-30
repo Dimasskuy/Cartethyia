@@ -26,6 +26,7 @@ import { shouldCooldownPool } from "./retry-policy";
 import { applyTenantPreferences } from "./tenant-preferences";
 import { preferencesReaderFor } from "./attempt-finalize";
 import { applyTokenSavers } from "../../tokensaver";
+import { updateInFlightDetail } from "../request/inflight";
 import type { TokenSaverConfig } from "../../persistence/schema";
 import { metrics } from "../../observability/metrics";
 import { flagPoolCooldown } from "../../network/pool-health";
@@ -45,6 +46,42 @@ import {
 } from "./attempt-finalize";
 import { runAttemptLoop } from "./attempt-loop";
 import { projectForRoute, routeCapabilitiesFor } from "../translation/capabilities";
+
+/** Live-activity preview caps: prompt head, response tail, tracked window. */
+const LIVE_PROMPT_PREVIEW_CHARS = 160;
+const LIVE_RESPONSE_PREVIEW_CHARS = 300;
+const LIVE_RESPONSE_TRACK_CHARS = 2000;
+
+/** First ~160 chars of the last user turn's plain text, for the live feed. */
+function livePromptPreview(request: CanonicalRequest): string | null {
+  for (let i = request.messages.length - 1; i >= 0; i--) {
+    const message = request.messages[i]!;
+    if (message.role !== "user") continue;
+    const text = message.content
+      .filter((part) => part.kind === "text")
+      .map((part) => (part as { readonly text: string }).text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (text.length > 0) return text.slice(0, LIVE_PROMPT_PREVIEW_CHARS);
+  }
+  return null;
+}
+
+/** Concatenated answer text of content_delta events (text parts only). */
+function liveResponseText(events: readonly CanonicalEvent[]): string {
+  let out = "";
+  for (const event of events) {
+    if (event.type === "content_delta" && event.content.kind === "text") out += event.content.text;
+  }
+  return out;
+}
+
+/** Tail preview + rough token estimate for a tracked response string. */
+function liveResponsePreview(text: string): { preview: string; outputTokens: number } {
+  const tail = text.slice(-LIVE_RESPONSE_PREVIEW_CHARS);
+  return { preview: tail, outputTokens: Math.max(1, Math.ceil(text.length / 4)) };
+}
 
 export interface ProviderProxyHandlerDeps {
   readonly db: CartethyiaDatabase;
@@ -135,6 +172,18 @@ export async function handleProviderProxyRequest(
   if (tokenSaversApplied.length > 0) {
     state.tokenSaversApplied = tokenSaversApplied;
   }
+  // Static live-activity detail, forwarded to the in-flight registry when the
+  // flight registers in the attempt loop (after dispatch leases are held).
+  const combo = prepared.plan.combo;
+  const comboName = prepared.plan.requested_model;
+  state.flightDetail = {
+    route: combo ? `combo ${comboName}` : `direct ${comboName}`,
+    promptPreview: livePromptPreview(canonicalRequest),
+    tokenSavers: [...tokenSaversApplied],
+    ...(typeof prepared.estimatedInputTokens === "number"
+      ? { inputTokens: prepared.estimatedInputTokens }
+      : {}),
+  };
   const candidates =
     prepared.eligibleRouteCandidates.length > 0 ? prepared.eligibleRouteCandidates : [prepared.candidate];
   // Inbound headers are safe to re-read (only bodies are single-read).
@@ -301,6 +350,9 @@ export async function handleProviderProxyRequest(
         // distinct from the provider-side canonical events above.
         let clientResponseText = "";
         const CLIENT_RESPONSE_CAP = 512 * 1024;
+        // Live-activity response tracking: rolling window of answer text for
+        // the Usage page preview (throttled publish inside the registry).
+        let liveResponseText = "";
         // SSE comment frame: valid framing on every streamed surface,
         // ignored by EventSource clients. Never part of content/telemetry.
         const KEEPALIVE_COMMENT_BYTES = new TextEncoder().encode(": keepalive\n\n");
@@ -367,6 +419,21 @@ export async function handleProviderProxyRequest(
 
           if (event.type === "content_delta" && firstContentDeltaAtMs === undefined) {
             firstContentDeltaAtMs = timestampedEvent.timestamp;
+          }
+          // Live activity: track the answer text as it streams. Publish is
+          // throttled to 1/sec per flight inside the registry; status flips
+          // to "streaming" on the first content token immediately.
+          if (event.type === "content_delta" && event.content.kind === "text" && event.content.text) {
+            liveResponseText += event.content.text;
+            if (liveResponseText.length > LIVE_RESPONSE_TRACK_CHARS) {
+              liveResponseText = liveResponseText.slice(-LIVE_RESPONSE_TRACK_CHARS);
+            }
+            const { preview, outputTokens } = liveResponsePreview(liveResponseText);
+            updateInFlightDetail(state.requestId, {
+              status: "streaming",
+              responsePreview: preview,
+              outputTokens,
+            });
           }
 
           if (event.type === "terminal") {
@@ -876,6 +943,17 @@ export async function handleProviderProxyRequest(
         terminal.usage ??
         estimatedUsage(prepared.estimatedInputTokens, prepared.estimatedOutputTokens);
       const pricedUsage = repriceUsage(usage, candidate.provider_id, candidate.model_id);
+      // Live activity: non-streaming responses arrive whole — report the
+      // preview and exact token counts once instead of per chunk.
+      const nonStreamText = liveResponseText(events);
+      if (nonStreamText.length > 0) {
+        updateInFlightDetail(state.requestId, {
+          status: "streaming",
+          responsePreview: nonStreamText.slice(-LIVE_RESPONSE_PREVIEW_CHARS),
+          outputTokens: usage.output_tokens,
+          inputTokens: usage.input_tokens,
+        });
+      }
       const options = {
         created: Date.now() / 1000,
         include_usage: stageRequest.generation_controls["extension:include_usage"] === true,
@@ -930,7 +1008,6 @@ export async function handleProviderProxyRequest(
     },
     });
 
-  const combo = prepared.plan.combo;
   if (combo?.strategy === "cascade") {
     return runCascadeCombo({
       combo,

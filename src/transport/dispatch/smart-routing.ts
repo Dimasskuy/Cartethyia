@@ -20,6 +20,7 @@ import type { CanonicalRequest, SourceSurface } from "../canonical-model";
 import { GatewayError } from "../gateway-error";
 import type { ComboDefinition, RouteCandidate } from "../routing/route-model";
 import { extractSurfaceText, groupCandidatesByModel } from "./cascade";
+import { updateInFlightDetail } from "../request/inflight";
 
 /** Curated research-intent keywords (lowercased). Overridable per combo. */
 export const DEFAULT_RESEARCH_KEYWORDS = [
@@ -334,6 +335,7 @@ export async function runSmartRoutingCombo(input: SmartRoutingRunInput): Promise
     resolveIntent,
   });
   input.log?.(`smart-routing ${comboName}: reason=${routing.reason} order=[${routing.order.join(", ")}]`);
+  updateInFlightDetail(input.requestId, { stage: `smart-routing · ${routing.reason}` });
 
   const byModel = new Map(groups.map((group) => [group[0]!.model_id, group] as const));
   const orderedCandidates = routing.order.flatMap((model) => byModel.get(model) ?? []);

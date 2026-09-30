@@ -22,6 +22,7 @@ import type {
 import { GatewayError } from "../gateway-error";
 import type { ComboDefinition, RouteCandidate } from "../routing/route-model";
 import { createDispatchStreamEncoder } from "./stream-bridge";
+import { updateInFlightDetail } from "../request/inflight";
 
 /** Cascade tuning defaults. */
 export const CASCADE_DEFAULTS = {
@@ -310,6 +311,7 @@ export async function runCascadeCombo(input: CascadeRunInput): Promise<Response>
   for (let stage = 0; stage < maxStages; stage += 1) {
     const group = groups[stage]!;
     const modelId = group[0]!.model_id;
+    updateInFlightDetail(input.requestId, { stage: `cascade · stage ${stage + 1}/${maxStages}` });
     const isFinal = stage === maxStages - 1;
     const stageRequest = withCascadePrompt(canonicalRequest, prior, cfg);
     input.log?.(`cascade ${comboName}: stage ${stage + 1}/${maxStages} (${modelId})`);

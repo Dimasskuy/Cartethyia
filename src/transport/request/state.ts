@@ -3,7 +3,7 @@ import type { CanonicalRequest, UsageRecord } from "../canonical-model";
 import type { ClientIdentity } from "../../security/abuse";
 import type { ResolvedApiKey } from "../../security/api-key-auth";
 import type { PreparedProxyRequest } from "./preparer";
-import { trackInFlight, untrackInFlight } from "./inflight";
+import { trackInFlight, untrackInFlight, type InFlightDetailUpdate } from "./inflight";
 import { fastPathname } from "./pathname";
 
 export interface ProxyRequestOutcome {
@@ -69,6 +69,13 @@ export interface ProxyRequestState {
    * attempt loop so telemetry and the live activity feed can report it.
    */
   tokenSaversApplied?: readonly string[];
+  /**
+   * Static live-activity detail set by the dispatch handler before the
+   * attempt loop (route label, prompt preview, token savers, input tokens).
+   * `startProviderFlight` forwards it to the in-flight registry so the Usage
+   * page can render it the moment the flight registers.
+   */
+  flightDetail?: InFlightDetailUpdate;
   /**
    * Set by `completeAttempt` (dispatch/attempt-finalize) once the *terminal*
    * attempt has run its completion bookkeeping (usage commit, health report,
@@ -176,7 +183,7 @@ export class ProxyRequestStateStore {
       startProviderFlight: (tenantId: string | null) => {
         if (cleaned || providerFlightStarted) return;
         providerFlightStarted = true;
-        trackInFlight(requestId, state.clientIdentity?.address ?? "unknown", tenantId);
+        trackInFlight(requestId, state.clientIdentity?.address ?? "unknown", tenantId, state.flightDetail);
       },
       ingressMethod: request.method,
       ingressPath: fastPathname(request.url),

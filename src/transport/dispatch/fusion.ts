@@ -17,6 +17,7 @@ import type { CanonicalRequest, ContentPart } from "../canonical-model";
 import { GatewayError } from "../gateway-error";
 import type { ComboDefinition, RouteCandidate } from "../routing/route-model";
 import { extractSurfaceText, groupCandidatesByModel } from "./cascade";
+import { updateInFlightDetail } from "../request/inflight";
 
 /** Fusion tuning defaults (mirrors ExtremeRouter's FUSION_DEFAULTS). */
 export const FUSION_DEFAULTS = {
@@ -289,6 +290,7 @@ export async function runFusionCombo(input: FusionRunInput): Promise<Response> {
 
   // 1. Fan out to the panel in parallel: non-streaming, tools stripped.
   const panelRequest = withPanelRequest(canonicalRequest);
+  updateInFlightDetail(input.requestId, { stage: `fusion · panel ×${groups.length}` });
   const legs = groups.map((group) => dispatch(panelRequest, group));
   const settled = await collectPanel(legs, cfg);
 
@@ -345,6 +347,7 @@ export async function runFusionCombo(input: FusionRunInput): Promise<Response> {
   const judgeGroup = groups[panelModels.indexOf(judgeModel)]!;
   const judgeRequest = withJudgePrompt(canonicalRequest, answers, cfg);
   input.log?.(`fusion ${comboName}: judging ${answers.length} answers with ${judgeModel}`);
+  updateInFlightDetail(input.requestId, { stage: "fusion · judging" });
   return withLegTimeout(
     dispatch(judgeRequest, judgeGroup),
     cfg.panelTimeoutMs,

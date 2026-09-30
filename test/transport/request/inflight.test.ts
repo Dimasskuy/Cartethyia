@@ -8,6 +8,7 @@ import {
   subscribeInFlight,
   trackInFlight,
   untrackInFlight,
+  updateInFlightDetail,
   updateInFlightServing,
 } from "../../../src/transport/request/inflight";
 import { ProxyRequestStateStore } from "../../../src/transport/request/state";
@@ -90,7 +91,45 @@ describe("in-flight registry", () => {
   test("updates for unknown flights are ignored", () => {
     updateInFlightServing("nope", { providerId: "p", modelId: "m", attemptIndex: 0 });
     recordInFlightFailover("nope", { providerId: "p", modelId: "m" });
+    updateInFlightDetail("nope", { stage: "swarm · workers" });
     expect(getInFlightSnapshot()).toEqual({ inFlight: 0, uniqueIps: 0, flights: [] });
+  });
+
+  test("registration accepts live detail and partial updates merge", () => {
+    trackInFlight("req-1", "1.1.1.1", null, {
+      route: "combo my-swarm",
+      promptPreview: "hello world",
+      tokenSavers: ["rtk"],
+      inputTokens: 123,
+    });
+    updateInFlightDetail("req-1", {
+      status: "streaming",
+      responsePreview: "partial answer",
+      outputTokens: 40,
+      stage: "swarm · workers ×3",
+    });
+    const flight = getInFlightSnapshot().flights[0]!;
+    expect(flight.route).toBe("combo my-swarm");
+    expect(flight.promptPreview).toBe("hello world");
+    expect(flight.tokenSavers).toEqual(["rtk"]);
+    expect(flight.inputTokens).toBe(123);
+    expect(flight.status).toBe("streaming");
+    expect(flight.responsePreview).toBe("partial answer");
+    expect(flight.outputTokens).toBe(40);
+    expect(flight.stage).toBe("swarm · workers ×3");
+  });
+
+  test("flights without detail default to nulls and waiting status", () => {
+    trackInFlight("req-2", "1.1.1.1");
+    const flight = getInFlightSnapshot().flights[0]!;
+    expect(flight.route).toBeNull();
+    expect(flight.status).toBe("waiting");
+    expect(flight.promptPreview).toBeNull();
+    expect(flight.responsePreview).toBeNull();
+    expect(flight.inputTokens).toBeNull();
+    expect(flight.outputTokens).toBeNull();
+    expect(flight.stage).toBeNull();
+    expect(flight.tokenSavers).toEqual([]);
   });
 
   test("snapshots and subscriptions are tenant-scoped; platform view sees all", () => {
