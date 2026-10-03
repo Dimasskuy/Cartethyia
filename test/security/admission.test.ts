@@ -703,6 +703,35 @@ describe("ApiKeyAdmissionService", () => {
     // Only the target key's leases are released.
     expect(evalKeys.sort()).toEqual(["admission:lease:own-1", "admission:lease:own-2"]);
   });
+
+  test("commitUsage persists lifetime usage even without a lifetime budget", async () => {
+    const store = new InMemoryAdmissionCounterStore();
+    const persisted: Array<{ apiKeyId: string; delta: number }> = [];
+    const svc = new ApiKeyAdmissionService(store, undefined, undefined, async (input) => {
+      persisted.push(input);
+    });
+    // No lifetime_token_budget — the dashboard still reads this key's "Usage"
+    // from the persisted column.
+    const snap = snapshot({ lifetime_token_budget: null });
+    const lease = await svc.admit({
+      authorization: snap,
+      targetProvider: "openai",
+      targetModel: "gpt-4",
+      estimatedInputTokens: 10,
+    });
+    await lease.commitUsage({
+      input_tokens: 30,
+      output_tokens: 20,
+      cached_input_tokens: 0,
+      cache_write_tokens: 0,
+      uncached_input_tokens: 30,
+      reasoning_tokens: 0,
+      estimated_cost: 0,
+    });
+    // Regression: persistence used to be gated on lifetime_token_budget, so
+    // budget-less keys reported "Usage 0" no matter how much they were used.
+    expect(persisted).toEqual([{ apiKeyId: "key-1", delta: 50 }]);
+  });
 });
 
 describe("lease-sweeper.test.ts", () => {

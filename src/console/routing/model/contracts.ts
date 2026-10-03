@@ -525,16 +525,24 @@ const comboConfigSchema = t.Object({
 });
 /** The combo-strategy enum's own values; see `ComboSchemaParity` above. */
 const comboStrategySchema = literalUnion(modelComboStrategy.enumValues);
+/**
+ * Explicit `null` clears a combo's strategy config (e.g. switching a combo
+ * back to fallback drops the stale swarm knobs). The domain contracts
+ * (`ModelComboCreateInput` / `ModelComboPatchInput`) already type `config`
+ * as `... | null`; the wire schema must accept the same shape, otherwise
+ * dashboard saves for config-less strategies fail with 422 "must be object".
+ */
+const nullableComboConfigSchema = t.Union([comboConfigSchema, t.Null()]);
 const createComboBody = t.Object({
   name: t.String(),
   members: t.Array(t.String(), { minItems: 1 }),
   strategy: t.Optional(comboStrategySchema),
-  config: t.Optional(comboConfigSchema),
+  config: t.Optional(nullableComboConfigSchema),
 });
 const updateComboBody = t.Object({
   members: t.Optional(t.Array(t.String(), { minItems: 1 })),
   strategy: t.Optional(comboStrategySchema),
-  config: t.Optional(comboConfigSchema),
+  config: t.Optional(nullableComboConfigSchema),
 });
 
 export function createModelRoutingRoutes(config: ModelRoutingConfig): Elysia {

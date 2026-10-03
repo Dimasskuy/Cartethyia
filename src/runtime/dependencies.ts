@@ -143,8 +143,9 @@ export async function buildProductionDeps(): Promise<ProductionDeps> {
         .readPreferences(tenantId)
         .then((prefs) => prefs?.tenantConcurrencyLimit ?? null),
     async ({ apiKeyId, delta }) => {
-      // Persist reconciled lifetime token consumption so budgets survive a
-      // Redis flush. Uses an incremental UPDATE (COALESCE) so concurrent
+      // Persist reconciled lifetime token consumption so the dashboard's
+      // per-key "Usage" stays truthful and lifetime budgets survive a Redis
+      // flush. Uses an incremental UPDATE (COALESCE) so concurrent
       // reconciliations compose additively.
       if (!Number.isFinite(delta) || delta <= 0) return;
       await db

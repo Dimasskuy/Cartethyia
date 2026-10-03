@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createModelRoutingOperations,
+  createModelRoutingRoutes,
   type ModelAliasCreateInput,
   type ModelAliasPatchInput,
   type ModelAliasRow,
@@ -510,6 +511,62 @@ describe("model routing domain factory — audit + snapshot invalidation", () =>
       expect(renamed.strategy).toBe("fallback");
     });
   });
-});
-});
 
+  describe("wire schema — explicit config: null", () => {
+    function makeApp() {
+      const { store } = makeStore();
+      return createModelRoutingRoutes({ store, accessResolver: () => access });
+    }
+
+    function jsonRequest(method: string, path: string, body: unknown): Request {
+      return new Request(`http://localhost${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+
+    test("POST /routing/combos accepts explicit config: null for a config-less strategy", async () => {
+      const app = makeApp();
+      // Regression: the dashboard sends `"config": null` for fallback /
+      // round_robin combos; the wire schema used to 422 with "must be object".
+      const res = await app.handle(
+        jsonRequest("POST", "/routing/combos", {
+          name: "random",
+          members: ["gpt-4"],
+          strategy: "fallback",
+          config: null,
+        }),
+      );
+      expect(res.status).toBe(201);
+    });
+
+    test("PATCH /routing/combos/:id accepts explicit config: null and clears stale config", async () => {
+      const app = makeApp();
+      const createdRes = await app.handle(
+        jsonRequest("POST", "/routing/combos", {
+          name: "c1",
+          members: ["gpt-4"],
+          strategy: "swarm",
+          config: { swarm: { workerCount: 4 } },
+        }),
+      );
+      expect(createdRes.status).toBe(201);
+      const created = (await createdRes.json()) as { id: string; config: unknown };
+      expect(created.config).not.toBeNull();
+
+      // Switching back to fallback must drop the stale swarm knobs, not 422.
+      const patchedRes = await app.handle(
+        jsonRequest("PATCH", `/routing/combos/${created.id}`, {
+          strategy: "fallback",
+          config: null,
+        }),
+      );
+      expect(patchedRes.status).toBe(200);
+      const updated = (await patchedRes.json()) as { strategy: string; config: unknown };
+      expect(updated.strategy).toBe("fallback");
+      expect(updated.config).toBeNull();
+    });
+  });
+});
+});

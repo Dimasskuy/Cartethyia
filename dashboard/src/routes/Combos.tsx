@@ -13,6 +13,7 @@ import { ModelPickerModal } from "../components/ModelPicker";
 import { useTrackedTimeout } from "../hooks/use-timeout";
 import { useClipboard } from "../hooks/use-clipboard";
 import { toast } from "../shared/toast";
+import { getErrorMessage } from "../shared/helpers";
 import type { ComboStrategy, ModelAliasRow, ModelComboRow } from "../data/contracts";
 import { COMBO_STRATEGY_OPTIONS } from "../shared/combo-strategy";
 import {
@@ -540,6 +541,9 @@ function CombosSection(): ReactNode {
             setDialogOpen(false);
             setEditingCombo(null);
           },
+          onError: (error) => {
+            toast.error(getErrorMessage(error, "Failed to save combo."));
+          },
         },
       );
     } else {
@@ -550,6 +554,9 @@ function CombosSection(): ReactNode {
             setDialogOpen(false);
             setComboName("");
             setMembersText("");
+          },
+          onError: (error) => {
+            toast.error(getErrorMessage(error, "Failed to create combo."));
           },
         },
       );

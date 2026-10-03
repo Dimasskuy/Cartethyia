@@ -604,10 +604,12 @@ export class ApiKeyAdmissionService {
         await this.store.reconcile(apiKeyId, estimatedTokens, actual, reservationId);
         finalized = true;
         // Persist the reconciled usage against `api_keys.lifetime_tokens_consumed`
-        // so lifetime budgets survive a Redis flush; keyed on the actual
-        // (not the reserved) tokens because the reservation was already
+        // for every key, not only keys with a lifetime budget: the dashboard
+        // reads this column as the key's "Usage", so gating the write on the
+        // budget left budget-less keys permanently at zero. Keyed on the
+        // actual (not the reserved) tokens because the reservation was already
         // credited at admit-time and reconciled by the store above.
-        if (snapshot.lifetime_token_budget != null && this.persistLifetimeUsage) {
+        if (this.persistLifetimeUsage) {
           try {
             await this.persistLifetimeUsage({ apiKeyId, delta: actual });
           } catch {
