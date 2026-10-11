@@ -38,9 +38,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    postgresql-15 \
     redis-server \
     util-linux \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && (pg_dropcluster 15 main --stop 2>/dev/null || true)
 
 # Create a dedicated non-root runtime identity. The UID/GID are pinned so the
 # entrypoint can drop privileges to a known id and an operator can chown a
@@ -52,6 +54,7 @@ COPY --from=builder --chown=cartethyia:cartethyia /build/migrations ./migrations
 COPY --from=builder --chown=cartethyia:cartethyia /build/dist/dashboard ./dist/dashboard
 COPY --chmod=755 docker-entrypoint.sh ./entrypoint.sh
 COPY --chmod=755 docker-entrypoint-with-redis.sh ./entrypoint-with-redis.sh
+COPY --chmod=755 docker-entrypoint-with-postgres.sh ./entrypoint-with-postgres.sh
 COPY --from=builder --chown=cartethyia:cartethyia /build/dist/cartethyia ./cartethyia
 
 # Railway supplies PORT at runtime; the binary uses 12800 only as its fallback.
@@ -67,5 +70,11 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
 # drops to `cartethyia` via setpriv before exec'ing the application, so the
 # process itself never runs as root. Setting USER here would skip that repair
 # on a mounted volume.
-ENTRYPOINT ["/app/entrypoint-with-redis.sh"]
+# The postgres wrapper starts a local PostgreSQL when no external database is
+# configured (DATABASE_URL / PGHOST unset), then chains to the redis wrapper.
+# Koyeb's free managed Postgres only includes 5h of compute per month and the
+# gateway's background sweeps exhaust it within days; the bundled database
+# makes the deployment self-contained and quota-free. Data lives on the
+# container's ephemeral disk — back up before redeploying.
+ENTRYPOINT ["/app/entrypoint-with-postgres.sh"]
 CMD ["./cartethyia"]
