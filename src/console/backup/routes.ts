@@ -40,6 +40,17 @@ export interface BackupRoutesConfig {
    * old members) until some unrelated console write happens to invalidate.
    */
   readonly snapshotInvalidator?: { invalidate(): Promise<number> };
+  /**
+   * Re-registers BYOK providers from the database after a restore.
+   *
+   * A restore replaces the provider rows directly, bypassing the catalog
+   * routes that normally re-register a provider on every mutation. Without
+   * this, the routing snapshot sees the restored providers (it is
+   * invalidated above) but the ProviderRegistry still holds the pre-restore
+   * set — dispatching to a restored custom provider then fails with
+   * "provider adapter not registered" until the next restart.
+   */
+  readonly syncByokProviders?: () => Promise<unknown>;
 }
 
 /**
@@ -130,6 +141,11 @@ export function createBackupRoutes(config: BackupRoutesConfig): Elysia {
         // Routing-visible write: the restore has committed, so the cached
         // snapshot must be rebuilt before the next `/v1/*` dispatch.
         await config.snapshotInvalidator?.invalidate();
+        // Provider-visible write: the restore replaced provider rows without
+        // going through the catalog mutations, so re-register BYOK providers
+        // from the database. Otherwise dispatching to a restored custom
+        // provider fails with "provider adapter not registered".
+        await config.syncByokProviders?.();
         set.status = 200;
         return result;
       } catch (error) {

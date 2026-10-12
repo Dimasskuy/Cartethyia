@@ -42,7 +42,7 @@ import {
   createAccountExportCredentialsResolver,
   createAccountSecretResolver,
 } from "../providers/operations/provider-credential-service";
-import { syncByokProvider } from "../providers/operations/provider-catalog-service";
+import { syncByokProvider, registerByokProviders } from "../providers/operations/provider-catalog-service";
 import { DrizzleApiKeyStore } from "../persistence/api-key-store";
 import { DrizzleShareLinkStore } from "../persistence/share-store";
 import { createShareUsagePort } from "./share/share-usage";
@@ -269,6 +269,12 @@ export function registerConsoleDomains(
           },
         }),
       snapshotInvalidator: ctx.routeSnapshotService,
+      // A restore rewrites provider rows directly, bypassing the catalog
+      // mutations that re-register BYOK providers. Re-register all of them
+      // from the database so restored custom providers are dispatchable
+      // without a restart.
+      syncByokProviders: () =>
+        registerByokProviders(ctx.providerRegistry, ctx.db, resolveSsrfPolicy()),
     }),
   );
   console.use(createModelRoutingRoutes({ store: modelRoutingStore, accessResolver: ctx.accessResolver, auditSink: ctx.auditRecorder, snapshotInvalidator: ctx.routeSnapshotService }));

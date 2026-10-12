@@ -399,6 +399,61 @@ describe("backup restore invalidates the route snapshot", () => {
     expect(res.status).toBe(500);
     expect(invalidations.count).toBe(0);
   });
+
+  test("a committed restore re-registers BYOK providers", async () => {
+    const invalidations = { count: 0 };
+    const syncs = { count: 0 };
+    const app = createBackupRoutes({
+      accessResolver: () => sessionAccess,
+      backupFor: () =>
+        ({
+          restore: async () => ({ restored: {}, skipped: {} }),
+        }) as never,
+      snapshotInvalidator: {
+        invalidate: async () => {
+          invalidations.count += 1;
+          return invalidations.count;
+        },
+      },
+      syncByokProviders: async () => {
+        syncs.count += 1;
+      },
+    });
+    const res = await app.handle(
+      new Request("http://localhost/backup/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: "pw", backup: { app: "cartethyia" } }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(syncs.count).toBe(1);
+  });
+
+  test("a failed restore does not re-register BYOK providers", async () => {
+    const syncs = { count: 0 };
+    const app = createBackupRoutes({
+      accessResolver: () => sessionAccess,
+      backupFor: () =>
+        ({
+          restore: async () => {
+            throw new Error("restore rolled back");
+          },
+        }) as never,
+      syncByokProviders: async () => {
+        syncs.count += 1;
+      },
+    });
+    const res = await app.handle(
+      new Request("http://localhost/backup/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: "pw", backup: { app: "cartethyia" } }),
+      }),
+    );
+    expect(res.status).toBe(500);
+    expect(syncs.count).toBe(0);
+  });
 });
 
 dbDescribe("backup validation", () => {
