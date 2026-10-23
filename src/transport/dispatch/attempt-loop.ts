@@ -25,6 +25,7 @@ import type { NetworkPoolSelector } from "../../network/pool/selector";
 import type { ProxyRequestState } from "../request/state";
 import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer";
 import { flagPoolCooldown } from "../../network/pool-health";
+import { resolveAttemptTimeoutMs } from "../../config";
 import { completeAttempt, estimatedUsage, type ProviderExchangeCapture } from "./attempt-finalize";
 import { recordInFlightFailover, updateInFlightServing } from "../request/inflight";
 import { repriceUsage } from "../../providers/usage";
@@ -45,6 +46,13 @@ interface AttemptContext<TAdapter> {
   /** Zero-based candidate index; also this attempt's failover count. */
   readonly attemptIndex: number;
   readonly providerCapture: ProviderExchangeCapture;
+  /**
+   * Per-attempt abort signal: bridges the request signal, and additionally
+   * aborts when this candidate exceeds the attempt timeout in a
+   * multi-candidate dispatch. Route closures pass it to the upstream
+   * dispatch context so a timed-out candidate's fetch actually stops.
+   */
+  readonly signal: AbortSignal;
   /**
    * Hands lease ownership to the value this attempt returns (a streaming
    * response releases its own lease on stream completion/cancel). Without it
@@ -108,7 +116,26 @@ export async function runAttemptLoop<TResult, TAdapter>(
       request: null,
       response: Promise.resolve(null),
     };
+    // Per-attempt abort: the request signal bridged in, plus — only when a
+    // failover target exists — an attempt timer. Without the timer one hung
+    // candidate burned the whole request deadline, whose abort reads as a
+    // client cancellation and is terminal, so failover never fired.
+    const attemptController = new AbortController();
+    const onRequestAbort = () => attemptController.abort(state.abortController.signal.reason);
+    let attemptTimer: ReturnType<typeof setTimeout> | undefined;
+    let attemptTimedOut = false;
     try {
+      if (state.abortController.signal.aborted) onRequestAbort();
+      else state.abortController.signal.addEventListener("abort", onRequestAbort, { once: true });
+      if (candidates.length > 1) {
+        attemptTimer = setTimeout(() => {
+          attemptTimedOut = true;
+          attemptController.abort(
+            new GatewayError("deadline_exceeded", 504, "upstream attempt timed out", {}, "upstream"),
+          );
+        }, resolveAttemptTimeoutMs());
+        (attemptTimer as unknown as { unref?: () => void })?.unref?.();
+      }
       if (state.abortController.signal.aborted)
         throw new GatewayError("transport_closed", 499, "request was cancelled");
       const { credential, adapter } = await input.prepare(candidate);
@@ -147,28 +174,35 @@ export async function runAttemptLoop<TResult, TAdapter>(
         leases: attemptLeases,
         attemptIndex: index,
         providerCapture,
+        signal: attemptController.signal,
         retainLeases: () => {
           leasesRetained = true;
         },
       });
     } catch (error) {
-      lastError = error;
+      // An attempt-timeout abort surfaces from the adapter as a bare abort or
+      // a `transport_closed`; the attempt timer is the actual cause, and it
+      // is a retryable upstream deadline — not a client cancellation.
+      const effectiveError = attemptTimedOut
+        ? new GatewayError("deadline_exceeded", 504, "upstream attempt timed out", {}, "upstream")
+        : error;
+      lastError = effectiveError;
       const cancelled =
         state.abortController.signal.aborted ||
-        (error instanceof GatewayError && error.code === "transport_closed");
+        (effectiveError instanceof GatewayError && effectiveError.code === "transport_closed");
       const terminalAttempt =
-        cancelled || !isRetryableFailure(error) || index === candidates.length - 1;
+        cancelled || !isRetryableFailure(effectiveError) || index === candidates.length - 1;
       await completeAttempt(state, {
         status: cancelled ? "cancelled" : "failed",
         providerId: candidate.provider_id,
         ...(candidate.provider_account_id ? { accountId: candidate.provider_account_id } : {}),
         ...(candidate.provider_account_label ? { accountLabel: candidate.provider_account_label } : {}),
-        errorCategory: classifyTerminalCategory(error, state.abortController.signal),
+        errorCategory: classifyTerminalCategory(effectiveError, state.abortController.signal),
         // Same split as the streaming path: a non-GatewayError outcome is ours.
-        errorOrigin: error instanceof GatewayError ? error.origin : "cartethyia",
+        errorOrigin: effectiveError instanceof GatewayError ? effectiveError.origin : "cartethyia",
         modelId: candidate.model_id,
         ...(networkPoolId ? { networkPoolId } : {}),
-        error,
+        error: effectiveError,
         ...(lease ? { lease } : {}),
         ...(!cancelled && bindingEstablished
           ? {
@@ -194,14 +228,14 @@ export async function runAttemptLoop<TResult, TAdapter>(
         ...(deps.telemetryBuffer ? { telemetryBuffer: deps.telemetryBuffer } : {}),
         ...(deps.snapshotService ? { snapshotService: deps.snapshotService } : {}),
       });
-      if (networkPoolId && !cancelled && deps.poolSelector && shouldCooldownPool(error)) {
-        flagPoolCooldown(deps.poolSelector, deps.db, networkPoolId, candidate.provider_id, error);
+      if (networkPoolId && !cancelled && deps.poolSelector && shouldCooldownPool(effectiveError)) {
+        flagPoolCooldown(deps.poolSelector, deps.db, networkPoolId, candidate.provider_id, effectiveError);
       }
       // A 403 can be a deterministic provider policy rejection, not an
       // invalid OAuth credential. Only the evidence-based classifier above
       // may trigger a refresh.
       const candidateKey = `${candidate.provider_id}:${candidate.provider_account_id ?? "global"}:${candidate.model_id}:${candidate.endpoint}`;
-      const authInvalidated = isOAuthCredentialInvalidated(error);
+      const authInvalidated = isOAuthCredentialInvalidated(effectiveError);
       if (
         !cancelled &&
         !refreshedCandidates.has(candidateKey) &&
@@ -226,7 +260,7 @@ export async function runAttemptLoop<TResult, TAdapter>(
       }
       if (terminalAttempt) {
         metrics.proxy_requests_total.inc(1, { status: cancelled ? "cancelled" : "failed" });
-        throw error;
+        throw effectiveError;
       }
       // The request survives this failure and moves to the next candidate:
       // leave the hop on the live trail so the activity view shows the path.
@@ -238,6 +272,8 @@ export async function runAttemptLoop<TResult, TAdapter>(
       }
       retryDelayMs = fallbackRetryDelayMs(index);
     } finally {
+      clearTimeout(attemptTimer);
+      state.abortController.signal.removeEventListener("abort", onRequestAbort);
       if (!leasesRetained)
         await releaseAttemptLeases({ lease, reservation, proxySlot }, leaseSource.routingEngine);
     }

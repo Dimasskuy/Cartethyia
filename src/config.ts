@@ -98,7 +98,7 @@ export const CONFIG_SPEC = {
     min: 1024,
     max: Number.MAX_SAFE_INTEGER,
   },
-  CARTETHYIA_SERVER_IDLE_TIMEOUT: { kind: "int", default: 60, min: 0, max: 86_400 },
+  CARTETHYIA_SERVER_IDLE_TIMEOUT: { kind: "int", default: 255, min: 0, max: 86_400 },
 
   // Network policy (trusted proxy + SSRF)
   TRUSTED_PROXY_CIDRS: { kind: "list" },
@@ -118,6 +118,7 @@ export const CONFIG_SPEC = {
 
   // Upstream request timeout + retry backoff
   CARTETHYIA_UPSTREAM_TIMEOUT_MS: { kind: "int", default: 120_000, min: 5_000, max: 600_000 },
+  CARTETHYIA_ATTEMPT_TIMEOUT_MS: { kind: "int", default: 60_000, min: 100, max: 600_000 },
   CARTETHYIA_STREAM_STALL_TIMEOUT_MS: {
     kind: "int",
     default: 360_000,
@@ -266,9 +267,18 @@ export function resolveMaxBodyBytes(): number {
   return readInt("CARTETHYIA_SERVER_MAX_BODY_BYTES", CONFIG_SPEC.CARTETHYIA_SERVER_MAX_BODY_BYTES);
 }
 
-/** Resolves the listener idle-socket timeout (seconds). */
+/**
+ * Resolves the listener idle-socket timeout (seconds). Bun caps the value at
+ * 255 (and 0 disables it), so larger operator values clamp instead of
+ * throwing: the pre-stream phase of a proxied request legitimately stays
+ * silent longer than the old 60s default, and a socket closed for idleness
+ * mid-wait surfaces at the client as a connection reset.
+ */
 export function resolveIdleTimeout(): number {
-  return readInt("CARTETHYIA_SERVER_IDLE_TIMEOUT", CONFIG_SPEC.CARTETHYIA_SERVER_IDLE_TIMEOUT);
+  return Math.min(
+    255,
+    readInt("CARTETHYIA_SERVER_IDLE_TIMEOUT", CONFIG_SPEC.CARTETHYIA_SERVER_IDLE_TIMEOUT),
+  );
 }
 
 /**
@@ -369,6 +379,19 @@ export function resolveMemoryLimitOverrideBytes(): number | undefined {
  */
 export function resolveUpstreamTimeoutMs(): number {
   return readInt("CARTETHYIA_UPSTREAM_TIMEOUT_MS", CONFIG_SPEC.CARTETHYIA_UPSTREAM_TIMEOUT_MS);
+}
+
+/**
+ * Per-candidate budget inside one multi-candidate dispatch. A candidate that
+ * produces no response within this bound is aborted through its attempt
+ * signal and classified `deadline_exceeded` (retryable), so failover reaches
+ * the next candidate instead of one hung upstream consuming the whole
+ * request deadline and ending the request as a cancellation. Single-candidate
+ * dispatches are not capped by this bound — the request deadline governs
+ * them. Defaults to 60s.
+ */
+export function resolveAttemptTimeoutMs(): number {
+  return readInt("CARTETHYIA_ATTEMPT_TIMEOUT_MS", CONFIG_SPEC.CARTETHYIA_ATTEMPT_TIMEOUT_MS);
 }
 
 /**

@@ -8,8 +8,10 @@ import {
   requireEncryptionKeyEnv,
   requirePublicOrigin,
   resolveDashboardDist,
+  resolveAttemptTimeoutMs,
   resolveFallbackRetryBaseMs,
   resolveFallbackRetryCapMs,
+  resolveIdleTimeout,
   resolvePort,
   resolveSsrfPolicy,
   resolveStreamFirstChunkTimeoutMs,
@@ -213,6 +215,12 @@ describe("upstream timeout + retry backoff", () => {
     withEnvironment("CARTETHYIA_UPSTREAM_TIMEOUT_MS", undefined, () => {
       expect(resolveUpstreamTimeoutMs()).toBe(120_000);
     });
+    withEnvironment("CARTETHYIA_ATTEMPT_TIMEOUT_MS", undefined, () => {
+      expect(resolveAttemptTimeoutMs()).toBe(60_000);
+    });
+    withEnvironment("CARTETHYIA_SERVER_IDLE_TIMEOUT", undefined, () => {
+      expect(resolveIdleTimeout()).toBe(255);
+    });
     withEnvironment("CARTETHYIA_STREAM_STALL_TIMEOUT_MS", undefined, () => {
       expect(resolveStreamStallTimeoutMs()).toBe(360_000);
     });
@@ -230,6 +238,13 @@ describe("upstream timeout + retry backoff", () => {
   test("resolvers honor explicit overrides", () => {
     withEnvironment("CARTETHYIA_UPSTREAM_TIMEOUT_MS", "45000", () => {
       expect(resolveUpstreamTimeoutMs()).toBe(45_000);
+    });
+    withEnvironment("CARTETHYIA_ATTEMPT_TIMEOUT_MS", "30000", () => {
+      expect(resolveAttemptTimeoutMs()).toBe(30_000);
+    });
+    // Bun's listener cap is 255s: a larger operator value clamps, never throws.
+    withEnvironment("CARTETHYIA_SERVER_IDLE_TIMEOUT", "86400", () => {
+      expect(resolveIdleTimeout()).toBe(255);
     });
     withEnvironment("CARTETHYIA_STREAM_STALL_TIMEOUT_MS", "120000", () => {
       expect(resolveStreamStallTimeoutMs()).toBe(120_000);

@@ -87,8 +87,10 @@ if (boot) {
       port,
       // Cap idle sockets so a Slowloris/keep-alive-abuse client cannot
       // pin one of the server's `maxRequestBodySize`-budgeted sockets
-      // indefinitely. 60 s aligns with the DB pool idle timeout so all
-      // long-idle resources reap together.
+      // indefinitely. The cap is Bun's maximum (255 s): the pre-stream
+      // phase of a proxied request sends no bytes while candidates are
+      // tried, and a shorter cap closed those sockets mid-wait, which
+      // clients read as a connection reset.
       idleTimeout: resolveIdleTimeout(),
       // Enable Bun's SO_REUSEPORT load-balancing so multi-worker deploys
       // (or a second omp process) can share the same port without a

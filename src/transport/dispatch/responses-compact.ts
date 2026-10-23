@@ -121,7 +121,7 @@ export function createResponsesCompactHandler(deps: ResponsesCompactHandlerDeps)
         const response = await adapter.compact(compact, {
           credential,
           deadline: state.deadlineMs,
-          abort_signal: state.abortController.signal,
+          abort_signal: context.signal,
           ...(deps.networkBindingFactory
             ? {
                 outbound_fetch: deps.networkBindingFactory.fetch(

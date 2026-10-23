@@ -284,7 +284,7 @@ export async function handleProviderProxyRequest(
         const dispatchContext = buildUpstreamDispatchContext({
           credential,
           deadline: state.deadlineMs,
-          signal: state.abortController.signal,
+          signal: context.signal,
           headers: inboundHeaders,
           requestIdentity: state,
           ...(conversationAffinity ? { conversationAffinity } : {}),
@@ -892,7 +892,7 @@ export async function handleProviderProxyRequest(
       const dispatchContextBase = buildUpstreamDispatchContext({
         credential,
         deadline: state.deadlineMs,
-        signal: state.abortController.signal,
+        signal: context.signal,
         headers: inboundHeaders,
         requestIdentity: state,
         ...(conversationAffinity ? { conversationAffinity } : {}),

@@ -492,6 +492,166 @@ describe("runAttemptLoop — failover accounting", () => {
     expect(commits).toHaveLength(2);
     expect(commits[1]).toEqual(SUCCESS_USAGE);
   });
+
+  test("a hung first candidate is aborted at the attempt timeout and failover serves the request", async () => {
+    const previousAttemptTimeout = process.env.CARTETHYIA_ATTEMPT_TIMEOUT_MS;
+    process.env.CARTETHYIA_ATTEMPT_TIMEOUT_MS = "250";
+    try {
+      const accountId = "account-fixed-id";
+      const hangingRouteCandidate = {
+        provider_id: "anthropic",
+        model_id: "",
+        wire_family: "chat" as const,
+        endpoint: "/v1/messages",
+        capability_profile: {},
+        provider_account_id: accountId,
+      };
+      const workingRouteCandidate = {
+        provider_id: "openai",
+        model_id: "gpt-5",
+        wire_family: "chat" as const,
+        endpoint: "/v1/responses",
+        capability_profile: {},
+        provider_account_id: accountId,
+      };
+      const canonicalRequest: CanonicalRequest = {
+        model: "fast",
+        messages: [],
+        generation_controls: {},
+        stream: false,
+        source_surface: "chat",
+      };
+      const commits: unknown[] = [];
+      const preparedRequest = {
+        canonicalRequest,
+        authorization,
+        candidate: hangingRouteCandidate,
+        eligibleRouteCandidates: [hangingRouteCandidate, workingRouteCandidate],
+        plan: {
+          revision: 1,
+          candidates: [hangingRouteCandidate, workingRouteCandidate],
+          requested_model: "fast",
+          resolved_model: "",
+          provider_id: "anthropic",
+        },
+        estimatedInputTokens: 10,
+        estimatedOutputTokens: 10,
+        deadlineMs: Date.now() + 60_000,
+        routingEngine: {
+          reserve: async () => ({
+            candidate: hangingRouteCandidate,
+            lease_id: "reservation",
+            expires_at: Date.now() + 60_000,
+            acquired_at: Date.now(),
+          }),
+          release: async () => {},
+        },
+        admissionService: {
+          admit: async () => ({
+            reservationId: "lease-1",
+            apiKeyId: "key",
+            released: false,
+            commitUsage: async (usage: unknown) => {
+              commits.push(usage);
+            },
+            release: async () => {},
+          }),
+        },
+      } as unknown as PreparedProxyRequest;
+
+      const stateStore = new ProxyRequestStateStore();
+      const request = new Request("https://gateway.test/v1/chat/completions", { method: "POST" });
+      const state = stateStore.initialize(request, Date.now(), 60_000);
+      state.preparedRequest = preparedRequest;
+      state.canonicalRequest = canonicalRequest;
+      state.authorization = authorization;
+
+      let hangingSignalAborted = false;
+      const hangingAdapter: ProviderAdapter = {
+        provider_id: "anthropic",
+        dispatch: async function* (_request, _candidate, context) {
+          // Never yields: only the per-attempt abort can end this dispatch.
+          await new Promise<never>((_resolve, reject) => {
+            context.abort_signal.addEventListener(
+              "abort",
+              () => {
+                hangingSignalAborted = true;
+                reject(new Error("dispatch aborted"));
+              },
+              { once: true },
+            );
+          });
+          yield terminalEvent(SUCCESS_USAGE);
+        },
+      };
+      const workingAdapter: ProviderAdapter = {
+        provider_id: "openai",
+        dispatch: async function* () {
+          yield terminalEvent(SUCCESS_USAGE);
+        },
+      };
+
+      const accountRows = [
+        {
+          id: accountId,
+          providerId: "anthropic",
+          credentialKind: "none",
+          credentialCiphertext: null,
+        },
+        { id: accountId, providerId: "openai", credentialKind: "none", credentialCiphertext: null },
+      ];
+      let selectCount = 0;
+      let accountIndex = 0;
+      const db = {
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: async () => {
+                selectCount += 1;
+                if (selectCount === 1) return [];
+                const row = accountRows[accountIndex] ?? accountRows[accountRows.length - 1];
+                accountIndex += 1;
+                return [row];
+              },
+            }),
+          }),
+        }),
+      };
+
+      const rows: Array<Record<string, unknown>> = [];
+      const deps = {
+        db,
+        providerAdapters: new Map([
+          ["anthropic", hangingAdapter],
+          ["openai", workingAdapter],
+        ]),
+        stateStore,
+        telemetryBuffer: {
+          enqueue: (row: Record<string, unknown>) => {
+            rows.push(row);
+          },
+        },
+      } as unknown as ProviderProxyHandlerDeps;
+
+      const startedAt = Date.now();
+      const response = await handleProviderProxyRequest(request, deps);
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(response.status).toBe(200);
+      // The hang was cut by the attempt timer, not by the 60s request deadline.
+      expect(hangingSignalAborted).toBe(true);
+      expect(elapsedMs).toBeLessThan(10_000);
+      // The request was NOT recorded as a client cancellation.
+      expect(state.outcome).toMatchObject({ status: "completed", providerId: "openai" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ status: "completed", providerId: "openai" });
+      expect(commits).toHaveLength(2);
+      state.cleanup();
+    } finally {
+      if (previousAttemptTimeout === undefined) delete process.env.CARTETHYIA_ATTEMPT_TIMEOUT_MS;
+      else process.env.CARTETHYIA_ATTEMPT_TIMEOUT_MS = previousAttemptTimeout;
+    }
+  });
 });
 
 describe("createResponsesCompactHandler — shared attempt loop", () => {

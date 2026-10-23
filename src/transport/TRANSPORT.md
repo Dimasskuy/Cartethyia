@@ -420,6 +420,15 @@ last-candidate attempts are terminal, others back off with jittered `fallbackRet
 Terminal attempts record their `errorCategory` via `classifyTerminalCategory` (GatewayError code passthrough, signal-reason
 deadline/close mapping, else `unknown_error`).
 
+**Attempt timeout.** Each attempt runs on its own abort signal (the request signal bridged in), which route closures pass
+to the upstream dispatch context. In a multi-candidate dispatch an attempt that produces no response within
+`resolveAttemptTimeoutMs` (default 60s, `CARTETHYIA_ATTEMPT_TIMEOUT_MS`) is aborted through that signal and reclassified
+`deadline_exceeded` — retryable, so failover advances instead of one hung candidate consuming the whole request deadline
+and ending the request as a terminal cancellation. Single-candidate dispatches have no failover target and stay governed
+by the request deadline alone. The listener idle timeout defaults to Bun's 255s maximum for the same reason: the
+pre-stream phase sends no bytes while candidates are tried, and the old 60s socket cap closed those waits mid-flight,
+which clients read as a connection reset.
+
 A terminal `failed` state — written only by the upstream decoders — carries the upstream's failure, and
 `terminalFailure()` forwards it rather than flattening it to a bare 502: `provider_stop_reason` becomes
 `details.provider_code`, `stop_details` is spread into `details`, and a `message` inside those details becomes
